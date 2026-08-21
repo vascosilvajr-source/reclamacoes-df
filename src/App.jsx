@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { dbStorage } from "./supabaseClient";
+import { CRITERIOS_OBRIGATORIOS, NIVEL_LABEL, obrigatoriosAteNivel } from "./criteriosObrigatorios";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Award } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -1496,7 +1497,80 @@ function CertDetail({ point, onClose, onAddNote, onSetStatus, onEdit, onRemove }
 }
 
 // ---------- FPF certification page (project-management style tracker) ----------
-function CertPage({ points, onNew, onOpen }) {
+function ImportObrigatoriosButton({ onImport }) {
+  const [nivel, setNivel] = useState("3");
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          background: "#fff",
+          color: COLORS.navy,
+          border: `1.5px solid ${COLORS.navy}`,
+          borderRadius: 4,
+          padding: "10px 16px",
+          fontWeight: 700,
+          fontSize: 14,
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <ShieldAlert size={16} /> Importar critérios obrigatórios
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "110%",
+            right: 0,
+            zIndex: 20,
+            background: COLORS.paperRaised,
+            border: `1px solid ${COLORS.rule}`,
+            borderRadius: 6,
+            padding: 14,
+            width: 260,
+            boxShadow: "0 6px 20px rgba(16,24,38,0.15)",
+          }}
+        >
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
+            Nível pretendido (importa este nível e todos os anteriores)
+          </div>
+          <select value={nivel} onChange={(e) => setNivel(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+            <option value="cbff">CBFF</option>
+            <option value="1e2">Escola de Futebol 1-2 estrelas</option>
+            <option value="3">Entidade Formadora 3 estrelas</option>
+            <option value="4e5">Entidade Formadora 4-5 estrelas</option>
+          </select>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginBottom: 10 }}>
+            Cria os pontos de certificação que faltam, já marcados como "Obrigatório", com 0 pontos
+            (não pontuam, mas têm de ficar "Cumprido").
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setOpen(false)} style={{ ...secondaryBtnStyle, flex: 1 }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                onImport(nivel);
+                setOpen(false);
+              }}
+              style={{ ...primaryBtnStyle, flex: 1 }}
+            >
+              Importar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CertPage({ points, onNew, onOpen, onImportObrigatorios }) {
   const counts = {
     nao_iniciado: points.filter((p) => p.status === "nao_iniciado").length,
     em_andamento: points.filter((p) => p.status === "em_andamento").length,
@@ -1519,25 +1593,28 @@ function CertPage({ points, onNew, onOpen }) {
             <StatCard key={key} label={meta.label} value={counts[key]} color={meta.color} />
           ))}
         </div>
-        <button
-          onClick={onNew}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: COLORS.navy,
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "10px 16px",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <Plus size={16} /> Novo ponto
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <ImportObrigatoriosButton onImport={onImportObrigatorios} />
+          <button
+            onClick={onNew}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: COLORS.navy,
+              color: "#fff",
+              border: "none",
+              borderRadius: 4,
+              padding: "10px 16px",
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Plus size={16} /> Novo ponto
+          </button>
+        </div>
       </div>
 
       {total > 0 && (
@@ -1645,6 +1722,10 @@ function CertPage({ points, onNew, onOpen }) {
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {p.mandatory && <Tag label="Obrigatório" color={COLORS.purple} bg={COLORS.purpleBg} />}
+                    {p.nivel && <Tag label={NIVEL_LABEL[p.nivel] || p.nivel} color={COLORS.navy} bg={COLORS.rule} />}
+                    {p.criterio != null && p.criterio > 0 && (
+                      <Tag label={`Critério ${p.criterio}`} color={COLORS.slate} bg={COLORS.rule} />
+                    )}
                     <Tag label={meta.label} color={meta.color} bg={meta.bg} />
                   </div>
                 </div>
@@ -1796,6 +1877,26 @@ export default function App() {
   const removeCertPoint = (id) => {
     persistCert(certPoints.filter((p) => p.id !== id));
     setViewingCert(null);
+  };
+
+  const importObrigatorios = (nivel) => {
+    const existingTitles = new Set(certPoints.map((p) => p.title));
+    const toAdd = obrigatoriosAteNivel(nivel)
+      .filter((c) => !existingTitles.has(c.title))
+      .map((c, i) => ({
+        id: `cp_ob_${Date.now()}_${i}`,
+        title: c.title,
+        requirement: c.requirement,
+        dueDate: "",
+        points: 0,
+        mandatory: true,
+        nivel: c.nivel,
+        criterio: c.criterio,
+        status: "nao_iniciado",
+        notes: [],
+      }));
+    if (toAdd.length === 0) return;
+    persistCert([...certPoints, ...toAdd]);
   };
 
   const setCertStatus = (id, status) => {
@@ -1993,6 +2094,7 @@ export default function App() {
         ) : page === "certificacao" ? (
           <CertPage
             points={certPoints}
+            onImportObrigatorios={importObrigatorios}
             onNew={() => {
               setEditingCert(null);
               setShowCertForm(true);
