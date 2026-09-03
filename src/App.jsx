@@ -148,11 +148,26 @@ const CANAL_META = {
   redes: { label: "Redes Sociais", color: COLORS.purple, bg: COLORS.purpleBg },
 };
 
-const CATEGORIA_META = {
-  disciplinar: { label: "Disciplinar", color: COLORS.danger, bg: COLORS.dangerBg },
-  tecnico: { label: "Técnico", color: COLORS.progress, bg: COLORS.progressBg },
-  infraestrutura: { label: "Infraestrutura e Equipamentos", color: COLORS.warn, bg: COLORS.warnBg },
-};
+// Categoria da reclamação passa a ser uma lista editável (options.complaintCategories),
+// com estas como sugestão inicial — deixou de ser um enum fixo.
+const DEFAULT_CATEGORIAS = ["Disciplinar", "Técnico", "Infraestrutura e Equipamentos"];
+
+// Paleta usada para colorir categorias e temas de forma consistente, já que
+// deixaram de ter uma cor fixa por serem listas geríveis pelo utilizador.
+const TAG_PALETTE = [
+  { color: COLORS.danger, bg: COLORS.dangerBg },
+  { color: COLORS.progress, bg: COLORS.progressBg },
+  { color: COLORS.warn, bg: COLORS.warnBg },
+  { color: COLORS.purple, bg: COLORS.purpleBg },
+  { color: COLORS.ok, bg: COLORS.okBg },
+  { color: COLORS.navySoft, bg: COLORS.rule },
+];
+function colorForLabel(label) {
+  if (!label) return { color: COLORS.slate, bg: COLORS.doneBg };
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  return TAG_PALETTE[hash % TAG_PALETTE.length];
+}
 
 const EFICACIA_META = {
   eficaz: { label: "Eficaz", color: COLORS.ok, bg: COLORS.okBg },
@@ -241,7 +256,7 @@ function Tag({ label, color, bg, title }) {
 }
 
 // ---------- Entry form ----------
-function TriageBox({ onApply, temas }) {
+function TriageBox({ onApply, temas, categorias }) {
   const [emailText, setEmailText] = useState("");
   const [loading, setLoading] = useState(false);
   const [triageError, setTriageError] = useState(null);
@@ -256,13 +271,17 @@ function TriageBox({ onApply, temas }) {
       const res = await fetch("/api/triagem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, temas }),
+        body: JSON.stringify({ text, temas, categorias }),
       });
-      if (!res.ok) throw new Error("Falha na triagem");
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Falha na triagem");
+      }
       onApply(data);
     } catch (e) {
-      setTriageError("Não foi possível fazer a triagem automática. Preenche os campos manualmente.");
+      setTriageError(
+        `Não foi possível fazer a triagem automática (${e.message}). Preenche os campos manualmente.`
+      );
     } finally {
       setLoading(false);
     }
@@ -332,7 +351,7 @@ function TriageBox({ onApply, temas }) {
   );
 }
 
-function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, onManageOptions }) {
+function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, categoriaOptions, onManageOptions }) {
   const [form, setForm] = useState(
     initial || {
       receivedDate: new Date().toISOString().slice(0, 10),
@@ -363,7 +382,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
       next.tema = data.tema;
       applied.add("tema");
     }
-    if (data.categoria && CATEGORIA_META[data.categoria]) {
+    if (data.categoria && categoriaOptions.includes(data.categoria)) {
       next.categoria = data.categoria;
       applied.add("categoria");
     }
@@ -429,7 +448,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           </button>
         </div>
 
-        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} />}
+        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} categorias={categoriaOptions} />}
 
         <label style={{ ...labelStyle, marginTop: 0 }}>Canal de contacto{fieldHint("canal")}</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -487,28 +506,37 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           ))}
         </div>
 
-        <label style={labelStyle}>Categoria{fieldHint("categoria")}</label>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <label style={{ ...labelStyle }}>Categoria{fieldHint("categoria")}</label>
+          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+            Gerir lista
+          </button>
+        </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {Object.entries(CATEGORIA_META).map(([key, meta]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, categoria: key }))}
-              style={{
-                flex: "1 1 30%",
-                padding: "8px 6px",
-                borderRadius: 4,
-                border: `1.5px solid ${form.categoria === key ? meta.color : COLORS.rule}`,
-                background: form.categoria === key ? meta.bg : "transparent",
-                color: form.categoria === key ? meta.color : COLORS.ink,
-                fontSize: 11.5,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {meta.label}
-            </button>
-          ))}
+          {categoriaOptions.length === 0 && <div style={{ fontSize: 12, color: COLORS.slate }}>Sem categorias — usa "Gerir lista" para adicionar.</div>}
+          {categoriaOptions.map((label) => {
+            const meta = colorForLabel(label);
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, categoria: label }))}
+                style={{
+                  flex: "1 1 30%",
+                  padding: "8px 6px",
+                  borderRadius: 4,
+                  border: `1.5px solid ${form.categoria === label ? meta.color : COLORS.rule}`,
+                  background: form.categoria === label ? meta.bg : "transparent",
+                  color: form.categoria === label ? meta.color : COLORS.ink,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         <label style={labelStyle}>Reclamante (nome)</label>
@@ -700,10 +728,11 @@ function StatCard({ label, value, color }) {
 }
 
 // ---------- Manage schools/categories modal ----------
-function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRemove, onClose }) {
+function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, onAdd, onRemove, onClose }) {
   const [newSchool, setNewSchool] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAuditCategory, setNewAuditCategory] = useState("");
+  const [newComplaintCategory, setNewComplaintCategory] = useState("");
 
   const submitSchool = () => {
     const v = newSchool.trim();
@@ -719,6 +748,11 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
     const v = newAuditCategory.trim();
     if (v) onAdd("auditCategories", v);
     setNewAuditCategory("");
+  };
+  const submitComplaintCategory = () => {
+    const v = newComplaintCategory.trim();
+    if (v) onAdd("complaintCategories", v);
+    setNewComplaintCategory("");
   };
 
   const Chip = ({ label, onDelete }) => (
@@ -757,7 +791,8 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
           </button>
         </div>
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 20 }}>
-          Estas listas ficam disponíveis para toda a equipa ao criar ou editar reclamações.
+          Estas listas ficam disponíveis para toda a equipa em Reclamações, Auditorias e Análise. As escolas são
+          transversais a todas as áreas da app.
         </div>
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
@@ -779,6 +814,29 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
             style={inputStyle}
           />
           <button onClick={submitSchool} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
+            Adicionar
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          Categorias
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {complaintCategories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem categorias.</div>}
+          {complaintCategories.map((c) => (
+            <Chip key={c} label={c} onDelete={() => onRemove("complaintCategories", c)} />
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+          <input
+            type="text"
+            placeholder="Nome da nova categoria"
+            value={newComplaintCategory}
+            onChange={(e) => setNewComplaintCategory(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitComplaintCategory()}
+            style={inputStyle}
+          />
+          <button onClick={submitComplaintCategory} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
             Adicionar
           </button>
         </div>
@@ -877,8 +935,8 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
           {entry.severity && (
             <Tag label={`Gravidade: ${SEVERITY_META[entry.severity].label}`} color={SEVERITY_META[entry.severity].color} bg={SEVERITY_META[entry.severity].bg} />
           )}
-          {entry.categoria && CATEGORIA_META[entry.categoria] && (
-            <Tag label={CATEGORIA_META[entry.categoria].label} color={CATEGORIA_META[entry.categoria].color} bg={CATEGORIA_META[entry.categoria].bg} />
+          {entry.categoria && (
+            <Tag label={entry.categoria} color={colorForLabel(entry.categoria).color} bg={colorForLabel(entry.categoria).bg} />
           )}
           {entry.canal && CANAL_META[entry.canal] && (
             <Tag label={CANAL_META[entry.canal].label} color={CANAL_META[entry.canal].color} bg={CANAL_META[entry.canal].bg} />
@@ -1055,12 +1113,32 @@ function monthlyData(entries) {
     });
 }
 
-function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
+const ANALYSIS_PARAMS = [
+  { key: "monthly", label: "Tendência mensal" },
+  { key: "canal", label: "Canal de contacto" },
+  { key: "status", label: "Estado" },
+  { key: "categoria", label: "Categoria" },
+  { key: "eficacia", label: "Eficácia da resposta" },
+  { key: "tema", label: "Temas mais recorrentes" },
+  { key: "escola", label: "Escolas mais recorrentes" },
+];
+
+function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categoriaOptions }) {
   const [fSchool, setFSchool] = useState("todos");
   const [fTema, setFTema] = useState("todos");
   const [fCategoria, setFCategoria] = useState("todos");
   const [fCanal, setFCanal] = useState("todos");
   const [fGravidade, setFGravidade] = useState("todos");
+  const [visibleParams, setVisibleParams] = useState(new Set(ANALYSIS_PARAMS.map((p) => p.key)));
+
+  const toggleParam = (key) => {
+    setVisibleParams((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const filtered = useMemo(
     () =>
@@ -1098,12 +1176,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
   );
 
   const categoriaData = useMemo(
-    () =>
-      Object.entries(CATEGORIA_META).map(([key, meta]) => ({
-        name: meta.label,
-        value: filtered.filter((e) => e.categoria === key).length,
-        color: meta.color,
-      })),
+    () => topCounts(filtered, "categoria").map(([name, value]) => ({ name, value, color: colorForLabel(name).color })),
     [filtered]
   );
 
@@ -1144,7 +1217,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <select value={fSchool} onChange={(e) => setFSchool(e.target.value)} style={filterSelectStyle}>
           <option value="todos">Todas as escolas</option>
           {schoolOptions.map((s) => (
@@ -1163,9 +1236,9 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
         </select>
         <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)} style={filterSelectStyle}>
           <option value="todos">Todas as categorias</option>
-          {Object.entries(CATEGORIA_META).map(([key, meta]) => (
-            <option key={key} value={key}>
-              {meta.label}
+          {categoriaOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
             </option>
           ))}
         </select>
@@ -1187,6 +1260,36 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
         </select>
       </div>
 
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          Parâmetros de análise mostrados
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {ANALYSIS_PARAMS.map((p) => {
+            const active = visibleParams.has(p.key);
+            return (
+              <button
+                key={p.key}
+                onClick={() => toggleParam(p.key)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 20,
+                  border: `1.5px solid ${active ? COLORS.navy : COLORS.rule}`,
+                  background: active ? COLORS.navy : "transparent",
+                  color: active ? "#fff" : COLORS.slate,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {active ? "✓ " : "+ "}
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {total === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
           Sem reclamações para os filtros selecionados.
@@ -1200,149 +1303,171 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
             <StatCard label="Resolvidas dentro do prazo" value={onTimeRate !== null ? `${onTimeRate}%` : "—"} color={COLORS.ok} />
           </div>
 
-          <div style={{ ...panelStyle, marginBottom: 16 }}>
-            <div style={panelTitle}>Reclamações por mês (últimos 12 meses)</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={monthly}>
-                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                <Line type="monotone" dataKey="total" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 3, fill: COLORS.navy }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          {visibleParams.has("monthly") && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Reclamações por mês (últimos 12 meses)</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={monthly}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Line type="monotone" dataKey="total" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 3, fill: COLORS.navy }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-              <div style={panelTitle}>Distribuição por canal de contacto</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={canalData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                    {canalData.map((d, i) => (
-                      <Cell key={i} fill={d.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
-                {canalData.map((d) => (
-                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                    {d.name} ({d.value})
-                  </div>
-                ))}
+            {visibleParams.has("canal") && (
+              <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+                <div style={panelTitle}>Distribuição por canal de contacto</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={canalData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                      {canalData.map((d, i) => (
+                        <Cell key={i} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                  {canalData.map((d) => (
+                    <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                      {d.name} ({d.value})
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
-            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-              <div style={panelTitle}>Distribuição por estado</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                    {statusData.map((d, i) => (
-                      <Cell key={i} fill={d.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
-                {statusData.map((d) => (
-                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                    {d.name} ({d.value})
-                  </div>
-                ))}
+            {visibleParams.has("status") && (
+              <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+                <div style={panelTitle}>Distribuição por estado</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                      {statusData.map((d, i) => (
+                        <Cell key={i} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                  {statusData.map((d) => (
+                    <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                      {d.name} ({d.value})
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
-            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-              <div style={panelTitle}>Distribuição por categoria</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={categoriaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                    {categoriaData.map((d, i) => (
-                      <Cell key={i} fill={d.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
-                {categoriaData.map((d) => (
-                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                    {d.name} ({d.value})
-                  </div>
-                ))}
+            {visibleParams.has("categoria") && (
+              <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+                <div style={panelTitle}>Distribuição por categoria</div>
+                {categoriaData.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de categoria ainda.</div>
+                ) : (
+                  <>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <PieChart>
+                        <Pie data={categoriaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                          {categoriaData.map((d, i) => (
+                            <Cell key={i} fill={d.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
+                      {categoriaData.map((d) => (
+                        <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                          {d.name} ({d.value})
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
+            )}
 
-            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-              <div style={panelTitle}>Eficácia da resposta (concluídas)</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={eficaciaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                    {eficaciaData.map((d, i) => (
-                      <Cell key={i} fill={d.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
-                {eficaciaData.map((d) => (
-                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                    {d.name} ({d.value})
-                  </div>
-                ))}
+            {visibleParams.has("eficacia") && (
+              <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+                <div style={panelTitle}>Eficácia da resposta (concluídas)</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={eficaciaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                      {eficaciaData.map((d, i) => (
+                        <Cell key={i} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                  {eficaciaData.map((d) => (
+                    <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                      {d.name} ({d.value})
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ ...panelStyle, flex: "1 1 320px" }}>
-              <div style={panelTitle}>Temas mais recorrentes</div>
-              {temaData.length === 0 ? (
-                <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de tema ainda.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={Math.max(160, temaData.length * 32)}>
-                  <BarChart data={temaData} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                    <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
+            {visibleParams.has("tema") && (
+              <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+                <div style={panelTitle}>Temas mais recorrentes</div>
+                {temaData.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de tema ainda.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(160, temaData.length * 32)}>
+                    <BarChart data={temaData} layout="vertical" margin={{ left: 8 }}>
+                      <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                      <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
 
-            <div style={{ ...panelStyle, flex: "1 1 320px" }}>
-              <div style={panelTitle}>Escolas mais recorrentes</div>
-              {schoolData.length === 0 ? (
-                <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de escola ainda.</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
-                  <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                    <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
+            {visibleParams.has("escola") && (
+              <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+                <div style={panelTitle}>Escolas mais recorrentes</div>
+                {schoolData.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de escola ainda.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
+                    <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
+                      <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                      <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}
     </div>
   );
 }
+
+
 
 
 // ---------- New audit form ----------
@@ -1676,15 +1801,17 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit }) {
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave }) {
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, onManageOptions }) {
   const [form, setForm] = useState({
     personType: "familia",
     personName: "",
+    school: "",
     motivo: "ma_conduta",
     date: new Date().toISOString().slice(0, 10),
     description: "",
     sanctionApplied: null,
     sanctionDescription: "",
+    relatedComplaintId: "",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -1729,6 +1856,31 @@ function SanctionForm({ onCancel, onSave }) {
 
         <label style={labelStyle}>Nome</label>
         <input type="text" placeholder="Nome da pessoa envolvida" value={form.personName} onChange={set("personName")} style={inputStyle} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <label style={{ ...labelStyle }}>Escola (opcional)</label>
+          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+            Gerir lista
+          </button>
+        </div>
+        <select value={form.school} onChange={set("school")} style={inputStyle}>
+          <option value="">Sem escola associada</option>
+          {schoolOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+
+        <label style={labelStyle}>Reclamação associada (opcional)</label>
+        <select value={form.relatedComplaintId} onChange={set("relatedComplaintId")} style={inputStyle}>
+          <option value="">Nenhuma — ocorrência independente</option>
+          {complaints.map((c) => (
+            <option key={c.id} value={c.id}>
+              Nº {String(c.entryNumber).padStart(4, "0")} — {c.complainant}
+            </option>
+          ))}
+        </select>
 
         <label style={labelStyle}>Motivo</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1839,12 +1991,13 @@ function SanctionForm({ onCancel, onSave }) {
 }
 
 // ---------- Sanções: detalhe / progressão do processo ----------
-function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove }) {
+function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, complaints }) {
   const [note, setNote] = useState("");
   const [propostaText, setPropostaText] = useState(sanction.propostaSancao || "");
   const [sancaoFamiliaText, setSancaoFamiliaText] = useState(sanction.sanctionDescription || "");
   const notes = [...(sanction.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   const motivoMeta = MOTIVO_META[sanction.motivo] || MOTIVO_META.outro;
+  const relatedComplaint = sanction.relatedComplaintId ? complaints.find((c) => c.id === sanction.relatedComplaintId) : null;
 
   const submitNote = () => {
     const v = note.trim();
@@ -1876,10 +2029,17 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove }) {
           </div>
         </div>
         <h2 style={{ margin: "6px 0 6px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{sanction.personName}</h2>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           <Tag label={PERSON_TYPE_META[sanction.personType].label} color={COLORS.navy} bg={COLORS.rule} />
           <Tag label={motivoMeta.label} color={motivoMeta.color} bg={motivoMeta.bg} />
+          {sanction.school && <Tag label={sanction.school} color={COLORS.slate} bg={COLORS.doneBg} />}
         </div>
+
+        {relatedComplaint && (
+          <div style={{ fontSize: 12.5, color: COLORS.navySoft, marginBottom: 14 }}>
+            Associada à reclamação Nº {String(relatedComplaint.entryNumber).padStart(4, "0")} — {relatedComplaint.complainant}
+          </div>
+        )}
 
         {sanction.description && (
           <div style={{ fontSize: 13.5, marginBottom: 18, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
@@ -2078,7 +2238,11 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
     >
       <div>
         <div style={{ fontWeight: 600, fontSize: 14 }}>{s.personName}</div>
-        <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>{fmt(new Date(s.date + "T00:00:00"))}</div>
+        <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+          {fmt(new Date(s.date + "T00:00:00"))}
+          {s.school ? ` · ${s.school}` : ""}
+          {s.relatedComplaintId ? " · associada a reclamação" : ""}
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <Tag label={MOTIVO_META[s.motivo].label} color={MOTIVO_META[s.motivo].color} bg={MOTIVO_META[s.motivo].bg} />
@@ -2174,7 +2338,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [] });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2239,7 +2403,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -2559,7 +2723,7 @@ export default function App() {
         </div>
 
         {reclamacoesView === "analise" ? (
-          <AnalysisDashboard withStatus={withStatus} schoolOptions={options.schools} categoryOptions={options.categories} />
+          <AnalysisDashboard withStatus={withStatus} schoolOptions={options.schools} categoryOptions={options.categories} categoriaOptions={options.complaintCategories} />
         ) : (
         <>
         <div
@@ -2669,7 +2833,7 @@ export default function App() {
                       {e.severity && <Tag label={SEVERITY_META[e.severity].label} color={SEVERITY_META[e.severity].color} bg={SEVERITY_META[e.severity].bg} />}
                     </td>
                     <td style={{ padding: "10px 14px" }}>
-                      {e.categoria && CATEGORIA_META[e.categoria] && <Tag label={CATEGORIA_META[e.categoria].label} color={CATEGORIA_META[e.categoria].color} bg={CATEGORIA_META[e.categoria].bg} />}
+                      {e.categoria && <Tag label={e.categoria} color={colorForLabel(e.categoria).color} bg={colorForLabel(e.categoria).bg} />}
                     </td>
                     <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.school || "—"}</td>
                     <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.tema || "—"}</td>
@@ -2729,6 +2893,7 @@ export default function App() {
           nextNumber={nextNumber}
           schoolOptions={options.schools}
           categoryOptions={options.categories}
+          categoriaOptions={options.complaintCategories}
           onManageOptions={() => setShowManage(true)}
           onCancel={() => {
             setShowForm(false);
@@ -2743,6 +2908,7 @@ export default function App() {
           schools={options.schools}
           categories={options.categories}
           auditCategories={options.auditCategories}
+          complaintCategories={options.complaintCategories}
           onAdd={addOption}
           onRemove={removeOption}
           onClose={() => setShowManage(false)}
@@ -2794,6 +2960,9 @@ export default function App() {
         <SanctionForm
           onCancel={() => setShowSanctionForm(false)}
           onSave={saveSanction}
+          schoolOptions={options.schools}
+          complaints={entries}
+          onManageOptions={() => setShowManage(true)}
         />
       )}
 
@@ -2804,6 +2973,7 @@ export default function App() {
           onUpdate={updateSanction}
           onAddNote={addSanctionNote}
           onRemove={removeSanction}
+          complaints={entries}
         />
       )}
     </div>

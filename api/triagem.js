@@ -20,6 +20,8 @@ const TEMAS_CONHECIDOS = [
   "Outro",
 ];
 
+const CATEGORIAS_CONHECIDAS = ["Disciplinar", "Técnico", "Infraestrutura e Equipamentos"];
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Método não permitido" });
@@ -32,20 +34,22 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { text, temas } = req.body || {};
+  const { text, temas, categorias } = req.body || {};
   if (!text || typeof text !== "string" || !text.trim()) {
     res.status(400).json({ error: "Texto em falta." });
     return;
   }
 
   const listaTemas = Array.isArray(temas) && temas.length > 0 ? temas : TEMAS_CONHECIDOS;
+  const listaCategorias = Array.isArray(categorias) && categorias.length > 0 ? categorias : CATEGORIAS_CONHECIDAS;
 
   const systemPrompt = `Classificas reclamações recebidas por uma academia de futebol (Dragon Force, FC Porto).
 Devolve APENAS um objeto JSON válido, sem markdown, sem texto antes ou depois, com exatamente estes campos:
 
 {
   "canal": um de "email" | "presencial" | "livro" | "redes" (deduz do texto; assume "email" se não for claro),
-  "categoria": um de "disciplinar" | "tecnico" | "infraestrutura" (disciplinar = comportamento/conduta de pessoas; tecnico = treinos, convocatórias, avaliação desportiva; infraestrutura = instalações, equipamentos, transporte, pagamentos),
+  "categoria": escolhe EXATAMENTE uma destas opções (copia o texto tal e qual): ${listaCategorias.join(" | ")}
+    — se nenhuma servir bem, devolve "" (string vazia),
   "tema": escolhe EXATAMENTE uma destas opções (copia o texto tal e qual): ${listaTemas.join(" | ")}
     — se nenhuma servir bem, devolve "" (string vazia),
   "gravidade": um de "baixa" | "media" | "alta" (alta = envolve agressão, ameaça, insulto grave, risco de segurança; media = situação relevante mas sem risco imediato; baixa = pedido simples ou reclamação menor),
@@ -62,7 +66,7 @@ Devolve APENAS um objeto JSON válido, sem markdown, sem texto antes ou depois, 
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 500,
         system: systemPrompt,
         messages: [{ role: "user", content: text.slice(0, 8000) }],
