@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { dbStorage } from "./supabaseClient";
-import { CRITERIOS_OBRIGATORIOS, NIVEL_LABEL, obrigatoriosAteNivel } from "./criteriosObrigatorios";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Award } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Loader2 } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -45,7 +44,7 @@ const APP_NAME = "Auditoria e Gestão de Qualidade DF";
 const STORAGE_KEY = "reclamacoes:registo";
 const STORAGE_OPTIONS_KEY = "reclamacoes:opcoes";
 const STORAGE_AUDITS_KEY = "reclamacoes:auditorias";
-const STORAGE_CERT_KEY = "reclamacoes:certificacao";
+const STORAGE_SANCOES_KEY = "reclamacoes:sancoes";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -111,9 +110,6 @@ function startOfDay(d) {
   return x;
 }
 
-const TYPE_LABEL = { normal: "Reclamação normal", livro: "Livro de Reclamações" };
-const TYPE_DAYS = { normal: 10, livro: 15 };
-
 function deriveStatus(item) {
   if (item.status === "concluido") return "concluido";
   const today = startOfDay(new Date());
@@ -142,29 +138,50 @@ const CLASSIFICATION_META = {
   AS: { label: "Área Sensível", color: COLORS.purple, bg: COLORS.purpleBg },
 };
 
-const CERT_STATUS_META = {
-  nao_iniciado: { label: "Não iniciado", color: COLORS.slate, bg: COLORS.doneBg },
-  em_andamento: { label: "Em andamento", color: COLORS.progress, bg: COLORS.progressBg },
-  concluido: { label: "Cumprido", color: COLORS.ok, bg: COLORS.okBg },
-  nao_conforme: { label: "Não conforme", color: COLORS.danger, bg: COLORS.dangerBg },
+// Prazo legal: sempre 10 dias úteis a contar da data de receção.
+const BUSINESS_DAYS_DEADLINE = 10;
+
+const CANAL_META = {
+  email: { label: "E-mail", color: COLORS.progress, bg: COLORS.progressBg },
+  presencial: { label: "Pessoal", color: COLORS.ok, bg: COLORS.okBg },
+  livro: { label: "Livro de Reclamações", color: COLORS.navy, bg: COLORS.rule },
+  redes: { label: "Redes Sociais", color: COLORS.purple, bg: COLORS.purpleBg },
 };
 
-// ---------- FPF certification: escala de pontuação e estrelas ----------
-// Sistema FPF: soma de pontos de 9 critérios de avaliação, até 100 pontos.
-// A estrela atribuída depende do total de pontos E do cumprimento dos
-// requisitos de acesso / critérios obrigatórios específicos de cada nível.
-const CERT_TIERS = [
-  { min: 90, max: 100, stars: 5, label: "Entidade Formadora — 5 estrelas" },
-  { min: 80, max: 89.99, stars: 4, label: "Entidade Formadora — 4 estrelas" },
-  { min: 50, max: 79.99, stars: 3, label: "Entidade Formadora — 3 estrelas" },
-];
+const CATEGORIA_META = {
+  disciplinar: { label: "Disciplinar", color: COLORS.danger, bg: COLORS.dangerBg },
+  tecnico: { label: "Técnico", color: COLORS.progress, bg: COLORS.progressBg },
+  infraestrutura: { label: "Infraestrutura e Equipamentos", color: COLORS.warn, bg: COLORS.warnBg },
+};
 
-function certTierFor(totalPoints) {
-  const tier = CERT_TIERS.find((t) => totalPoints >= t.min && totalPoints <= t.max);
-  if (tier) return tier;
-  if (totalPoints > 0) return { min: 0, max: 49.99, stars: 0, label: "Escola de Futebol / Centro Básico (CBFF)" };
-  return { min: 0, max: 0, stars: 0, label: "Sem pontuação registada" };
-}
+const EFICACIA_META = {
+  eficaz: { label: "Eficaz", color: COLORS.ok, bg: COLORS.okBg },
+  parcial: { label: "Parcialmente eficaz", color: COLORS.warn, bg: COLORS.warnBg },
+  ineficaz: { label: "Ineficaz", color: COLORS.danger, bg: COLORS.dangerBg },
+};
+
+// ---------- Sanções / ocorrências disciplinares ----------
+const MOTIVO_META = {
+  ma_conduta: { label: "Má conduta", color: COLORS.warn, bg: COLORS.warnBg },
+  ameacas: { label: "Ameaças", color: COLORS.danger, bg: COLORS.dangerBg },
+  insultos: { label: "Insultos", color: COLORS.danger, bg: COLORS.dangerBg },
+  agressao: { label: "Agressão", color: COLORS.danger, bg: COLORS.dangerBg },
+  outro: { label: "Outro", color: COLORS.slate, bg: COLORS.doneBg },
+};
+
+const PERSON_TYPE_META = {
+  familia: { label: "Pai / Encarregado de Educação" },
+  elemento_df: { label: "Elemento Dragon Force" },
+};
+
+const DF_STAGE_META = {
+  ocorrencia: { label: "Ocorrência registada", color: COLORS.slate, bg: COLORS.doneBg },
+  inquerito: { label: "Inquérito disciplinar aberto", color: COLORS.warn, bg: COLORS.warnBg },
+  proposta: { label: "Sanção proposta (para decisão)", color: COLORS.progress, bg: COLORS.progressBg },
+  decisao_suspensao: { label: "Decisão: Suspensão", color: COLORS.danger, bg: COLORS.dangerBg },
+  decisao_expulsao: { label: "Decisão: Expulsão do projeto", color: COLORS.danger, bg: COLORS.dangerBg },
+  decisao_arquivado: { label: "Decisão: Arquivado / sem sanção", color: COLORS.ok, bg: COLORS.okBg },
+};
 
 // ---------- Stamp badge (signature element) ----------
 function Stamp({ statusKey, onClick }) {
@@ -224,26 +241,156 @@ function Tag({ label, color, bg, title }) {
 }
 
 // ---------- Entry form ----------
+function TriageBox({ onApply, temas }) {
+  const [emailText, setEmailText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [triageError, setTriageError] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  const runTriage = async () => {
+    const text = emailText.trim();
+    if (!text) return;
+    setLoading(true);
+    setTriageError(null);
+    try {
+      const res = await fetch("/api/triagem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, temas }),
+      });
+      if (!res.ok) throw new Error("Falha na triagem");
+      const data = await res.json();
+      onApply(data);
+    } catch (e) {
+      setTriageError("Não foi possível fazer a triagem automática. Preenche os campos manualmente.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 18, border: `1.5px dashed ${COLORS.navySoft}`, borderRadius: 5, padding: "12px 14px", background: "#F4F7FA" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          fontSize: 13,
+          fontWeight: 700,
+          color: COLORS.navySoft,
+        }}
+      >
+        <Sparkles size={15} />
+        Triagem automática (colar texto do e-mail)
+      </button>
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          <textarea
+            rows={6}
+            placeholder="Cola aqui o corpo do e-mail recebido..."
+            value={emailText}
+            onChange={(e) => setEmailText(e.target.value)}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", marginBottom: 8 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              onClick={runTriage}
+              disabled={loading || !emailText.trim()}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 4,
+                border: "none",
+                background: COLORS.navySoft,
+                color: "#fff",
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: loading || !emailText.trim() ? "default" : "pointer",
+                opacity: loading || !emailText.trim() ? 0.6 : 1,
+              }}
+            >
+              {loading ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
+              {loading ? "A analisar..." : "Sugerir classificação"}
+            </button>
+            <div style={{ fontSize: 11, color: COLORS.slate }}>
+              Preenche automaticamente tema, categoria, gravidade, canal e descrição — depois confirma ou corrige.
+            </div>
+          </div>
+          {triageError && <div style={{ color: COLORS.danger, fontSize: 12, marginTop: 8 }}>{triageError}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, onManageOptions }) {
   const [form, setForm] = useState(
     initial || {
-      type: "normal",
       receivedDate: new Date().toISOString().slice(0, 10),
       complainant: "",
       school: "",
-      category: "",
+      tema: "",
+      categoria: "",
+      canal: "email",
       severity: "media",
       description: "",
+      context: "",
+      emailLink: "",
     }
   );
+  const [suggested, setSuggested] = useState(new Set());
 
   const preview = useMemo(() => {
     if (!form.receivedDate) return null;
-    const days = TYPE_DAYS[form.type];
-    return addBusinessDays(new Date(form.receivedDate + "T00:00:00"), days);
-  }, [form.receivedDate, form.type]);
+    return addBusinessDays(new Date(form.receivedDate + "T00:00:00"), BUSINESS_DAYS_DEADLINE);
+  }, [form.receivedDate]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const applyTriage = (data) => {
+    const next = { ...form };
+    const applied = new Set();
+    if (data.tema && categoryOptions.includes(data.tema)) {
+      next.tema = data.tema;
+      applied.add("tema");
+    }
+    if (data.categoria && CATEGORIA_META[data.categoria]) {
+      next.categoria = data.categoria;
+      applied.add("categoria");
+    }
+    if (data.gravidade && SEVERITY_META[data.gravidade]) {
+      next.severity = data.gravidade;
+      applied.add("severity");
+    }
+    if (data.canal && CANAL_META[data.canal]) {
+      next.canal = data.canal;
+      applied.add("canal");
+    }
+    if (data.resumo) {
+      next.description = data.resumo;
+      applied.add("description");
+    }
+    if (data.contexto) {
+      next.context = data.contexto;
+      applied.add("context");
+    }
+    setForm(next);
+    setSuggested(applied);
+  };
+
+  const fieldHint = (key) =>
+    suggested.has(key) ? (
+      <span style={{ fontSize: 10.5, color: COLORS.navySoft, fontWeight: 700, marginLeft: 6 }}>· sugerido por IA, confirma</span>
+    ) : null;
 
   return (
     <div
@@ -259,7 +406,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
     >
       <div
         style={{
-          width: "min(440px, 100%)",
+          width: "min(460px, 100%)",
           background: COLORS.paperRaised,
           height: "100%",
           padding: "28px 26px",
@@ -282,40 +429,46 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           </button>
         </div>
 
-        <label style={labelStyle}>Tipo</label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {["normal", "livro"].map((t) => (
+        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} />}
+
+        <label style={{ ...labelStyle, marginTop: 0 }}>Canal de contacto{fieldHint("canal")}</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+          {Object.entries(CANAL_META).map(([key, meta]) => (
             <button
-              key={t}
-              onClick={() => setForm((f) => ({ ...f, type: t }))}
+              key={key}
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, canal: key }))}
               style={{
-                flex: 1,
-                padding: "10px 8px",
+                flex: "1 1 45%",
+                padding: "9px 8px",
                 borderRadius: 4,
-                border: `1.5px solid ${form.type === t ? COLORS.navy : COLORS.rule}`,
-                background: form.type === t ? COLORS.navy : "transparent",
-                color: form.type === t ? "#fff" : COLORS.ink,
-                fontSize: 13,
+                border: `1.5px solid ${form.canal === key ? COLORS.navy : COLORS.rule}`,
+                background: form.canal === key ? COLORS.navy : "transparent",
+                color: form.canal === key ? "#fff" : COLORS.ink,
+                fontSize: 12.5,
                 fontWeight: 600,
                 cursor: "pointer",
               }}
             >
-              {TYPE_LABEL[t]}
-              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, fontFamily: "'IBM Plex Mono', monospace" }}>
-                {TYPE_DAYS[t]} dias úteis
-              </div>
+              {meta.label}
             </button>
           ))}
         </div>
 
         <label style={labelStyle}>Data de receção</label>
         <input type="date" value={form.receivedDate} onChange={set("receivedDate")} style={inputStyle} />
+        {preview && (
+          <div style={{ margin: "8px 0 4px", fontSize: 12.5, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+            Prazo (10 dias úteis) → <strong style={{ color: COLORS.navy }}>{fmt(preview)}</strong>
+          </div>
+        )}
 
-        <label style={labelStyle}>Gravidade</label>
+        <label style={labelStyle}>Gravidade{fieldHint("severity")}</label>
         <div style={{ display: "flex", gap: 8 }}>
           {Object.entries(SEVERITY_META).map(([key, meta]) => (
             <button
               key={key}
+              type="button"
               onClick={() => setForm((f) => ({ ...f, severity: key }))}
               style={{
                 flex: 1,
@@ -334,14 +487,32 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           ))}
         </div>
 
-        {preview && (
-          <div style={{ margin: "10px 0 18px", fontSize: 12.5, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-            Prazo calculado → <strong style={{ color: COLORS.navy }}>{fmt(preview)}</strong>
-          </div>
-        )}
+        <label style={labelStyle}>Categoria{fieldHint("categoria")}</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {Object.entries(CATEGORIA_META).map(([key, meta]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, categoria: key }))}
+              style={{
+                flex: "1 1 30%",
+                padding: "8px 6px",
+                borderRadius: 4,
+                border: `1.5px solid ${form.categoria === key ? meta.color : COLORS.rule}`,
+                background: form.categoria === key ? meta.bg : "transparent",
+                color: form.categoria === key ? meta.color : COLORS.ink,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {meta.label}
+            </button>
+          ))}
+        </div>
 
-        <label style={labelStyle}>Reclamante</label>
-        <input type="text" placeholder="Nome do reclamante" value={form.complainant} onChange={set("complainant")} style={inputStyle} />
+        <label style={labelStyle}>Reclamante (nome)</label>
+        <input type="text" placeholder="Nome de quem faz a reclamação" value={form.complainant} onChange={set("complainant")} style={inputStyle} />
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 14 }}>Escola</label>
@@ -359,13 +530,13 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
         </select>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <label style={{ ...labelStyle, marginTop: 14 }}>Assunto / Categoria</label>
+          <label style={{ ...labelStyle, marginTop: 14 }}>Tema (mais específico que a categoria){fieldHint("tema")}</label>
           <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
             Gerir lista
           </button>
         </div>
-        <select value={form.category} onChange={set("category")} style={inputStyle}>
-          <option value="">{categoryOptions.length ? "Selecionar categoria..." : "Sem categorias — usa 'Gerir lista'"}</option>
+        <select value={form.tema} onChange={set("tema")} style={inputStyle}>
+          <option value="">{categoryOptions.length ? "Selecionar tema..." : "Sem temas — usa 'Gerir lista'"}</option>
           {categoryOptions.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -373,12 +544,30 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           ))}
         </select>
 
-        <label style={labelStyle}>Descrição</label>
+        <label style={labelStyle}>Hiperligação ao e-mail recebido</label>
+        <input
+          type="url"
+          placeholder="https://mail.google.com/... ou link do Outlook"
+          value={form.emailLink}
+          onChange={set("emailLink")}
+          style={inputStyle}
+        />
+
+        <label style={labelStyle}>Descrição (resumo do e-mail){fieldHint("description")}</label>
         <textarea
-          rows={5}
-          placeholder="Resumo da reclamação..."
+          rows={4}
+          placeholder="Resumo objetivo da reclamação..."
           value={form.description}
           onChange={set("description")}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+        />
+
+        <label style={labelStyle}>Contexto adicional{fieldHint("context")}</label>
+        <textarea
+          rows={4}
+          placeholder="Corpo de texto com mais contexto, histórico, ou detalhes que não cabem no resumo..."
+          value={form.context}
+          onChange={set("context")}
           style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
         />
 
@@ -389,7 +578,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           <button
             onClick={() => {
               if (!form.complainant.trim()) return;
-              const deadline = addBusinessDays(new Date(form.receivedDate + "T00:00:00"), TYPE_DAYS[form.type]);
+              const deadline = addBusinessDays(new Date(form.receivedDate + "T00:00:00"), BUSINESS_DAYS_DEADLINE);
               onSave({
                 ...form,
                 deadline: deadline.toISOString(),
@@ -407,6 +596,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
     </div>
   );
 }
+
 
 const labelStyle = {
   display: "block",
@@ -594,10 +784,10 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
         </div>
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Categorias / Assuntos
+          Temas (mais específicos que a categoria)
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {categories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem categorias.</div>}
+          {categories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem temas.</div>}
           {categories.map((c) => (
             <Chip key={c} label={c} onDelete={() => onRemove("categories", c)} />
           ))}
@@ -605,7 +795,7 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
         <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
           <input
             type="text"
-            placeholder="Nome da nova categoria"
+            placeholder="Nome do novo tema"
             value={newCategory}
             onChange={(e) => setNewCategory(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submitCategory()}
@@ -644,8 +834,12 @@ function ManageOptionsModal({ schools, categories, auditCategories, onAdd, onRem
 }
 
 // ---------- Complaint detail / notes timeline ----------
+// ---------- Complaint detail / notes timeline ----------
 function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen }) {
   const [note, setNote] = useState("");
+  const [concluding, setConcluding] = useState(false);
+  const [responseText, setResponseText] = useState(entry.responseText || "");
+  const [eficacia, setEficacia] = useState(entry.eficacia || "");
   const notes = [...(entry.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const submit = () => {
@@ -655,13 +849,17 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
     setNote("");
   };
 
+  const confirmDone = () => {
+    onDone(entry.id, { responseText: responseText.trim(), eficacia });
+  };
+
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
       onClick={onClose}
     >
       <div
-        style={{ width: "min(520px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        style={{ width: "min(560px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -679,16 +877,56 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
           {entry.severity && (
             <Tag label={`Gravidade: ${SEVERITY_META[entry.severity].label}`} color={SEVERITY_META[entry.severity].color} bg={SEVERITY_META[entry.severity].bg} />
           )}
+          {entry.categoria && CATEGORIA_META[entry.categoria] && (
+            <Tag label={CATEGORIA_META[entry.categoria].label} color={CATEGORIA_META[entry.categoria].color} bg={CATEGORIA_META[entry.categoria].bg} />
+          )}
+          {entry.canal && CANAL_META[entry.canal] && (
+            <Tag label={CANAL_META[entry.canal].label} color={CANAL_META[entry.canal].color} bg={CANAL_META[entry.canal].bg} />
+          )}
+          {entry.eficacia && EFICACIA_META[entry.eficacia] && (
+            <Tag label={`Eficácia: ${EFICACIA_META[entry.eficacia].label}`} color={EFICACIA_META[entry.eficacia].color} bg={EFICACIA_META[entry.eficacia].bg} />
+          )}
         </div>
 
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 18, lineHeight: 1.6 }}>
-          {TYPE_LABEL[entry.type]} · {entry.school || "sem escola"} · {entry.category || "sem categoria"} <br />
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 14, lineHeight: 1.6 }}>
+          {entry.school || "sem escola"} · {entry.tema || "sem tema"} <br />
           Receção: {fmt(new Date(entry.receivedDate + "T00:00:00"))} · Prazo: {fmt(new Date(entry.deadline))}
         </div>
 
+        {entry.emailLink && (
+          <a
+            href={entry.emailLink}
+            target="_blank"
+            rel="noreferrer"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: COLORS.navySoft, marginBottom: 14, textDecoration: "underline" }}
+          >
+            <Mail size={13} /> Abrir e-mail original
+          </a>
+        )}
+
         {entry.description && (
-          <div style={{ fontSize: 13.5, marginBottom: 18, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
+          <div style={{ fontSize: 13.5, marginBottom: 12, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
             {entry.description}
+          </div>
+        )}
+
+        {entry.context && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+              Contexto adicional
+            </div>
+            <div style={{ fontSize: 13, color: COLORS.slate, whiteSpace: "pre-wrap" }}>{entry.context}</div>
+          </div>
+        )}
+
+        {entry.status === "concluido" && entry.responseText && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ok, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+              Resposta dada à reclamação
+            </div>
+            <div style={{ fontSize: 13.5, padding: "10px 12px", background: COLORS.okBg, borderRadius: 4, border: `1px solid ${COLORS.ok}`, whiteSpace: "pre-wrap" }}>
+              {entry.responseText}
+            </div>
           </div>
         )}
 
@@ -699,7 +937,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
             </button>
           )}
           {entry.derivedStatus !== "concluido" ? (
-            <button onClick={() => onDone(entry.id)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 12px", fontSize: 12.5 }}>
+            <button onClick={() => setConcluding((v) => !v)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 12px", fontSize: 12.5 }}>
               Marcar concluído
             </button>
           ) : (
@@ -708,6 +946,44 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
             </button>
           )}
         </div>
+
+        {concluding && entry.derivedStatus !== "concluido" && (
+          <div style={{ marginBottom: 20, padding: "12px 14px", background: COLORS.paper, border: `1.5px solid ${COLORS.navySoft}`, borderRadius: 5 }}>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Resposta dada à reclamação</label>
+            <textarea
+              rows={3}
+              placeholder="O que foi respondido / decidido..."
+              value={responseText}
+              onChange={(e) => setResponseText(e.target.value)}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+            />
+            <label style={labelStyle}>Eficácia da resposta</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {Object.entries(EFICACIA_META).map(([key, meta]) => (
+                <button
+                  key={key}
+                  onClick={() => setEficacia(key)}
+                  style={{
+                    flex: 1,
+                    padding: "7px 6px",
+                    borderRadius: 4,
+                    border: `1.5px solid ${eficacia === key ? meta.color : COLORS.rule}`,
+                    background: eficacia === key ? meta.bg : "transparent",
+                    color: eficacia === key ? meta.color : COLORS.ink,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={confirmDone} style={{ ...primaryBtnStyle, marginTop: 12, flex: "none", padding: "8px 16px" }}>
+              Confirmar conclusão
+            </button>
+          </div>
+        )}
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           O que já foi feito / o que falta fazer
@@ -747,6 +1023,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   );
 }
 
+
 // ---------- (recurrence lists superseded by AnalysisDashboard charts) ----------
 
 function topCounts(entries, field) {
@@ -778,40 +1055,72 @@ function monthlyData(entries) {
     });
 }
 
-function AnalysisDashboard({ withStatus }) {
-  const total = withStatus.length;
+function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions }) {
+  const [fSchool, setFSchool] = useState("todos");
+  const [fTema, setFTema] = useState("todos");
+  const [fCategoria, setFCategoria] = useState("todos");
+  const [fCanal, setFCanal] = useState("todos");
+  const [fGravidade, setFGravidade] = useState("todos");
 
-  const monthly = useMemo(() => monthlyData(withStatus), [withStatus]);
+  const filtered = useMemo(
+    () =>
+      withStatus
+        .filter((e) => (fSchool === "todos" ? true : e.school === fSchool))
+        .filter((e) => (fTema === "todos" ? true : e.tema === fTema))
+        .filter((e) => (fCategoria === "todos" ? true : e.categoria === fCategoria))
+        .filter((e) => (fCanal === "todos" ? true : e.canal === fCanal))
+        .filter((e) => (fGravidade === "todos" ? true : e.severity === fGravidade)),
+    [withStatus, fSchool, fTema, fCategoria, fCanal, fGravidade]
+  );
 
-  const typeData = useMemo(() => {
-    const normal = withStatus.filter((e) => e.type === "normal").length;
-    const livro = withStatus.filter((e) => e.type === "livro").length;
-    return [
-      { name: TYPE_LABEL.normal, value: normal, color: COLORS.navySoft },
-      { name: TYPE_LABEL.livro, value: livro, color: COLORS.navy },
-    ];
-  }, [withStatus]);
+  const total = filtered.length;
+
+  const monthly = useMemo(() => monthlyData(filtered), [filtered]);
+
+  const canalData = useMemo(
+    () =>
+      Object.entries(CANAL_META).map(([key, meta]) => ({
+        name: meta.label,
+        value: filtered.filter((e) => e.canal === key).length,
+        color: meta.color,
+      })),
+    [filtered]
+  );
 
   const statusData = useMemo(
     () =>
       Object.keys(STATUS_META).map((key) => ({
         name: STATUS_META[key].label,
-        value: withStatus.filter((e) => e.derivedStatus === key).length,
+        value: filtered.filter((e) => e.derivedStatus === key).length,
         color: STATUS_META[key].color,
       })),
-    [withStatus]
+    [filtered]
   );
 
-  const categoryData = useMemo(
-    () => topCounts(withStatus, "category").slice(0, 8).map(([name, value]) => ({ name, value })),
-    [withStatus]
-  );
-  const schoolData = useMemo(
-    () => topCounts(withStatus, "school").slice(0, 8).map(([name, value]) => ({ name, value })),
-    [withStatus]
+  const categoriaData = useMemo(
+    () =>
+      Object.entries(CATEGORIA_META).map(([key, meta]) => ({
+        name: meta.label,
+        value: filtered.filter((e) => e.categoria === key).length,
+        color: meta.color,
+      })),
+    [filtered]
   );
 
-  const resolved = withStatus.filter((e) => e.status === "concluido" && e.resolvedDate);
+  const eficaciaData = useMemo(
+    () =>
+      Object.entries(EFICACIA_META).map(([key, meta]) => ({
+        name: meta.label,
+        value: filtered.filter((e) => e.eficacia === key).length,
+        color: meta.color,
+      })),
+    [filtered]
+  );
+
+  const temaData = useMemo(() => topCounts(filtered, "tema").slice(0, 8).map(([name, value]) => ({ name, value })), [filtered]);
+  const schoolData = useMemo(() => topCounts(filtered, "school").slice(0, 8).map(([name, value]) => ({ name, value })), [filtered]);
+
+  const resolved = filtered.filter((e) => e.status === "concluido" && e.resolvedDate);
   const avgResolutionDays = resolved.length
     ? Math.round(
         resolved.reduce((sum, e) => sum + (new Date(e.resolvedDate) - new Date(e.receivedDate + "T00:00:00")) / 86400000, 0) /
@@ -822,7 +1131,7 @@ function AnalysisDashboard({ withStatus }) {
     ? Math.round((resolved.filter((e) => new Date(e.resolvedDate) <= new Date(e.deadline)).length / resolved.length) * 100)
     : null;
 
-  const responded = withStatus.filter((e) => e.startedDate);
+  const responded = filtered.filter((e) => e.startedDate);
   const avgResponseDays = responded.length
     ? Math.round(
         (responded.reduce((sum, e) => sum + (new Date(e.startedDate) - new Date(e.receivedDate + "T00:00:00")) / 86400000, 0) /
@@ -831,120 +1140,210 @@ function AnalysisDashboard({ withStatus }) {
       ) / 10
     : null;
 
-  if (total === 0) {
-    return (
-      <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-        Ainda não há reclamações registadas para analisar.
-      </div>
-    );
-  }
+  const filterSelectStyle = { ...inputStyle, width: 180 };
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
-        <StatCard label="Total de reclamações" value={total} />
-        <StatCard label="Tempo médio de resposta" value={avgResponseDays !== null ? `${avgResponseDays} d` : "—"} color={COLORS.progress} />
-        <StatCard label="Tempo médio de resolução" value={avgResolutionDays !== null ? `${avgResolutionDays} d` : "—"} />
-        <StatCard label="Resolvidas dentro do prazo" value={onTimeRate !== null ? `${onTimeRate}%` : "—"} color={COLORS.ok} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <select value={fSchool} onChange={(e) => setFSchool(e.target.value)} style={filterSelectStyle}>
+          <option value="todos">Todas as escolas</option>
+          {schoolOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <select value={fTema} onChange={(e) => setFTema(e.target.value)} style={filterSelectStyle}>
+          <option value="todos">Todos os temas</option>
+          {categoryOptions.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)} style={filterSelectStyle}>
+          <option value="todos">Todas as categorias</option>
+          {Object.entries(CATEGORIA_META).map(([key, meta]) => (
+            <option key={key} value={key}>
+              {meta.label}
+            </option>
+          ))}
+        </select>
+        <select value={fCanal} onChange={(e) => setFCanal(e.target.value)} style={filterSelectStyle}>
+          <option value="todos">Todos os canais</option>
+          {Object.entries(CANAL_META).map(([key, meta]) => (
+            <option key={key} value={key}>
+              {meta.label}
+            </option>
+          ))}
+        </select>
+        <select value={fGravidade} onChange={(e) => setFGravidade(e.target.value)} style={filterSelectStyle}>
+          <option value="todos">Todas as gravidades</option>
+          {Object.entries(SEVERITY_META).map(([key, meta]) => (
+            <option key={key} value={key}>
+              {meta.label}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Reclamações por mês (últimos 12 meses)</div>
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={monthly}>
-            <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-            <Line type="monotone" dataKey="total" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 3, fill: COLORS.navy }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-          <div style={panelTitle}>Distribuição por tipo</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie data={typeData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                {typeData.map((d, i) => (
-                  <Cell key={i} fill={d.color} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div style={{ display: "flex", justifyContent: "center", gap: 16, fontSize: 12, marginTop: 4 }}>
-            {typeData.map((d) => (
-              <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                {d.name} ({d.value})
-              </div>
-            ))}
+      {total === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+          Sem reclamações para os filtros selecionados.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
+            <StatCard label="Total de reclamações" value={total} />
+            <StatCard label="Tempo médio de resposta" value={avgResponseDays !== null ? `${avgResponseDays} d` : "—"} color={COLORS.progress} />
+            <StatCard label="Tempo médio de resolução" value={avgResolutionDays !== null ? `${avgResolutionDays} d` : "—"} />
+            <StatCard label="Resolvidas dentro do prazo" value={onTimeRate !== null ? `${onTimeRate}%` : "—"} color={COLORS.ok} />
           </div>
-        </div>
 
-        <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-          <div style={panelTitle}>Distribuição por estado</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                {statusData.map((d, i) => (
-                  <Cell key={i} fill={d.color} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
-            {statusData.map((d) => (
-              <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                {d.name} ({d.value})
-              </div>
-            ))}
+          <div style={{ ...panelStyle, marginBottom: 16 }}>
+            <div style={panelTitle}>Reclamações por mês (últimos 12 meses)</div>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={monthly}>
+                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                <Line type="monotone" dataKey="total" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 3, fill: COLORS.navy }} />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-        </div>
-      </div>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ ...panelStyle, flex: "1 1 320px" }}>
-          <div style={panelTitle}>Categorias mais recorrentes</div>
-          {categoryData.length === 0 ? (
-            <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de categoria ainda.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={Math.max(160, categoryData.length * 32)}>
-              <BarChart data={categoryData} layout="vertical" margin={{ left: 8 }}>
-                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+              <div style={panelTitle}>Distribuição por canal de contacto</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={canalData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                    {canalData.map((d, i) => (
+                      <Cell key={i} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                {canalData.map((d) => (
+                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                    {d.name} ({d.value})
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <div style={{ ...panelStyle, flex: "1 1 320px" }}>
-          <div style={panelTitle}>Escolas mais recorrentes</div>
-          {schoolData.length === 0 ? (
-            <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de escola ainda.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
-              <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
-                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
+            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+              <div style={panelTitle}>Distribuição por estado</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                    {statusData.map((d, i) => (
+                      <Cell key={i} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                {statusData.map((d) => (
+                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                    {d.name} ({d.value})
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+              <div style={panelTitle}>Distribuição por categoria</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={categoriaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                    {categoriaData.map((d, i) => (
+                      <Cell key={i} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
+                {categoriaData.map((d) => (
+                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                    {d.name} ({d.value})
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ ...panelStyle, flex: "1 1 260px" }}>
+              <div style={panelTitle}>Eficácia da resposta (concluídas)</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={eficaciaData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                    {eficaciaData.map((d, i) => (
+                      <Cell key={i} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
+                {eficaciaData.map((d) => (
+                  <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
+                    {d.name} ({d.value})
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+              <div style={panelTitle}>Temas mais recorrentes</div>
+              {temaData.length === 0 ? (
+                <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de tema ainda.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(160, temaData.length * 32)}>
+                  <BarChart data={temaData} layout="vertical" margin={{ left: 8 }}>
+                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+              <div style={panelTitle}>Escolas mais recorrentes</div>
+              {schoolData.length === 0 ? (
+                <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de escola ainda.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
+                  <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
+                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
+
 
 // ---------- New audit form ----------
 function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
@@ -1276,11 +1675,17 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit }) {
   );
 }
 
-// ---------- FPF certification: point form (create/edit) ----------
-function CertForm({ initial, onCancel, onSave }) {
-  const [form, setForm] = useState(
-    initial || { title: "", requirement: "", dueDate: "", points: "", mandatory: false }
-  );
+// ---------- Sanções: novo registo de ocorrência ----------
+function SanctionForm({ onCancel, onSave }) {
+  const [form, setForm] = useState({
+    personType: "familia",
+    personName: "",
+    motivo: "ma_conduta",
+    date: new Date().toISOString().slice(0, 10),
+    description: "",
+    sanctionApplied: null,
+    sanctionDescription: "",
+  });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
@@ -1289,71 +1694,125 @@ function CertForm({ initial, onCancel, onSave }) {
       onClick={onCancel}
     >
       <div
-        style={{ width: "min(460px, 92vw)", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        style={{ width: "min(460px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>
-            {initial ? "Editar ponto" : "Novo ponto de certificação"}
-          </h2>
+          <h2 style={{ margin: 0, fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>Nova ocorrência</h2>
           <button onClick={onCancel} style={iconBtnStyle}>
             <X size={18} />
           </button>
         </div>
 
-        <label style={{ ...labelStyle, marginTop: 0 }}>Ponto</label>
-        <input type="text" placeholder="Ex: Plano de emergência médica" value={form.title} onChange={set("title")} style={inputStyle} />
+        <label style={{ ...labelStyle, marginTop: 0 }}>Quem está envolvido</label>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {Object.entries(PERSON_TYPE_META).map(([key, meta]) => (
+            <button
+              key={key}
+              onClick={() => setForm((f) => ({ ...f, personType: key }))}
+              style={{
+                flex: 1,
+                padding: "10px 8px",
+                borderRadius: 4,
+                border: `1.5px solid ${form.personType === key ? COLORS.navy : COLORS.rule}`,
+                background: form.personType === key ? COLORS.navy : "transparent",
+                color: form.personType === key ? "#fff" : COLORS.ink,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {meta.label}
+            </button>
+          ))}
+        </div>
 
-        <label style={labelStyle}>O que é necessário</label>
+        <label style={labelStyle}>Nome</label>
+        <input type="text" placeholder="Nome da pessoa envolvida" value={form.personName} onChange={set("personName")} style={inputStyle} />
+
+        <label style={labelStyle}>Motivo</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {Object.entries(MOTIVO_META).map(([key, meta]) => (
+            <button
+              key={key}
+              onClick={() => setForm((f) => ({ ...f, motivo: key }))}
+              style={{
+                flex: "1 1 30%",
+                padding: "7px 6px",
+                borderRadius: 4,
+                border: `1.5px solid ${form.motivo === key ? meta.color : COLORS.rule}`,
+                background: form.motivo === key ? meta.bg : "transparent",
+                color: form.motivo === key ? meta.color : COLORS.ink,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {meta.label}
+            </button>
+          ))}
+        </div>
+
+        <label style={labelStyle}>Data da ocorrência</label>
+        <input type="date" value={form.date} onChange={set("date")} style={inputStyle} />
+
+        <label style={labelStyle}>Descrição da ocorrência</label>
         <textarea
           rows={4}
-          placeholder="Descrição do requisito da certificação FPF..."
-          value={form.requirement}
-          onChange={set("requirement")}
+          placeholder="O que aconteceu..."
+          value={form.description}
+          onChange={set("description")}
           style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
         />
 
-        <label style={labelStyle}>Prazo (opcional)</label>
-        <input type="date" value={form.dueDate} onChange={set("dueDate")} style={inputStyle} />
+        {form.personType === "familia" && (
+          <>
+            <label style={labelStyle}>Foi aplicada sanção?</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { key: true, label: "Sim" },
+                { key: false, label: "Não" },
+              ].map((opt) => (
+                <button
+                  key={String(opt.key)}
+                  onClick={() => setForm((f) => ({ ...f, sanctionApplied: opt.key }))}
+                  style={{
+                    flex: 1,
+                    padding: "8px 6px",
+                    borderRadius: 4,
+                    border: `1.5px solid ${form.sanctionApplied === opt.key ? COLORS.navy : COLORS.rule}`,
+                    background: form.sanctionApplied === opt.key ? COLORS.navy : "transparent",
+                    color: form.sanctionApplied === opt.key ? "#fff" : COLORS.ink,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {form.sanctionApplied === true && (
+              <>
+                <label style={labelStyle}>Sanção aplicada (descrição)</label>
+                <textarea
+                  rows={3}
+                  placeholder="Ex: Advertência escrita; suspensão de acesso às instalações por 2 semanas..."
+                  value={form.sanctionDescription}
+                  onChange={set("sanctionDescription")}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </>
+            )}
+          </>
+        )}
 
-        <label style={labelStyle}>Pontos atribuídos ao critério (escala FPF, 0–100)</label>
-        <input
-          type="number"
-          min="0"
-          max="100"
-          step="0.01"
-          placeholder="Ex: 12"
-          value={form.points}
-          onChange={set("points")}
-          style={inputStyle}
-        />
-        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>
-          Os pontos só contam para a pontuação total quando o critério estiver marcado como "Cumprido".
-        </div>
-
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginTop: 16,
-            fontSize: 13,
-            fontWeight: 600,
-            color: COLORS.ink,
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={!!form.mandatory}
-            onChange={(e) => setForm((f) => ({ ...f, mandatory: e.target.checked }))}
-          />
-          Requisito de acesso / critério obrigatório para o nível
-        </label>
-        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
-          Além da pontuação total, a FPF exige o cumprimento dos requisitos de acesso e critérios
-          obrigatórios específicos de cada nível — marca aqui os pontos que são condição obrigatória.
-        </div>
+        {form.personType === "elemento_df" && (
+          <div style={{ marginTop: 14, fontSize: 12, color: COLORS.slate, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
+            Como se trata de um elemento Dragon Force, o processo disciplinar (inquérito → proposta de sanção → decisão
+            final de suspensão ou expulsão) é gerido depois, a partir do detalhe da ocorrência.
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
           <button onClick={onCancel} style={secondaryBtnStyle}>
@@ -1361,14 +1820,12 @@ function CertForm({ initial, onCancel, onSave }) {
           </button>
           <button
             onClick={() => {
-              if (!form.title.trim()) return;
+              if (!form.personName.trim()) return;
               onSave({
                 ...form,
-                points: form.points === "" ? 0 : Number(form.points),
-                mandatory: !!form.mandatory,
-                id: initial ? initial.id : `cp_${Date.now()}`,
-                status: initial ? initial.status : "nao_iniciado",
-                notes: initial ? initial.notes : [],
+                id: `s_${Date.now()}`,
+                stage: form.personType === "elemento_df" ? "ocorrencia" : null,
+                notes: [],
               });
             }}
             style={primaryBtnStyle}
@@ -1381,16 +1838,18 @@ function CertForm({ initial, onCancel, onSave }) {
   );
 }
 
-// ---------- FPF certification: point detail / notes ----------
-function CertDetail({ point, onClose, onAddNote, onSetStatus, onEdit, onRemove }) {
+// ---------- Sanções: detalhe / progressão do processo ----------
+function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove }) {
   const [note, setNote] = useState("");
-  const notes = [...(point.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
-  const meta = CERT_STATUS_META[point.status];
+  const [propostaText, setPropostaText] = useState(sanction.propostaSancao || "");
+  const [sancaoFamiliaText, setSancaoFamiliaText] = useState(sanction.sanctionDescription || "");
+  const notes = [...(sanction.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const motivoMeta = MOTIVO_META[sanction.motivo] || MOTIVO_META.outro;
 
-  const submit = () => {
+  const submitNote = () => {
     const v = note.trim();
     if (!v) return;
-    onAddNote(point.id, v);
+    onAddNote(sanction.id, v);
     setNote("");
   };
 
@@ -1400,19 +1859,15 @@ function CertDetail({ point, onClose, onAddNote, onSetStatus, onEdit, onRemove }
       onClick={onClose}
     >
       <div
-        style={{ width: "min(520px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        style={{ width: "min(540px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <Tag label={meta.label} color={meta.color} bg={meta.bg} />
-            {point.mandatory && <Tag label="Requisito obrigatório" color={COLORS.purple} bg={COLORS.purpleBg} />}
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
+            {fmt(new Date(sanction.date + "T00:00:00"))}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button title="Editar" onClick={() => onEdit(point)} style={iconBtnStyle}>
-              <Pencil size={16} />
-            </button>
-            <button title="Eliminar" onClick={() => onRemove(point.id)} style={iconBtnStyle}>
+            <button title="Eliminar" onClick={() => onRemove(sanction.id)} style={iconBtnStyle}>
               <Trash2 size={16} color={COLORS.danger} />
             </button>
             <button onClick={onClose} style={iconBtnStyle}>
@@ -1420,61 +1875,155 @@ function CertDetail({ point, onClose, onAddNote, onSetStatus, onEdit, onRemove }
             </button>
           </div>
         </div>
-        <h2 style={{ margin: "8px 0 6px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{point.title}</h2>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
-          {point.dueDate && (
-            <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-              Prazo: {fmt(new Date(point.dueDate + "T00:00:00"))}
-            </div>
-          )}
-          <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-            Pontos: {point.points || 0} {point.status === "concluido" ? "(contabilizados)" : "(ainda não contabilizados)"}
-          </div>
+        <h2 style={{ margin: "6px 0 6px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{sanction.personName}</h2>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          <Tag label={PERSON_TYPE_META[sanction.personType].label} color={COLORS.navy} bg={COLORS.rule} />
+          <Tag label={motivoMeta.label} color={motivoMeta.color} bg={motivoMeta.bg} />
         </div>
-        <div style={{ marginBottom: 12 }} />
-        {point.requirement && (
+
+        {sanction.description && (
           <div style={{ fontSize: 13.5, marginBottom: 18, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
-            {point.requirement}
+            {sanction.description}
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-          {Object.entries(CERT_STATUS_META).map(([key, m]) => (
-            <button
-              key={key}
-              onClick={() => onSetStatus(point.id, key)}
-              style={{
-                padding: "7px 12px",
-                borderRadius: 4,
-                border: `1.5px solid ${point.status === key ? m.color : COLORS.rule}`,
-                background: point.status === key ? m.bg : "transparent",
-                color: point.status === key ? m.color : COLORS.ink,
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        {sanction.personType === "familia" ? (
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Foi aplicada sanção?</label>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              {[
+                { key: true, label: "Sim" },
+                { key: false, label: "Não" },
+              ].map((opt) => (
+                <button
+                  key={String(opt.key)}
+                  onClick={() => onUpdate(sanction.id, { sanctionApplied: opt.key })}
+                  style={{
+                    flex: 1,
+                    padding: "8px 6px",
+                    borderRadius: 4,
+                    border: `1.5px solid ${sanction.sanctionApplied === opt.key ? COLORS.navy : COLORS.rule}`,
+                    background: sanction.sanctionApplied === opt.key ? COLORS.navy : "transparent",
+                    color: sanction.sanctionApplied === opt.key ? "#fff" : COLORS.ink,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {sanction.sanctionApplied === true && (
+              <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <textarea
+                    rows={2}
+                    placeholder="Descrição da sanção aplicada..."
+                    value={sancaoFamiliaText}
+                    onChange={(e) => setSancaoFamiliaText(e.target.value)}
+                    style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
+                  />
+                  <button
+                    onClick={() => onUpdate(sanction.id, { sanctionDescription: sancaoFamiliaText })}
+                    style={{ ...primaryBtnStyle, flex: "none", padding: "0 14px" }}
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+              Processo disciplinar
+            </div>
+            <Tag label={DF_STAGE_META[sanction.stage]?.label || "Ocorrência registada"} color={DF_STAGE_META[sanction.stage]?.color || COLORS.slate} bg={DF_STAGE_META[sanction.stage]?.bg || COLORS.doneBg} />
+
+            {sanction.stage === "ocorrencia" && (
+              <button
+                onClick={() => onUpdate(sanction.id, { stage: "inquerito", inqueritoDate: new Date().toISOString() })}
+                style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px", marginTop: 12, display: "block" }}
+              >
+                Abrir inquérito disciplinar
+              </button>
+            )}
+
+            {sanction.stage === "inquerito" && (
+              <div style={{ marginTop: 12 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Proposta de sanção (para tomada de decisão)</label>
+                <textarea
+                  rows={3}
+                  placeholder="Conclusões do inquérito e proposta de sanção..."
+                  value={propostaText}
+                  onChange={(e) => setPropostaText(e.target.value)}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
+                <button
+                  onClick={() => onUpdate(sanction.id, { stage: "proposta", propostaSancao: propostaText })}
+                  style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px" }}
+                >
+                  Submeter proposta para decisão
+                </button>
+              </div>
+            )}
+
+            {(sanction.stage === "proposta" || sanction.stage === "decisao_suspensao" || sanction.stage === "decisao_expulsao" || sanction.stage === "decisao_arquivado") && sanction.propostaSancao && (
+              <div style={{ fontSize: 13, marginTop: 12, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
+                <strong>Proposta:</strong> {sanction.propostaSancao}
+              </div>
+            )}
+
+            {sanction.stage === "proposta" && (
+              <div style={{ marginTop: 14 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Decisão final</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => onUpdate(sanction.id, { stage: "decisao_suspensao", decisaoDate: new Date().toISOString() })}
+                    style={{ ...secondaryBtnStyle, flex: "1 1 30%", padding: "8px 6px", fontSize: 12, borderColor: COLORS.danger, color: COLORS.danger }}
+                  >
+                    Suspensão
+                  </button>
+                  <button
+                    onClick={() => onUpdate(sanction.id, { stage: "decisao_expulsao", decisaoDate: new Date().toISOString() })}
+                    style={{ ...secondaryBtnStyle, flex: "1 1 30%", padding: "8px 6px", fontSize: 12, borderColor: COLORS.danger, color: COLORS.danger }}
+                  >
+                    Expulsão do projeto
+                  </button>
+                  <button
+                    onClick={() => onUpdate(sanction.id, { stage: "decisao_arquivado", decisaoDate: new Date().toISOString() })}
+                    style={{ ...secondaryBtnStyle, flex: "1 1 30%", padding: "8px 6px", fontSize: 12, borderColor: COLORS.ok, color: COLORS.ok }}
+                  >
+                    Arquivar / sem sanção
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {sanction.decisaoDate && (
+              <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Decisão registada em {fmt(new Date(sanction.decisaoDate))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
-          O que já foi feito / o que falta fazer
+          Notas
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           <textarea
             rows={2}
-            placeholder="Ex: Pedido orçamento ao fornecedor; falta aprovação da direção..."
+            placeholder="Adicionar nota ao processo..."
             value={note}
             onChange={(e) => setNote(e.target.value)}
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
           />
-          <button onClick={submit} style={{ ...primaryBtnStyle, flex: "none", padding: "0 16px" }}>
+          <button onClick={submitNote} style={{ ...primaryBtnStyle, flex: "none", padding: "0 16px" }}>
             Adicionar
           </button>
         </div>
-
         {notes.length === 0 ? (
           <div style={{ fontSize: 13, color: COLORS.slate }}>Ainda sem notas.</div>
         ) : (
@@ -1496,241 +2045,126 @@ function CertDetail({ point, onClose, onAddNote, onSetStatus, onEdit, onRemove }
   );
 }
 
-// ---------- FPF certification page (project-management style tracker) ----------
-function ImportObrigatoriosButton({ onImport }) {
-  const [nivel, setNivel] = useState("3");
-  const [open, setOpen] = useState(false);
+// ---------- Sanções: página (lista + análise) ----------
+function SanctionsPage({ sanctions, onNew, onOpen }) {
+  const familia = sanctions.filter((s) => s.personType === "familia");
+  const elementosDF = sanctions.filter((s) => s.personType === "elemento_df");
 
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "#fff",
-          color: COLORS.navy,
-          border: `1.5px solid ${COLORS.navy}`,
-          borderRadius: 4,
-          padding: "10px 16px",
-          fontWeight: 700,
-          fontSize: 14,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <ShieldAlert size={16} /> Importar critérios obrigatórios
-      </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: "110%",
-            right: 0,
-            zIndex: 20,
-            background: COLORS.paperRaised,
-            border: `1px solid ${COLORS.rule}`,
-            borderRadius: 6,
-            padding: 14,
-            width: 260,
-            boxShadow: "0 6px 20px rgba(16,24,38,0.15)",
-          }}
-        >
-          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
-            Nível pretendido (importa este nível e todos os anteriores)
-          </div>
-          <select value={nivel} onChange={(e) => setNivel(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
-            <option value="cbff">CBFF</option>
-            <option value="1e2">Escola de Futebol 1-2 estrelas</option>
-            <option value="3">Entidade Formadora 3 estrelas</option>
-            <option value="4e5">Entidade Formadora 4-5 estrelas</option>
-          </select>
-          <div style={{ fontSize: 11.5, color: COLORS.slate, marginBottom: 10 }}>
-            Cria os pontos de certificação que faltam, já marcados como "Obrigatório", com 0 pontos
-            (não pontuam, mas têm de ficar "Cumprido").
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setOpen(false)} style={{ ...secondaryBtnStyle, flex: 1 }}>
-              Cancelar
-            </button>
-            <button
-              onClick={() => {
-                onImport(nivel);
-                setOpen(false);
-              }}
-              style={{ ...primaryBtnStyle, flex: 1 }}
-            >
-              Importar
-            </button>
-          </div>
-        </div>
-      )}
+  const sancoesAplicadasFamilia = familia.filter((s) => s.sanctionApplied === true).length;
+  const semSancaoFamilia = familia.filter((s) => s.sanctionApplied === false).length;
+  const sancoesFinaisDF = elementosDF.filter((s) => s.stage === "decisao_suspensao" || s.stage === "decisao_expulsao").length;
+  const semSancaoDF = elementosDF.filter((s) => s.stage === "decisao_arquivado").length;
+
+  const motivoData = Object.entries(MOTIVO_META).map(([key, meta]) => ({
+    name: meta.label,
+    value: sanctions.filter((s) => s.motivo === key).length,
+    color: meta.color,
+  }));
+
+  const Row = ({ s }) => (
+    <div
+      key={s.id}
+      onClick={() => onOpen(s)}
+      style={{
+        ...panelStyle,
+        padding: "12px 16px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        cursor: "pointer",
+        flexWrap: "wrap",
+        gap: 10,
+      }}
+    >
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>{s.personName}</div>
+        <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>{fmt(new Date(s.date + "T00:00:00"))}</div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <Tag label={MOTIVO_META[s.motivo].label} color={MOTIVO_META[s.motivo].color} bg={MOTIVO_META[s.motivo].bg} />
+        {s.personType === "familia" ? (
+          s.sanctionApplied === true ? (
+            <Tag label="Sanção aplicada" color={COLORS.danger} bg={COLORS.dangerBg} />
+          ) : s.sanctionApplied === false ? (
+            <Tag label="Sem sanção" color={COLORS.ok} bg={COLORS.okBg} />
+          ) : (
+            <Tag label="Por decidir" color={COLORS.slate} bg={COLORS.doneBg} />
+          )
+        ) : (
+          <Tag
+            label={DF_STAGE_META[s.stage]?.label || "Ocorrência registada"}
+            color={DF_STAGE_META[s.stage]?.color || COLORS.slate}
+            bg={DF_STAGE_META[s.stage]?.bg || COLORS.doneBg}
+          />
+        )}
+      </div>
     </div>
   );
-}
-
-function CertPage({ points, onNew, onOpen, onImportObrigatorios }) {
-  const counts = {
-    nao_iniciado: points.filter((p) => p.status === "nao_iniciado").length,
-    em_andamento: points.filter((p) => p.status === "em_andamento").length,
-    concluido: points.filter((p) => p.status === "concluido").length,
-    nao_conforme: points.filter((p) => p.status === "nao_conforme").length,
-  };
-  const total = points.length;
-  const complianceRate = total ? Math.round((counts.concluido / total) * 100) : null;
-
-  const totalPoints = points.reduce((sum, p) => (p.status === "concluido" ? sum + (Number(p.points) || 0) : sum), 0);
-  const maxPoints = points.reduce((sum, p) => sum + (Number(p.points) || 0), 0);
-  const tier = certTierFor(totalPoints);
-  const pendingMandatory = points.filter((p) => p.mandatory && p.status !== "concluido");
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", flex: 1 }}>
-          {Object.entries(CERT_STATUS_META).map(([key, meta]) => (
-            <StatCard key={key} label={meta.label} value={counts[key]} color={meta.color} />
-          ))}
+          <StatCard label="Total de ocorrências" value={sanctions.length} />
+          <StatCard label="Sanções aplicadas (Pais/EE)" value={sancoesAplicadasFamilia} color={COLORS.danger} />
+          <StatCard label="Sem sanção (Pais/EE)" value={semSancaoFamilia} color={COLORS.ok} />
+          <StatCard label="Suspensão/Expulsão (DF)" value={sancoesFinaisDF} color={COLORS.danger} />
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <ImportObrigatoriosButton onImport={onImportObrigatorios} />
-          <button
-            onClick={onNew}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: COLORS.navy,
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              padding: "10px 16px",
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <Plus size={16} /> Novo ponto
-          </button>
-        </div>
+        <button
+          onClick={onNew}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: COLORS.navy,
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            padding: "10px 16px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Plus size={16} /> Nova ocorrência
+        </button>
       </div>
 
-      {total > 0 && (
-        <div style={{ ...panelStyle, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-            <div style={panelTitle}>Pontuação FPF (escala de 0 a 100)</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {tier.stars > 0 &&
-                Array.from({ length: 5 }).map((_, i) => (
-                  <Award key={i} size={16} color={i < tier.stars ? "#C9971C" : COLORS.rule} fill={i < tier.stars ? "#C9971C" : "none"} />
-                ))}
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 700, color: COLORS.navy }}>
-                {totalPoints.toFixed(2).replace(/\.00$/, "")} pts
-              </span>
-            </div>
-          </div>
-          <div style={{ height: 10, background: COLORS.rule, borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
-            <div
-              style={{
-                height: "100%",
-                width: `${Math.min(100, totalPoints)}%`,
-                background: tier.stars >= 5 ? COLORS.ok : tier.stars >= 3 ? COLORS.navy : COLORS.warn,
-              }}
-            />
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.navy }}>{tier.label}</div>
-          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
-            5 estrelas: 90–100 pts · 4 estrelas: 80–89,99 pts · 3 estrelas: 50–79,99 pts.
-            {maxPoints > 0 && ` Pontos atribuídos até agora entre todos os critérios: ${maxPoints.toFixed(2).replace(/\.00$/, "")}.`}
-          </div>
-
-          {pendingMandatory.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "flex-start",
-                marginTop: 14,
-                padding: "10px 12px",
-                background: COLORS.dangerBg,
-                border: `1px solid ${COLORS.danger}`,
-                borderRadius: 4,
-              }}
-            >
-              <ShieldAlert size={16} color={COLORS.danger} style={{ flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12.5, color: "#5c1414" }}>
-                Independentemente da pontuação, a certificação exige o cumprimento de todos os requisitos de acesso e
-                critérios obrigatórios. Há {pendingMandatory.length} critério(s) obrigatório(s) por cumprir:{" "}
-                {pendingMandatory.map((p) => p.title).join(", ")}.
-              </div>
-            </div>
-          )}
+      {sanctions.length > 0 && (
+        <div style={{ ...panelStyle, marginBottom: 24 }}>
+          <div style={panelTitle}>Ocorrências por motivo (má conduta, ameaças, insultos, agressões)</div>
+          <ResponsiveContainer width="100%" height={Math.max(160, motivoData.length * 34)}>
+            <BarChart data={motivoData} layout="vertical" margin={{ left: 8 }}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
 
-      {total > 0 && (
-        <div style={{ ...panelStyle, marginBottom: 22 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={panelTitle}>Cumprimento geral (nº de pontos concluídos)</div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 600, color: COLORS.ok }}>{complianceRate}%</div>
-          </div>
-          <div style={{ height: 8, background: COLORS.rule, borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${complianceRate}%`, background: COLORS.ok }} />
-          </div>
-        </div>
-      )}
-
-      {points.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Ainda não há pontos de certificação registados. Cria o primeiro com "Novo ponto".
+      <div style={panelTitle}>Sanções a Pais / Encarregados de Educação</div>
+      {familia.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "30px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6, marginBottom: 26 }}>
+          Sem ocorrências registadas.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {[...points]
-            .sort((a, b) => (a.dueDate || "9999") < (b.dueDate || "9999") ? -1 : 1)
-            .map((p) => {
-              const meta = CERT_STATUS_META[p.status];
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => onOpen(p)}
-                  style={{
-                    ...panelStyle,
-                    padding: "14px 18px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    cursor: "pointer",
-                    flexWrap: "wrap",
-                    gap: 10,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14.5 }}>{p.title}</div>
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                      {p.dueDate && (
-                        <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-                          Prazo: {fmt(new Date(p.dueDate + "T00:00:00"))}
-                        </div>
-                      )}
-                      <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-                        {Number(p.points) || 0} pts
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {p.mandatory && <Tag label="Obrigatório" color={COLORS.purple} bg={COLORS.purpleBg} />}
-                    {p.nivel && <Tag label={NIVEL_LABEL[p.nivel] || p.nivel} color={COLORS.navy} bg={COLORS.rule} />}
-                    {p.criterio != null && p.criterio > 0 && (
-                      <Tag label={`Critério ${p.criterio}`} color={COLORS.slate} bg={COLORS.rule} />
-                    )}
-                    <Tag label={meta.label} color={meta.color} bg={meta.bg} />
-                  </div>
-                </div>
-              );
-            })}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 26 }}>
+          {[...familia].sort((a, b) => new Date(b.date) - new Date(a.date)).map((s) => <Row key={s.id} s={s} />)}
+        </div>
+      )}
+
+      <div style={panelTitle}>Elementos Dragon Force (processo disciplinar)</div>
+      {elementosDF.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "30px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+          Sem ocorrências registadas.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[...elementosDF].sort((a, b) => new Date(b.date) - new Date(a.date)).map((s) => <Row key={s.id} s={s} />)}
         </div>
       )}
     </div>
@@ -1742,7 +2176,7 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [] });
   const [audits, setAudits] = useState([]);
-  const [certPoints, setCertPoints] = useState([]);
+  const [sanctions, setSanctions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -1750,13 +2184,12 @@ export default function App() {
   const [showAuditForm, setShowAuditForm] = useState(false);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
-  const [showCertForm, setShowCertForm] = useState(false);
-  const [editingCert, setEditingCert] = useState(null);
-  const [viewingCert, setViewingCert] = useState(null);
+  const [showSanctionForm, setShowSanctionForm] = useState(false);
+  const [viewingSanction, setViewingSanction] = useState(null);
   const [page, setPage] = useState("registo");
   const [reclamacoesView, setReclamacoesView] = useState("registo");
   const [editing, setEditing] = useState(null);
-  const [filterType, setFilterType] = useState("todos");
+  const [filterCanal, setFilterCanal] = useState("todos");
   const [filterStatus, setFilterStatus] = useState("todos");
   const [search, setSearch] = useState("");
 
@@ -1787,12 +2220,12 @@ export default function App() {
     }
   }, []);
 
-  const persistCert = useCallback(async (next) => {
-    setCertPoints(next);
+  const persistSanctions = useCallback(async (next) => {
+    setSanctions(next);
     try {
-      await dbStorage.set(STORAGE_CERT_KEY, JSON.stringify(next));
+      await dbStorage.set(STORAGE_SANCOES_KEY, JSON.stringify(next));
     } catch (e) {
-      setError("Não foi possível guardar a certificação FPF.");
+      setError("Não foi possível guardar o registo de sanções.");
     }
   }, []);
 
@@ -1817,8 +2250,8 @@ export default function App() {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_CERT_KEY);
-        if (res && res.value) setCertPoints(JSON.parse(res.value));
+        const res = await dbStorage.get(STORAGE_SANCOES_KEY);
+        if (res && res.value) setSanctions(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       } finally {
@@ -1866,51 +2299,30 @@ export default function App() {
     setViewingDetail(next.find((e) => e.id === entryId));
   };
 
-  const saveCertPoint = (point) => {
-    const exists = certPoints.some((p) => p.id === point.id);
-    const next = exists ? certPoints.map((p) => (p.id === point.id ? point : p)) : [...certPoints, point];
-    persistCert(next);
-    setShowCertForm(false);
-    setEditingCert(null);
+  const saveSanction = (sanction) => {
+    const exists = sanctions.some((s) => s.id === sanction.id);
+    const next = exists ? sanctions.map((s) => (s.id === sanction.id ? sanction : s)) : [...sanctions, sanction];
+    persistSanctions(next);
+    setShowSanctionForm(false);
   };
 
-  const removeCertPoint = (id) => {
-    persistCert(certPoints.filter((p) => p.id !== id));
-    setViewingCert(null);
+  const removeSanction = (id) => {
+    persistSanctions(sanctions.filter((s) => s.id !== id));
+    setViewingSanction(null);
   };
 
-  const importObrigatorios = (nivel) => {
-    const existingTitles = new Set(certPoints.map((p) => p.title));
-    const toAdd = obrigatoriosAteNivel(nivel)
-      .filter((c) => !existingTitles.has(c.title))
-      .map((c, i) => ({
-        id: `cp_ob_${Date.now()}_${i}`,
-        title: c.title,
-        requirement: c.requirement,
-        dueDate: "",
-        points: 0,
-        mandatory: true,
-        nivel: c.nivel,
-        criterio: c.criterio,
-        status: "nao_iniciado",
-        notes: [],
-      }));
-    if (toAdd.length === 0) return;
-    persistCert([...certPoints, ...toAdd]);
+  const updateSanction = (id, patch) => {
+    const next = sanctions.map((s) => (s.id === id ? { ...s, ...patch } : s));
+    persistSanctions(next);
+    setViewingSanction(next.find((s) => s.id === id));
   };
 
-  const setCertStatus = (id, status) => {
-    const next = certPoints.map((p) => (p.id === id ? { ...p, status } : p));
-    persistCert(next);
-    setViewingCert(next.find((p) => p.id === id));
-  };
-
-  const addCertNote = (id, text) => {
-    const next = certPoints.map((p) =>
-      p.id === id ? { ...p, notes: [...(p.notes || []), { id: `n_${Date.now()}`, text, date: new Date().toISOString() }] } : p
+  const addSanctionNote = (id, text) => {
+    const next = sanctions.map((s) =>
+      s.id === id ? { ...s, notes: [...(s.notes || []), { id: `n_${Date.now()}`, text, date: new Date().toISOString() }] } : s
     );
-    persistCert(next);
-    setViewingCert(next.find((p) => p.id === id));
+    persistSanctions(next);
+    setViewingSanction(next.find((s) => s.id === id));
   };
 
   const nextNumber = entries.length ? Math.max(...entries.map((e) => e.entryNumber)) + 1 : 1;
@@ -1918,7 +2330,7 @@ export default function App() {
   const withStatus = entries.map((e) => ({ ...e, derivedStatus: deriveStatus(e) }));
 
   const filtered = withStatus
-    .filter((e) => (filterType === "todos" ? true : e.type === filterType))
+    .filter((e) => (filterCanal === "todos" ? true : e.canal === filterCanal))
     .filter((e) => (filterStatus === "todos" ? true : e.derivedStatus === filterStatus))
     .filter((e) => (search ? (e.complainant + e.description).toLowerCase().includes(search.toLowerCase()) : true))
     .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
@@ -1944,11 +2356,18 @@ export default function App() {
     );
   };
 
-  const markDone = (id) => {
+  const markDone = (id, { responseText, eficacia } = {}) => {
     persist(
       entries.map((e) =>
         e.id === id
-          ? { ...e, status: "concluido", resolvedDate: new Date().toISOString(), startedDate: e.startedDate || new Date().toISOString() }
+          ? {
+              ...e,
+              status: "concluido",
+              resolvedDate: new Date().toISOString(),
+              startedDate: e.startedDate || new Date().toISOString(),
+              responseText: responseText !== undefined ? responseText : e.responseText || "",
+              eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
+            }
           : e
       )
     );
@@ -1975,6 +2394,8 @@ export default function App() {
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+        .spin { animation: spin 0.9s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
       <header
@@ -1997,8 +2418,8 @@ export default function App() {
           <h1 style={{ margin: "2px 0 0", fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 26 }}>
             {page === "auditorias"
               ? "Auditorias"
-              : page === "certificacao"
-              ? "Certificação FPF"
+              : page === "sancoes"
+              ? "Sanções"
               : reclamacoesView === "analise"
               ? "Reclamações — Análise"
               : "Reclamações — Registo"}
@@ -2062,7 +2483,7 @@ export default function App() {
         {[
           { key: "registo", label: "Reclamações", icon: LayoutGrid },
           { key: "auditorias", label: "Auditorias", icon: ClipboardList },
-          { key: "certificacao", label: "Certificação FPF", icon: Award },
+          { key: "sancoes", label: "Sanções", icon: Scale },
         ].map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -2091,15 +2512,11 @@ export default function App() {
       <div style={{ padding: "22px 28px 60px", maxWidth: 1100, margin: "0 auto" }}>
         {page === "auditorias" ? (
           <AuditsPage audits={audits} onNewAudit={() => setShowAuditForm(true)} onOpenAudit={(a) => setViewingAudit(a)} />
-        ) : page === "certificacao" ? (
-          <CertPage
-            points={certPoints}
-            onImportObrigatorios={importObrigatorios}
-            onNew={() => {
-              setEditingCert(null);
-              setShowCertForm(true);
-            }}
-            onOpen={(p) => setViewingCert(p)}
+        ) : page === "sancoes" ? (
+          <SanctionsPage
+            sanctions={sanctions}
+            onNew={() => setShowSanctionForm(true)}
+            onOpen={(s) => setViewingSanction(s)}
           />
         ) : (
         <>
@@ -2142,7 +2559,7 @@ export default function App() {
         </div>
 
         {reclamacoesView === "analise" ? (
-          <AnalysisDashboard withStatus={withStatus} />
+          <AnalysisDashboard withStatus={withStatus} schoolOptions={options.schools} categoryOptions={options.categories} />
         ) : (
         <>
         <div
@@ -2184,10 +2601,13 @@ export default function App() {
               style={{ ...inputStyle, paddingLeft: 32 }}
             />
           </div>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ ...inputStyle, width: 190 }}>
-            <option value="todos">Todos os tipos</option>
-            <option value="normal">Reclamação normal</option>
-            <option value="livro">Livro de Reclamações</option>
+          <select value={filterCanal} onChange={(e) => setFilterCanal(e.target.value)} style={{ ...inputStyle, width: 190 }}>
+            <option value="todos">Todos os canais</option>
+            {Object.entries(CANAL_META).map(([key, meta]) => (
+              <option key={key} value={key}>
+                {meta.label}
+              </option>
+            ))}
           </select>
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={{ ...inputStyle, width: 190 }}>
             <option value="todos">Todos os estados</option>
@@ -2217,7 +2637,7 @@ export default function App() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 880 }}>
               <thead>
                 <tr style={{ background: "#EFEDE6", textAlign: "left" }}>
-                  {["Nº", "Receção", "Tipo", "Gravidade", "Escola", "Categoria", "Reclamante", "Prazo", "Estado", ""].map((h) => (
+                  {["Nº", "Receção", "Canal", "Gravidade", "Categoria", "Escola", "Tema", "Reclamante", "Prazo", "Estado", ""].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -2242,12 +2662,17 @@ export default function App() {
                       {String(e.entryNumber).padStart(4, "0")}
                     </td>
                     <td style={{ padding: "10px 14px" }}>{fmt(new Date(e.receivedDate + "T00:00:00"))}</td>
-                    <td style={{ padding: "10px 14px" }}>{TYPE_LABEL[e.type]}</td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {e.canal && CANAL_META[e.canal] && <Tag label={CANAL_META[e.canal].label} color={CANAL_META[e.canal].color} bg={CANAL_META[e.canal].bg} />}
+                    </td>
                     <td style={{ padding: "10px 14px" }}>
                       {e.severity && <Tag label={SEVERITY_META[e.severity].label} color={SEVERITY_META[e.severity].color} bg={SEVERITY_META[e.severity].bg} />}
                     </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {e.categoria && CATEGORIA_META[e.categoria] && <Tag label={CATEGORIA_META[e.categoria].label} color={CATEGORIA_META[e.categoria].color} bg={CATEGORIA_META[e.categoria].bg} />}
+                    </td>
                     <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.school || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.category || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.tema || "—"}</td>
                     <td style={{ padding: "10px 14px", fontWeight: 600 }}>{e.complainant}</td>
                     <td style={{ padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace" }}>{fmt(new Date(e.deadline))}</td>
                     <td style={{ padding: "10px 14px" }}>
@@ -2265,7 +2690,7 @@ export default function App() {
                             <Clock size={16} />
                           </button>
                         ) : (
-                          <button title="Marcar concluído" onClick={() => markDone(e.id)} style={iconBtnStyle}>
+                          <button title="Marcar concluído" onClick={() => setViewingDetail(e)} style={iconBtnStyle}>
                             <Check size={16} color={COLORS.ok} />
                           </button>
                         )}
@@ -2333,8 +2758,8 @@ export default function App() {
             startWork(id);
             setViewingDetail(null);
           }}
-          onDone={(id) => {
-            markDone(id);
+          onDone={(id, extra) => {
+            markDone(id, extra);
             setViewingDetail(null);
           }}
           onReopen={(id) => {
@@ -2365,29 +2790,20 @@ export default function App() {
         />
       )}
 
-      {showCertForm && (
-        <CertForm
-          initial={editingCert}
-          onCancel={() => {
-            setShowCertForm(false);
-            setEditingCert(null);
-          }}
-          onSave={saveCertPoint}
+      {showSanctionForm && (
+        <SanctionForm
+          onCancel={() => setShowSanctionForm(false)}
+          onSave={saveSanction}
         />
       )}
 
-      {viewingCert && (
-        <CertDetail
-          point={certPoints.find((p) => p.id === viewingCert.id) || viewingCert}
-          onClose={() => setViewingCert(null)}
-          onAddNote={addCertNote}
-          onSetStatus={setCertStatus}
-          onEdit={(p) => {
-            setEditingCert(p);
-            setViewingCert(null);
-            setShowCertForm(true);
-          }}
-          onRemove={removeCertPoint}
+      {viewingSanction && (
+        <SanctionDetail
+          sanction={sanctions.find((s) => s.id === viewingSanction.id) || viewingSanction}
+          onClose={() => setViewingSanction(null)}
+          onUpdate={updateSanction}
+          onAddNote={addSanctionNote}
+          onRemove={removeSanction}
         />
       )}
     </div>
