@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { dbStorage } from "./supabaseClient";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Loader2 } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -45,6 +45,7 @@ const STORAGE_KEY = "reclamacoes:registo";
 const STORAGE_OPTIONS_KEY = "reclamacoes:opcoes";
 const STORAGE_AUDITS_KEY = "reclamacoes:auditorias";
 const STORAGE_SANCOES_KEY = "reclamacoes:sancoes";
+const STORAGE_TRIAGEM_KEY = "reclamacoes:triagem-aprendizagem";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -256,35 +257,156 @@ function Tag({ label, color, bg, title }) {
 }
 
 // ---------- Entry form ----------
-function TriageBox({ onApply, temas, categorias }) {
+// ---------- Triagem automática: classificador por palavras-chave que aprende ----------
+// Não usa nenhuma API paga. Aprende sozinho: sempre que uma reclamação é
+// guardada, as palavras da descrição/contexto ficam associadas ao tema,
+// categoria, gravidade e canal escolhidos. Ao colar um novo e-mail, soma as
+// associações aprendidas (mais umas pistas iniciais) e sugere o valor mais
+// provável para cada campo — o utilizador confirma ou corrige sempre.
+
+const STOPWORDS = new Set([
+  "de", "da", "do", "das", "dos", "que", "para", "com", "uma", "um", "uns", "umas", "este", "esta", "estes",
+  "estas", "isso", "isto", "aquilo", "nao", "sim", "foi", "ser", "sido", "tem", "tinha", "teve", "muito",
+  "pouco", "mais", "menos", "como", "quando", "onde", "porque", "pois", "mas", "ainda", "sobre", "entre",
+  "pela", "pelo", "pelas", "pelos", "esse", "essa", "esses", "essas", "seu", "sua", "seus", "suas", "meu",
+  "minha", "meus", "minhas", "nos", "nossa", "nosso", "nossas", "nossos", "eles", "elas", "ele", "ela",
+  "isto", "aqui", "ali", "la", "ja", "so", "todo", "toda", "todos", "todas", "outro", "outra", "outros",
+  "outras", "mesmo", "mesma", "cada", "qualquer", "algum", "alguma", "alguns", "algumas", "tambem", "depois",
+  "antes", "hoje", "ontem", "amanha", "caro", "cara", "prezado", "prezada", "obrigado", "obrigada", "atenciosamente",
+  "cumprimentos", "venho", "gostaria", "gostariamos", "informar", "solicitar", "pedir", "the", "and", "for",
+]);
+
+function normalizeText(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ");
+}
+
+function tokenize(text) {
+  return normalizeText(text)
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+}
+
+// Pistas iniciais (funcionam desde o primeiro dia, antes de haver dados aprendidos).
+const SEED_HINTS = {
+  gravidade: {
+    alta: ["agressao", "agrediu", "ameaca", "ameacou", "insulto", "insultou", "violencia", "bateu", "socou", "empurrou", "humilhou", "grave", "perigo", "seguranca", "racista", "discriminacao"],
+    media: ["preocupado", "preocupada", "insatisfeito", "insatisfeita", "injusto", "injusta", "desrespeito", "queixa"],
+    baixa: ["duvida", "sugestao", "horario", "pequena", "informacao", "esclarecimento", "questao"],
+  },
+  categoria: {
+    "Disciplinar": ["comportamento", "insulto", "agressao", "indisciplina", "respeito", "gritou", "humilhou", "bullying", "conduta", "atitude"],
+    "Técnico": ["convocado", "convocatoria", "minutos", "jogo", "treino", "avaliacao", "tecnico", "titular", "suplente", "posicao", "equipa"],
+    "Infraestrutura e Equipamentos": ["balneario", "equipamento", "transporte", "pagamento", "mensalidade", "material", "instalacoes", "campo", "autocarro"],
+  },
+  canal: {
+    presencial: ["liguei", "telefonei", "fui", "pessoalmente", "reuniao", "falei"],
+    livro: ["livro", "reclamacoes"],
+    redes: ["facebook", "instagram", "publicamos", "publicado", "rede", "social", "twitter"],
+  },
+};
+
+function scoreFromLearned(words, learnedField) {
+  const scores = {};
+  if (!learnedField) return scores;
+  words.forEach((w) => {
+    const assoc = learnedField[w];
+    if (!assoc) return;
+    Object.entries(assoc).forEach(([val, count]) => {
+      scores[val] = (scores[val] || 0) + count;
+    });
+  });
+  return scores;
+}
+
+function bestFromScores(scores, minScore = 1) {
+  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0 || entries[0][1] < minScore) return null;
+  return entries[0][0];
+}
+
+function classifyEnum(words, learnedField, seedField) {
+  const scores = scoreFromLearned(words, learnedField);
+  if (seedField) {
+    Object.entries(seedField).forEach(([val, keywords]) => {
+      const hits = keywords.filter((kw) => words.includes(kw)).length;
+      if (hits > 0) scores[val] = (scores[val] || 0) + hits * 2;
+    });
+  }
+  return bestFromScores(scores);
+}
+
+function classifyFromList(words, learnedField, list) {
+  const scores = scoreFromLearned(words, learnedField);
+  Object.keys(scores).forEach((val) => {
+    if (!list.includes(val)) delete scores[val];
+  });
+  list.forEach((label) => {
+    const labelWords = tokenize(label);
+    const hits = labelWords.filter((lw) => words.includes(lw)).length;
+    if (hits > 0) scores[label] = (scores[label] || 0) + hits * 2;
+  });
+  return bestFromScores(scores);
+}
+
+// Aplica-se ao colar um e-mail: devolve a sugestão de classificação.
+function classifyText(rawText, learned, temas, categorias) {
+  const words = tokenize(rawText);
+  const canal = classifyEnum(words, learned.canal, SEED_HINTS.canal) || "email";
+  const gravidade = classifyEnum(words, learned.gravidade, SEED_HINTS.gravidade) || "media";
+  const categoria = classifyFromList(words, learned.categoria, categorias) || "";
+  const tema = classifyFromList(words, learned.tema, temas) || "";
+  const trimmed = rawText.trim().replace(/\s+/g, " ");
+  const resumo = trimmed.length > 240 ? trimmed.slice(0, 240).replace(/\s+\S*$/, "") + "…" : trimmed;
+  return { canal, gravidade, categoria, tema, resumo, contexto: "", _hadAnyMatch: words.length > 0 };
+}
+
+// Chamado sempre que uma reclamação é guardada — reforça as associações
+// entre as palavras do texto e a classificação escolhida (final, já corrigida
+// pelo utilizador se necessário). É assim que a triagem "aprende" ao longo do tempo.
+function learnFromEntry(learned, entry) {
+  const text = `${entry.description || ""} ${entry.context || ""}`;
+  const words = tokenize(text);
+  if (words.length === 0) return learned;
+  const next = {
+    canal: { ...(learned.canal || {}) },
+    categoria: { ...(learned.categoria || {}) },
+    tema: { ...(learned.tema || {}) },
+    gravidade: { ...(learned.gravidade || {}) },
+  };
+  const bump = (field, value) => {
+    if (!value) return;
+    words.forEach((w) => {
+      next[field][w] = { ...(next[field][w] || {}) };
+      next[field][w][value] = (next[field][w][value] || 0) + 1;
+    });
+  };
+  bump("canal", entry.canal);
+  bump("categoria", entry.categoria);
+  bump("tema", entry.tema);
+  bump("gravidade", entry.severity);
+  return next;
+}
+
+
+function TriageBox({ onApply, temas, categorias, learned }) {
   const [emailText, setEmailText] = useState("");
-  const [loading, setLoading] = useState(false);
   const [triageError, setTriageError] = useState(null);
   const [open, setOpen] = useState(false);
 
-  const runTriage = async () => {
+  const runTriage = () => {
     const text = emailText.trim();
     if (!text) return;
-    setLoading(true);
     setTriageError(null);
-    try {
-      const res = await fetch("/api/triagem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, temas, categorias }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Falha na triagem");
-      }
-      onApply(data);
-    } catch (e) {
-      setTriageError(
-        `Não foi possível fazer a triagem automática (${e.message}). Preenche os campos manualmente.`
-      );
-    } finally {
-      setLoading(false);
+    const result = classifyText(text, learned || {}, temas, categorias);
+    if (!result._hadAnyMatch) {
+      setTriageError("Texto demasiado curto para reconhecer padrões. Preenche os campos manualmente.");
+      return;
     }
+    onApply(result);
   };
 
   return (
@@ -321,7 +443,7 @@ function TriageBox({ onApply, temas, categorias }) {
             <button
               type="button"
               onClick={runTriage}
-              disabled={loading || !emailText.trim()}
+              disabled={!emailText.trim()}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -333,15 +455,15 @@ function TriageBox({ onApply, temas, categorias }) {
                 color: "#fff",
                 fontSize: 12.5,
                 fontWeight: 600,
-                cursor: loading || !emailText.trim() ? "default" : "pointer",
-                opacity: loading || !emailText.trim() ? 0.6 : 1,
+                cursor: !emailText.trim() ? "default" : "pointer",
+                opacity: !emailText.trim() ? 0.6 : 1,
               }}
             >
-              {loading ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
-              {loading ? "A analisar..." : "Sugerir classificação"}
+              <Sparkles size={14} />
+              Sugerir classificação
             </button>
             <div style={{ fontSize: 11, color: COLORS.slate }}>
-              Preenche automaticamente tema, categoria, gravidade, canal e descrição — depois confirma ou corrige.
+              Gratuito — aprende com as reclamações que vais registando. Confirma ou corrige sempre.
             </div>
           </div>
           {triageError && <div style={{ color: COLORS.danger, fontSize: 12, marginTop: 8 }}>{triageError}</div>}
@@ -351,7 +473,7 @@ function TriageBox({ onApply, temas, categorias }) {
   );
 }
 
-function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, categoriaOptions, onManageOptions }) {
+function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, categoriaOptions, onManageOptions, learned }) {
   const [form, setForm] = useState(
     initial || {
       receivedDate: new Date().toISOString().slice(0, 10),
@@ -448,7 +570,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           </button>
         </div>
 
-        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} categorias={categoriaOptions} />}
+        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} categorias={categoriaOptions} learned={learned} />}
 
         <label style={{ ...labelStyle, marginTop: 0 }}>Canal de contacto{fieldHint("canal")}</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -2341,6 +2463,7 @@ export default function App() {
   const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
+  const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -2393,6 +2516,15 @@ export default function App() {
     }
   }, []);
 
+  const persistLearned = useCallback(async (next) => {
+    setLearned(next);
+    try {
+      await dbStorage.set(STORAGE_TRIAGEM_KEY, JSON.stringify(next));
+    } catch (e) {
+      // falha silenciosa — não é crítico, a triagem só fica sem aprender desta vez
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -2418,6 +2550,12 @@ export default function App() {
         if (res && res.value) setSanctions(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
+      }
+      try {
+        const res = await dbStorage.get(STORAGE_TRIAGEM_KEY);
+        if (res && res.value) setLearned({ canal: {}, categoria: {}, tema: {}, gravidade: {}, ...JSON.parse(res.value) });
+      } catch (e) {
+        // chave ainda não existe — arranque limpo, aprende a partir de agora
       } finally {
         setLoading(false);
       }
@@ -2510,6 +2648,7 @@ export default function App() {
     const exists = entries.some((e) => e.id === item.id);
     const next = exists ? entries.map((e) => (e.id === item.id ? item : e)) : [...entries, item];
     persist(next);
+    persistLearned(learnFromEntry(learned, item));
     setShowForm(false);
     setEditing(null);
   };
@@ -2895,6 +3034,7 @@ export default function App() {
           categoryOptions={options.categories}
           categoriaOptions={options.complaintCategories}
           onManageOptions={() => setShowManage(true)}
+          learned={learned}
           onCancel={() => {
             setShowForm(false);
             setEditing(null);
