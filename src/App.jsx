@@ -1207,6 +1207,16 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   );
   const notes = [...(entry.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+  // Se a reclamação mudar (ou for atualizada após guardar), repõe os campos do
+  // formulário a partir do que está realmente gravado.
+  useEffect(() => {
+    setResponseText(entry.responseText || "");
+    setEficacia(entry.eficacia || "");
+    setResolvedOn(
+      entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+    );
+  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate]);
+
   const submit = () => {
     const v = note.trim();
     if (!v) return;
@@ -1215,7 +1225,8 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   };
 
   const confirmDone = () => {
-    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn });
+    const isEditing = entry.derivedStatus === "concluido";
+    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn }, isEditing);
   };
 
   return (
@@ -1307,13 +1318,18 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
               Marcar concluído
             </button>
           ) : (
-            <button onClick={() => onReopen(entry.id)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 12px", fontSize: 12.5 }}>
-              Reabrir
-            </button>
+            <>
+              <button onClick={() => setConcluding((v) => !v)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 12px", fontSize: 12.5 }}>
+                {concluding ? "Fechar edição" : "Editar conclusão"}
+              </button>
+              <button onClick={() => onReopen(entry.id)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 12px", fontSize: 12.5 }}>
+                Reabrir
+              </button>
+            </>
           )}
         </div>
 
-        {concluding && entry.derivedStatus !== "concluido" && (
+        {concluding && (
           <div style={{ marginBottom: 20, padding: "12px 14px", background: COLORS.paper, border: `1.5px solid ${COLORS.navySoft}`, borderRadius: 5 }}>
             <label style={{ ...labelStyle, marginTop: 0 }}>Data da resposta / conclusão</label>
             <input
@@ -1357,8 +1373,14 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
                 </button>
               ))}
             </div>
-            <button onClick={confirmDone} style={{ ...primaryBtnStyle, marginTop: 12, flex: "none", padding: "8px 16px" }}>
-              Confirmar conclusão
+            <button
+              onClick={() => {
+                confirmDone();
+                if (entry.derivedStatus === "concluido") setConcluding(false);
+              }}
+              style={{ ...primaryBtnStyle, marginTop: 12, flex: "none", padding: "8px 16px" }}
+            >
+              {entry.derivedStatus === "concluido" ? "Guardar alterações" : "Confirmar conclusão"}
             </button>
           </div>
         )}
@@ -3358,9 +3380,9 @@ export default function App() {
             startWork(id);
             setViewingDetail(null);
           }}
-          onDone={(id, extra) => {
+          onDone={(id, extra, keepOpen) => {
             markDone(id, extra);
-            setViewingDetail(null);
+            if (!keepOpen) setViewingDetail(null);
           }}
           onReopen={(id) => {
             reopen(id);
