@@ -1206,6 +1206,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   const [resolvedOn, setResolvedOn] = useState(
     entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
   );
+  const [startedOn, setStartedOn] = useState(entry.startedDate ? new Date(entry.startedDate).toISOString().slice(0, 10) : "");
   const notes = [...(entry.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   // Se a reclamação mudar (ou for atualizada após guardar), repõe os campos do
@@ -1216,7 +1217,8 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
     setResolvedOn(
       entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
     );
-  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate]);
+    setStartedOn(entry.startedDate ? new Date(entry.startedDate).toISOString().slice(0, 10) : "");
+  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate, entry.startedDate]);
 
   const submit = () => {
     const v = note.trim();
@@ -1227,7 +1229,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
   const confirmDone = () => {
     const isEditing = entry.derivedStatus === "concluido";
-    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn }, isEditing);
+    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn, startedDate: startedOn || null }, isEditing);
   };
 
   return (
@@ -1332,7 +1334,20 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
         {concluding && (
           <div style={{ marginBottom: 20, padding: "12px 14px", background: COLORS.paper, border: `1.5px solid ${COLORS.navySoft}`, borderRadius: 5 }}>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Data da resposta / conclusão</label>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data de início do trabalho (opcional)</label>
+            <input
+              type="date"
+              value={startedOn}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setStartedOn(e.target.value)}
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 4, marginBottom: 14 }}>
+              Deixa em branco se não sabes — nesse caso esta reclamação não entra no "Tempo médio de resposta" da
+              Análise. Preenche se souberes quando começaste a tratar do assunto (mesmo que já tenha sido).
+            </div>
+
+            <label style={labelStyle}>Data da resposta / conclusão</label>
             <input
               type="date"
               value={resolvedOn}
@@ -1341,7 +1356,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
               style={inputStyle}
             />
             <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 4 }}>
-              Ajusta esta data ao registar reclamações antigas — é a partir dela que se calculam os tempos de resposta.
+              Ajusta esta data ao registar reclamações antigas — é a partir dela que se calcula o tempo de resolução.
             </div>
 
             <label style={labelStyle}>Resposta dada à reclamação</label>
@@ -2979,22 +2994,23 @@ export default function App() {
     );
   };
 
-  const markDone = (id, { responseText, eficacia, resolvedDate } = {}) => {
+  const markDone = (id, { responseText, eficacia, resolvedDate, startedDate } = {}) => {
     persist(
       entries.map((e) => {
         if (e.id !== id) return e;
         // Data escolhida no formulário (yyyy-mm-dd) ou, se não vier, o momento atual.
         const resolvedISO = resolvedDate ? new Date(resolvedDate + "T12:00:00").toISOString() : new Date().toISOString();
-        // Não inventamos uma data de início para reclamações nunca "Iniciadas"
-        // (ex: registos antigos, inseridos já concluídos) — fica em branco, e a
-        // Análise exclui-as do "Tempo médio de resposta" por não termos essa
-        // data real. O "Tempo médio de resolução" continua a refletir sempre a
-        // data de conclusão que escolheres.
+        // Data de início: usa a que vier do formulário (mesmo que seja para
+        // apagar, passando null); se não vier nada no argumento, mantém a que
+        // já existia. Sem data de início, a Análise exclui esta reclamação do
+        // "Tempo médio de resposta" — o "Tempo médio de resolução" usa sempre
+        // a data de conclusão, essa nunca fica em falta.
+        const startedISO = startedDate === undefined ? e.startedDate || null : startedDate ? new Date(startedDate + "T12:00:00").toISOString() : null;
         return {
           ...e,
           status: "concluido",
           resolvedDate: resolvedISO,
-          startedDate: e.startedDate || null,
+          startedDate: startedISO,
           responseText: responseText !== undefined ? responseText : e.responseText || "",
           eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
         };
