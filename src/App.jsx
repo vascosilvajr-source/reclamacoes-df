@@ -985,7 +985,7 @@ const panelTitle = {
 };
 
 // ---------- Stat card ----------
-function StatCard({ label, value, color }) {
+function StatCard({ label, value, color, subtitle }) {
   return (
     <div
       style={{
@@ -999,6 +999,7 @@ function StatCard({ label, value, color }) {
     >
       <div style={{ fontSize: 28, fontFamily: "'Fraunces', serif", color: color || COLORS.navy, lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      {subtitle && <div style={{ fontSize: 10.5, color: COLORS.slate, marginTop: 3, textTransform: "none", letterSpacing: 0 }}>{subtitle}</div>}
     </div>
   );
 }
@@ -1640,8 +1641,17 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
         <>
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Total de reclamações" value={total} />
-            <StatCard label="Tempo médio de resposta" value={avgResponseDays !== null ? `${avgResponseDays} d` : "—"} color={COLORS.progress} />
-            <StatCard label="Tempo médio de resolução" value={avgResolutionDays !== null ? `${avgResolutionDays} d` : "—"} />
+            <StatCard
+              label="Tempo médio de resposta"
+              value={avgResponseDays !== null ? `${avgResponseDays} d` : "—"}
+              color={COLORS.progress}
+              subtitle="receção → início do trabalho"
+            />
+            <StatCard
+              label="Tempo médio de resolução"
+              value={avgResolutionDays !== null ? `${avgResolutionDays} d` : "—"}
+              subtitle="receção → conclusão"
+            />
             <StatCard label="Resolvidas dentro do prazo" value={onTimeRate !== null ? `${onTimeRate}%` : "—"} color={COLORS.ok} />
           </div>
 
@@ -2975,15 +2985,16 @@ export default function App() {
         if (e.id !== id) return e;
         // Data escolhida no formulário (yyyy-mm-dd) ou, se não vier, o momento atual.
         const resolvedISO = resolvedDate ? new Date(resolvedDate + "T12:00:00").toISOString() : new Date().toISOString();
-        // Para reclamações antigas nunca iniciadas, a data de início não pode
-        // ficar "hoje" — senão o tempo de resposta sai negativo. Usa a data de
-        // receção como início nesse caso.
-        const fallbackStart = new Date(e.receivedDate + "T12:00:00").toISOString();
+        // Não inventamos uma data de início para reclamações nunca "Iniciadas"
+        // (ex: registos antigos, inseridos já concluídos) — fica em branco, e a
+        // Análise exclui-as do "Tempo médio de resposta" por não termos essa
+        // data real. O "Tempo médio de resolução" continua a refletir sempre a
+        // data de conclusão que escolheres.
         return {
           ...e,
           status: "concluido",
           resolvedDate: resolvedISO,
-          startedDate: e.startedDate || fallbackStart,
+          startedDate: e.startedDate || null,
           responseText: responseText !== undefined ? responseText : e.responseText || "",
           eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
         };
