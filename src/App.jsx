@@ -1202,6 +1202,9 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   const [concluding, setConcluding] = useState(false);
   const [responseText, setResponseText] = useState(entry.responseText || "");
   const [eficacia, setEficacia] = useState(entry.eficacia || "");
+  const [resolvedOn, setResolvedOn] = useState(
+    entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
+  );
   const notes = [...(entry.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const submit = () => {
@@ -1212,7 +1215,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
   };
 
   const confirmDone = () => {
-    onDone(entry.id, { responseText: responseText.trim(), eficacia });
+    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn });
   };
 
   return (
@@ -1253,6 +1256,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 14, lineHeight: 1.6 }}>
           {entry.school || "sem escola"} · {entry.tema || "sem tema"} <br />
           Receção: {fmt(new Date(entry.receivedDate + "T00:00:00"))} · Prazo: {fmt(new Date(entry.deadline))}
+          {entry.resolvedDate && ` · Concluída: ${fmt(new Date(entry.resolvedDate))}`}
         </div>
 
         {entry.emailLink && (
@@ -1311,7 +1315,19 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
         {concluding && entry.derivedStatus !== "concluido" && (
           <div style={{ marginBottom: 20, padding: "12px 14px", background: COLORS.paper, border: `1.5px solid ${COLORS.navySoft}`, borderRadius: 5 }}>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Resposta dada à reclamação</label>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data da resposta / conclusão</label>
+            <input
+              type="date"
+              value={resolvedOn}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setResolvedOn(e.target.value)}
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 4 }}>
+              Ajusta esta data ao registar reclamações antigas — é a partir dela que se calculam os tempos de resposta.
+            </div>
+
+            <label style={labelStyle}>Resposta dada à reclamação</label>
             <textarea
               rows={3}
               placeholder="O que foi respondido / decidido..."
@@ -2753,7 +2769,8 @@ export default function App() {
     try {
       await dbStorage.set(STORAGE_KEY, JSON.stringify(next));
     } catch (e) {
-      setError("Não foi possível guardar. As alterações podem não ter sido sincronizadas.");
+      console.error("Erro ao guardar reclamações:", e);
+      setError(`Não foi possível guardar as reclamações: ${e?.message || e}`);
     }
   }, []);
 
@@ -2762,7 +2779,8 @@ export default function App() {
     try {
       await dbStorage.set(STORAGE_OPTIONS_KEY, JSON.stringify(next));
     } catch (e) {
-      setError("Não foi possível guardar as listas de escolas/categorias.");
+      console.error("Erro ao guardar listas:", e);
+      setError(`Não foi possível guardar as listas: ${e?.message || e}`);
     }
   }, []);
 
@@ -2771,7 +2789,8 @@ export default function App() {
     try {
       await dbStorage.set(STORAGE_AUDITS_KEY, JSON.stringify(next));
     } catch (e) {
-      setError("Não foi possível guardar as auditorias.");
+      console.error("Erro ao guardar auditorias:", e);
+      setError(`Não foi possível guardar as auditorias: ${e?.message || e}`);
     }
   }, []);
 
@@ -2780,7 +2799,8 @@ export default function App() {
     try {
       await dbStorage.set(STORAGE_SANCOES_KEY, JSON.stringify(next));
     } catch (e) {
-      setError("Não foi possível guardar o registo de sanções.");
+      console.error("Erro ao guardar sanções:", e);
+      setError(`Não foi possível guardar as sanções: ${e?.message || e}`);
     }
   }, []);
 
@@ -2927,20 +2947,25 @@ export default function App() {
     );
   };
 
-  const markDone = (id, { responseText, eficacia } = {}) => {
+  const markDone = (id, { responseText, eficacia, resolvedDate } = {}) => {
     persist(
-      entries.map((e) =>
-        e.id === id
-          ? {
-              ...e,
-              status: "concluido",
-              resolvedDate: new Date().toISOString(),
-              startedDate: e.startedDate || new Date().toISOString(),
-              responseText: responseText !== undefined ? responseText : e.responseText || "",
-              eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
-            }
-          : e
-      )
+      entries.map((e) => {
+        if (e.id !== id) return e;
+        // Data escolhida no formulário (yyyy-mm-dd) ou, se não vier, o momento atual.
+        const resolvedISO = resolvedDate ? new Date(resolvedDate + "T12:00:00").toISOString() : new Date().toISOString();
+        // Para reclamações antigas nunca iniciadas, a data de início não pode
+        // ficar "hoje" — senão o tempo de resposta sai negativo. Usa a data de
+        // receção como início nesse caso.
+        const fallbackStart = new Date(e.receivedDate + "T12:00:00").toISOString();
+        return {
+          ...e,
+          status: "concluido",
+          resolvedDate: resolvedISO,
+          startedDate: e.startedDate || fallbackStart,
+          responseText: responseText !== undefined ? responseText : e.responseText || "",
+          eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
+        };
+      })
     );
   };
 
