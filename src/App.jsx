@@ -153,6 +153,14 @@ const CANAL_META = {
 // com estas como sugestão inicial — deixou de ser um enum fixo.
 const DEFAULT_CATEGORIAS = ["Disciplinar", "Técnico", "Infraestrutura e Equipamentos"];
 
+// Tipos de sanção aplicáveis a pais/EE — lista editável (options.sanctionTypes).
+const DEFAULT_TIPOS_SANCAO = [
+  "Suspensão da pessoa",
+  "Treinos à porta fechada",
+  "Expulsão",
+  "Advertência escrita",
+];
+
 // Paleta usada para colorir categorias e temas de forma consistente, já que
 // deixaram de ter uma cor fixa por serem listas geríveis pelo utilizador.
 const TAG_PALETTE = [
@@ -353,15 +361,93 @@ function classifyFromList(words, learnedField, list) {
 }
 
 // Aplica-se ao colar um e-mail: devolve a sugestão de classificação.
-function classifyText(rawText, learned, temas, categorias) {
+// Extrai a data mencionada no texto (dd/mm/aaaa, dd-mm-aaaa, "12 de março").
+const MESES_PT = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+function extractDate(rawText) {
+  const numeric = rawText.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/);
+  if (numeric) {
+    const [, d, m, yRaw] = numeric;
+    const y = yRaw.length === 2 ? `20${yRaw}` : yRaw;
+    const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (!isNaN(new Date(iso + "T00:00:00").getTime())) return iso;
+  }
+  const norm = normalizeText(rawText);
+  const textual = norm.match(/\b(\d{1,2})\s+de\s+([a-z]+)(?:\s+de\s+(\d{4}))?/);
+  if (textual) {
+    const idx = MESES_PT.indexOf(textual[2]);
+    if (idx >= 0) {
+      const y = textual[3] || String(new Date().getFullYear());
+      return `${y}-${String(idx + 1).padStart(2, "0")}-${String(textual[1]).padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
+
+// Tenta encontrar o nome de quem reclama a partir da assinatura ou de fórmulas
+// comuns em português ("Chamo-me X", "O meu nome é X", "Atenciosamente, X").
+function extractComplainantName(rawText) {
+  const patterns = [
+    /(?:chamo-me|o meu nome (?:é|e)|sou (?:a|o))\s+([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ]+(?:\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ]+){0,3})/,
+    /(?:atenciosamente|cumprimentos|com os melhores cumprimentos|obrigado|obrigada)[,\s]*\n+\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ]+(?:\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\wÀ-ÿ]+){1,3})/i,
+  ];
+  for (const re of patterns) {
+    const m = rawText.match(re);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
+}
+
+function extractEmailLink(rawText) {
+  const url = rawText.match(/https?:\/\/[^\s<>"')]+/);
+  return url ? url[0] : "";
+}
+
+// Escolhe a escola mencionada no texto, comparando com a lista real de escolas.
+function matchSchool(rawText, schools) {
+  const norm = normalizeText(rawText);
+  let best = "";
+  let bestLen = 0;
+  (schools || []).forEach((s) => {
+    const ns = normalizeText(s).trim();
+    if (ns && norm.includes(ns) && ns.length > bestLen) {
+      best = s;
+      bestLen = ns.length;
+    }
+  });
+  return best;
+}
+
+function classifyText(rawText, learned, temas, categorias, schools) {
   const words = tokenize(rawText);
   const canal = classifyEnum(words, learned.canal, SEED_HINTS.canal) || "email";
   const gravidade = classifyEnum(words, learned.gravidade, SEED_HINTS.gravidade) || "media";
   const categoria = classifyFromList(words, learned.categoria, categorias) || "";
   const tema = classifyFromList(words, learned.tema, temas) || "";
-  const trimmed = rawText.trim().replace(/\s+/g, " ");
-  const resumo = trimmed.length > 240 ? trimmed.slice(0, 240).replace(/\s+\S*$/, "") + "…" : trimmed;
-  return { canal, gravidade, categoria, tema, resumo, contexto: "", _hadAnyMatch: words.length > 0 };
+
+  // Divide o texto: as primeiras frases viram resumo, o resto vai para contexto.
+  const trimmed = rawText.trim().replace(/[ \t]+/g, " ");
+  const sentences = trimmed.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
+  let resumo = "";
+  let i = 0;
+  while (i < sentences.length && resumo.length < 200) {
+    resumo += (resumo ? " " : "") + sentences[i].trim();
+    i++;
+  }
+  const contexto = sentences.slice(i).join(" ").trim();
+
+  return {
+    canal,
+    gravidade,
+    categoria,
+    tema,
+    resumo,
+    contexto,
+    school: matchSchool(rawText, schools),
+    complainant: extractComplainantName(rawText),
+    emailLink: extractEmailLink(rawText),
+    receivedDate: extractDate(rawText),
+    _hadAnyMatch: words.length > 0,
+  };
 }
 
 // Chamado sempre que uma reclamação é guardada — reforça as associações
@@ -392,7 +478,7 @@ function learnFromEntry(learned, entry) {
 }
 
 
-function TriageBox({ onApply, temas, categorias, learned }) {
+function TriageBox({ onApply, temas, categorias, learned, schools }) {
   const [emailText, setEmailText] = useState("");
   const [triageError, setTriageError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -401,7 +487,7 @@ function TriageBox({ onApply, temas, categorias, learned }) {
     const text = emailText.trim();
     if (!text) return;
     setTriageError(null);
-    const result = classifyText(text, learned || {}, temas, categorias);
+    const result = classifyText(text, learned || {}, temas, categorias, schools);
     if (!result._hadAnyMatch) {
       setTriageError("Texto demasiado curto para reconhecer padrões. Preenche os campos manualmente.");
       return;
@@ -463,7 +549,7 @@ function TriageBox({ onApply, temas, categorias, learned }) {
               Sugerir classificação
             </button>
             <div style={{ fontSize: 11, color: COLORS.slate }}>
-              Gratuito — aprende com as reclamações que vais registando. Confirma ou corrige sempre.
+              Preenche data, nome, escola, canal, categoria, tema, gravidade, resumo e contexto. Confirma ou corrige sempre.
             </div>
           </div>
           {triageError && <div style={{ color: COLORS.danger, fontSize: 12, marginTop: 8 }}>{triageError}</div>}
@@ -524,13 +610,29 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
       next.context = data.contexto;
       applied.add("context");
     }
+    if (data.school && schoolOptions.includes(data.school)) {
+      next.school = data.school;
+      applied.add("school");
+    }
+    if (data.complainant) {
+      next.complainant = data.complainant;
+      applied.add("complainant");
+    }
+    if (data.emailLink) {
+      next.emailLink = data.emailLink;
+      applied.add("emailLink");
+    }
+    if (data.receivedDate) {
+      next.receivedDate = data.receivedDate;
+      applied.add("receivedDate");
+    }
     setForm(next);
     setSuggested(applied);
   };
 
   const fieldHint = (key) =>
     suggested.has(key) ? (
-      <span style={{ fontSize: 10.5, color: COLORS.navySoft, fontWeight: 700, marginLeft: 6 }}>· sugerido por IA, confirma</span>
+      <span style={{ fontSize: 10.5, color: COLORS.navySoft, fontWeight: 700, marginLeft: 6 }}>· sugerido, confirma</span>
     ) : null;
 
   return (
@@ -570,7 +672,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           </button>
         </div>
 
-        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} categorias={categoriaOptions} learned={learned} />}
+        {!initial && <TriageBox onApply={applyTriage} temas={categoryOptions} categorias={categoriaOptions} learned={learned} schools={schoolOptions} />}
 
         <label style={{ ...labelStyle, marginTop: 0 }}>Canal de contacto{fieldHint("canal")}</label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -596,7 +698,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           ))}
         </div>
 
-        <label style={labelStyle}>Data de receção</label>
+        <label style={labelStyle}>Data de receção{fieldHint("receivedDate")}</label>
         <input type="date" value={form.receivedDate} onChange={set("receivedDate")} style={inputStyle} />
         {preview && (
           <div style={{ margin: "8px 0 4px", fontSize: 12.5, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -661,11 +763,11 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           })}
         </div>
 
-        <label style={labelStyle}>Reclamante (nome)</label>
+        <label style={labelStyle}>Reclamante (nome){fieldHint("complainant")}</label>
         <input type="text" placeholder="Nome de quem faz a reclamação" value={form.complainant} onChange={set("complainant")} style={inputStyle} />
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <label style={{ ...labelStyle, marginTop: 14 }}>Escola</label>
+          <label style={{ ...labelStyle, marginTop: 14 }}>Escola{fieldHint("school")}</label>
           <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
             Gerir lista
           </button>
@@ -694,7 +796,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           ))}
         </select>
 
-        <label style={labelStyle}>Hiperligação ao e-mail recebido</label>
+        <label style={labelStyle}>Hiperligação ao e-mail recebido{fieldHint("emailLink")}</label>
         <input
           type="url"
           placeholder="https://mail.google.com/... ou link do Outlook"
@@ -850,11 +952,12 @@ function StatCard({ label, value, color }) {
 }
 
 // ---------- Manage schools/categories modal ----------
-function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, onAdd, onRemove, onClose }) {
+function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, onAdd, onRemove, onClose }) {
   const [newSchool, setNewSchool] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAuditCategory, setNewAuditCategory] = useState("");
   const [newComplaintCategory, setNewComplaintCategory] = useState("");
+  const [newSanctionType, setNewSanctionType] = useState("");
 
   const submitSchool = () => {
     const v = newSchool.trim();
@@ -875,6 +978,11 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
     const v = newComplaintCategory.trim();
     if (v) onAdd("complaintCategories", v);
     setNewComplaintCategory("");
+  };
+  const submitSanctionType = () => {
+    const v = newSanctionType.trim();
+    if (v) onAdd("sanctionTypes", v);
+    setNewSanctionType("");
   };
 
   const Chip = ({ label, onDelete }) => (
@@ -964,6 +1072,29 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
         </div>
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          Tipos de sanção (Pais / EE)
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {(sanctionTypes || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem tipos de sanção.</div>}
+          {(sanctionTypes || []).map((t) => (
+            <Chip key={t} label={t} onDelete={() => onRemove("sanctionTypes", t)} />
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+          <input
+            type="text"
+            placeholder="Ex: Suspensão por 3 jogos"
+            value={newSanctionType}
+            onChange={(e) => setNewSanctionType(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitSanctionType()}
+            style={inputStyle}
+          />
+          <button onClick={submitSanctionType} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
+            Adicionar
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
           Temas (mais específicos que a categoria)
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -1013,7 +1144,6 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
   );
 }
 
-// ---------- Complaint detail / notes timeline ----------
 // ---------- Complaint detail / notes timeline ----------
 function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen }) {
   const [note, setNote] = useState("");
@@ -1923,7 +2053,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit }) {
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave, schoolOptions, complaints, onManageOptions }) {
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onManageOptions }) {
   const [form, setForm] = useState({
     personType: "familia",
     personName: "",
@@ -1932,6 +2062,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, onManageOpt
     date: new Date().toISOString().slice(0, 10),
     description: "",
     sanctionApplied: null,
+    sanctionType: "",
     sanctionDescription: "",
     relatedComplaintId: "",
   });
@@ -2068,10 +2199,44 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, onManageOpt
             </div>
             {form.sanctionApplied === true && (
               <>
-                <label style={labelStyle}>Sanção aplicada (descrição)</label>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <label style={{ ...labelStyle }}>Tipo de sanção</label>
+                  <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+                    Gerir lista
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {sanctionTypes.length === 0 && (
+                    <div style={{ fontSize: 12, color: COLORS.slate }}>Sem tipos — usa "Gerir lista" para adicionar.</div>
+                  )}
+                  {sanctionTypes.map((label) => {
+                    const meta = colorForLabel(label);
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, sanctionType: label }))}
+                        style={{
+                          flex: "1 1 45%",
+                          padding: "8px 6px",
+                          borderRadius: 4,
+                          border: `1.5px solid ${form.sanctionType === label ? meta.color : COLORS.rule}`,
+                          background: form.sanctionType === label ? meta.bg : "transparent",
+                          color: form.sanctionType === label ? meta.color : COLORS.ink,
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <label style={labelStyle}>Detalhe da sanção (opcional)</label>
                 <textarea
                   rows={3}
-                  placeholder="Ex: Advertência escrita; suspensão de acesso às instalações por 2 semanas..."
+                  placeholder="Ex: duração, condições, data de reavaliação..."
                   value={form.sanctionDescription}
                   onChange={set("sanctionDescription")}
                   style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
@@ -2113,7 +2278,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, onManageOpt
 }
 
 // ---------- Sanções: detalhe / progressão do processo ----------
-function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, complaints }) {
+function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, complaints, sanctionTypes }) {
   const [note, setNote] = useState("");
   const [propostaText, setPropostaText] = useState(sanction.propostaSancao || "");
   const [sancaoFamiliaText, setSancaoFamiliaText] = useState(sanction.sanctionDescription || "");
@@ -2198,10 +2363,36 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
             </div>
             {sanction.sanctionApplied === true && (
               <>
+                <label style={{ ...labelStyle, marginTop: 4 }}>Tipo de sanção</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                  {(sanctionTypes || []).map((label) => {
+                    const meta = colorForLabel(label);
+                    const active = sanction.sanctionType === label;
+                    return (
+                      <button
+                        key={label}
+                        onClick={() => onUpdate(sanction.id, { sanctionType: label })}
+                        style={{
+                          flex: "1 1 45%",
+                          padding: "8px 6px",
+                          borderRadius: 4,
+                          border: `1.5px solid ${active ? meta.color : COLORS.rule}`,
+                          background: active ? meta.bg : "transparent",
+                          color: active ? meta.color : COLORS.ink,
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <textarea
                     rows={2}
-                    placeholder="Descrição da sanção aplicada..."
+                    placeholder="Detalhe da sanção (duração, condições)..."
                     value={sancaoFamiliaText}
                     onChange={(e) => setSancaoFamiliaText(e.target.value)}
                     style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
@@ -2343,6 +2534,16 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
     color: meta.color,
   }));
 
+  const tipoSancaoData = useMemo(() => {
+    const counts = {};
+    familia.forEach((s) => {
+      if (s.sanctionApplied === true && s.sanctionType) counts[s.sanctionType] = (counts[s.sanctionType] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value]) => ({ name, value, color: colorForLabel(name).color }));
+  }, [familia]);
+
   const Row = ({ s }) => (
     <div
       key={s.id}
@@ -2370,7 +2571,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
         <Tag label={MOTIVO_META[s.motivo].label} color={MOTIVO_META[s.motivo].color} bg={MOTIVO_META[s.motivo].bg} />
         {s.personType === "familia" ? (
           s.sanctionApplied === true ? (
-            <Tag label="Sanção aplicada" color={COLORS.danger} bg={COLORS.dangerBg} />
+            <Tag label={s.sanctionType || "Sanção aplicada"} color={COLORS.danger} bg={COLORS.dangerBg} />
           ) : s.sanctionApplied === false ? (
             <Tag label="Sem sanção" color={COLORS.ok} bg={COLORS.okBg} />
           ) : (
@@ -2432,6 +2633,21 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
         </div>
       )}
 
+      {tipoSancaoData.length > 0 && (
+        <div style={{ ...panelStyle, marginBottom: 24 }}>
+          <div style={panelTitle}>Sanções aplicadas por tipo (Pais / EE)</div>
+          <ResponsiveContainer width="100%" height={Math.max(160, tipoSancaoData.length * 34)}>
+            <BarChart data={tipoSancaoData} layout="vertical" margin={{ left: 8 }}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Bar dataKey="value" fill={COLORS.danger} radius={[0, 3, 3, 0]} barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       <div style={panelTitle}>Sanções a Pais / Encarregados de Educação</div>
       {familia.length === 0 ? (
         <div style={{ textAlign: "center", padding: "30px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6, marginBottom: 26 }}>
@@ -2460,7 +2676,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
@@ -2535,7 +2751,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -3049,6 +3265,7 @@ export default function App() {
           categories={options.categories}
           auditCategories={options.auditCategories}
           complaintCategories={options.complaintCategories}
+          sanctionTypes={options.sanctionTypes}
           onAdd={addOption}
           onRemove={removeOption}
           onClose={() => setShowManage(false)}
@@ -3102,6 +3319,7 @@ export default function App() {
           onSave={saveSanction}
           schoolOptions={options.schools}
           complaints={entries}
+          sanctionTypes={options.sanctionTypes}
           onManageOptions={() => setShowManage(true)}
         />
       )}
@@ -3114,6 +3332,7 @@ export default function App() {
           onAddNote={addSanctionNote}
           onRemove={removeSanction}
           complaints={entries}
+          sanctionTypes={options.sanctionTypes}
         />
       )}
     </div>
