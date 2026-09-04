@@ -311,9 +311,9 @@ const SEED_HINTS = {
     "Infraestrutura e Equipamentos": ["balneario", "equipamento", "transporte", "pagamento", "mensalidade", "material", "instalacoes", "campo", "autocarro"],
   },
   canal: {
-    presencial: ["liguei", "telefonei", "fui", "pessoalmente", "reuniao", "falei"],
-    livro: ["livro", "reclamacoes"],
-    redes: ["facebook", "instagram", "publicamos", "publicado", "rede", "social", "twitter"],
+    presencial: ["presencialmente", "pessoalmente", "balcao", "secretaria", "atendimento", "deslocar", "deslocei"],
+    livro: ["livro"],
+    redes: ["facebook", "instagram", "publicacao", "comentario", "rede", "social", "twitter", "tiktok"],
   },
 };
 
@@ -347,16 +347,37 @@ function classifyEnum(words, learnedField, seedField) {
   return bestFromScores(scores);
 }
 
-function classifyFromList(words, learnedField, list) {
+// Compara pela raiz da palavra, para "tecnica"/"tecnico" contarem como "Técnico".
+// Exige raiz longa e comprimentos próximos, para evitar falsos positivos como
+// "equipa" (da equipa de futebol) colar com "equipamentos".
+function stemMatch(a, b) {
+  if (a === b) return true;
+  const min = Math.min(a.length, b.length);
+  if (min < 6) return false;
+  if (Math.abs(a.length - b.length) > 3) return false;
+  const root = min - 2;
+  return a.slice(0, root) === b.slice(0, root);
+}
+
+function classifyFromList(words, learnedField, list, seedField) {
   const scores = scoreFromLearned(words, learnedField);
   Object.keys(scores).forEach((val) => {
     if (!list.includes(val)) delete scores[val];
   });
   list.forEach((label) => {
     const labelWords = tokenize(label);
-    const hits = labelWords.filter((lw) => words.includes(lw)).length;
+    const hits = labelWords.filter((lw) => words.some((w) => stemMatch(w, lw))).length;
     if (hits > 0) scores[label] = (scores[label] || 0) + hits * 2;
   });
+  // Pistas semânticas: reconhecem a categoria pelo assunto ("gritou", "insulto"
+  // → Disciplinar) mesmo quando o nome da categoria não aparece no texto.
+  if (seedField) {
+    Object.entries(seedField).forEach(([label, keywords]) => {
+      if (!list.includes(label)) return;
+      const hits = keywords.filter((kw) => words.includes(kw)).length;
+      if (hits > 0) scores[label] = (scores[label] || 0) + hits;
+    });
+  }
   return bestFromScores(scores);
 }
 
@@ -402,9 +423,15 @@ function extractEmailLink(rawText) {
   return url ? url[0] : "";
 }
 
-// Escolhe a escola mencionada no texto, comparando com a lista real de escolas.
+// Escolhe a escola mencionada no texto. Primeiro tenta o nome completo; se não
+// encontrar, aceita correspondência pelas palavras distintivas do nome (ex:
+// "Gondomar" basta para reconhecer "Dragon Force Gondomar"), ignorando termos
+// genéricos que aparecem em quase todas as escolas.
+const SCHOOL_GENERIC_WORDS = new Set(["dragon", "force", "escola", "academia", "centro", "clube", "futebol", "df"]);
 function matchSchool(rawText, schools) {
   const norm = normalizeText(rawText);
+  const textWords = new Set(tokenize(rawText));
+
   let best = "";
   let bestLen = 0;
   (schools || []).forEach((s) => {
@@ -414,18 +441,43 @@ function matchSchool(rawText, schools) {
       bestLen = ns.length;
     }
   });
-  return best;
+  if (best) return best;
+
+  let bestScore = 0;
+  (schools || []).forEach((s) => {
+    const distinctive = tokenize(s).filter((w) => !SCHOOL_GENERIC_WORDS.has(w));
+    if (distinctive.length === 0) return;
+    const hits = distinctive.filter((w) => textWords.has(w)).length;
+    if (hits > bestScore) {
+      bestScore = hits;
+      best = s;
+    }
+  });
+  return bestScore > 0 ? best : "";
 }
 
 function classifyText(rawText, learned, temas, categorias, schools) {
   const words = tokenize(rawText);
   const canal = classifyEnum(words, learned.canal, SEED_HINTS.canal) || "email";
   const gravidade = classifyEnum(words, learned.gravidade, SEED_HINTS.gravidade) || "media";
-  const categoria = classifyFromList(words, learned.categoria, categorias) || "";
+  const categoria = classifyFromList(words, learned.categoria, categorias, SEED_HINTS.categoria) || "";
   const tema = classifyFromList(words, learned.tema, temas) || "";
 
+  // Remove a assinatura final antes de dividir em resumo/contexto, para não
+  // ficar "Atenciosamente, Maria Silva" no meio do contexto.
+  const semAssinatura = rawText.replace(
+    /\n\s*(atenciosamente|cumprimentos|com os melhores cumprimentos|melhores cumprimentos|obrigado|obrigada|abra[çc]o)[,.\s]*[\s\S]*$/i,
+    ""
+  );
+
+  // Remove a saudação inicial ("Boa tarde,", "Exmos. Senhores,") do resumo.
+  const semSaudacao = semAssinatura.replace(
+    /^\s*(bom dia|boa tarde|boa noite|ol[áa]|exmos?\.?\s+senhores?|exmo\.?\s+senhor|caros?|prezados?)[,.\s]*/i,
+    ""
+  );
+
   // Divide o texto: as primeiras frases viram resumo, o resto vai para contexto.
-  const trimmed = rawText.trim().replace(/[ \t]+/g, " ");
+  const trimmed = semSaudacao.trim().replace(/[ \t]+/g, " ");
   const sentences = trimmed.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
   let resumo = "";
   let i = 0;
