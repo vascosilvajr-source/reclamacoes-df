@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { dbStorage } from "./supabaseClient";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -14,6 +14,9 @@ import {
   Cell,
   LineChart,
   Line,
+  ScatterChart,
+  Scatter,
+  ReferenceLine,
 } from "recharts";
 
 // ---------- Tokens ----------
@@ -46,6 +49,9 @@ const STORAGE_OPTIONS_KEY = "reclamacoes:opcoes";
 const STORAGE_AUDITS_KEY = "reclamacoes:auditorias";
 const STORAGE_SANCOES_KEY = "reclamacoes:sancoes";
 const STORAGE_TRIAGEM_KEY = "reclamacoes:triagem-aprendizagem";
+const STORAGE_INSCRITOS_KEY = "reclamacoes:inscritos";
+const STORAGE_TURMAS_KEY = "reclamacoes:turmas-alunos";
+const STORAGE_EPOCA_ANT_KEY = "reclamacoes:epoca-anterior";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -174,6 +180,63 @@ const CANAL_META = {
 const DEFAULT_CATEGORIAS = ["Disciplinar", "Técnico", "Infraestrutura e Equipamentos"];
 
 // Tipos de sanção aplicáveis a pais/EE — lista editável (options.sanctionTypes).
+const DEFAULT_AREAS_AUDITORIA = ["Técnica", "Médica", "Instalações e Equipamentos", "Administrativa", "Escolar e Social"];
+
+const DEFAULT_NIVEIS = ["Raíz", "Iniciação", "Básico", "Intermédio", "Avançado", "Expert"];
+const DEFAULT_TURMAS = [
+  ...DEFAULT_NIVEIS,
+  "Sub-6", "Sub-7", "Sub-8", "Sub-9", "Sub-9B", "Sub-9 B - GR", "Sub-10", "Sub-11", "Sub-11A",
+  "Sub-11 - GR", "Sub-12", "Sub-13", "Sub-14", "Sub-15", "Sub-15B", "Sub-16", "Sub-17", "Sub-19",
+  "Equipa Competição",
+];
+
+const EFICACIA_ACAO_META = {
+  eficaz: { label: "Eficaz", color: COLORS.ok, bg: COLORS.okBg },
+  parcial: { label: "Parcialmente eficaz", color: COLORS.warn, bg: COLORS.warnBg },
+  ineficaz: { label: "Ineficaz", color: COLORS.danger, bg: COLORS.dangerBg },
+};
+
+// Classificação do crescimento de inscritos. Os limites são configuráveis na app.
+const LIMITES_CRESC_PADRAO = { critico: -10, declinio: -2, estavel: 2 };
+const CLASSES_CRESC = [
+  { key: "critico", label: "Crítico", color: COLORS.danger, bg: COLORS.dangerBg },
+  { key: "declinio", label: "Declínio moderado", color: COLORS.warn, bg: COLORS.warnBg },
+  { key: "estavel", label: "Estável", color: COLORS.slate, bg: COLORS.doneBg },
+  { key: "positiva", label: "Evolução positiva", color: COLORS.ok, bg: COLORS.okBg },
+];
+function classificarCrescimento(pct, limites) {
+  const L = limites || LIMITES_CRESC_PADRAO;
+  if (pct < L.critico) return CLASSES_CRESC[0];
+  if (pct < L.declinio) return CLASSES_CRESC[1];
+  if (pct <= L.estavel) return CLASSES_CRESC[2];
+  return CLASSES_CRESC[3];
+}
+
+// Escalão a partir do nome da turma: "Sub-11A" -> "Sub-11"; níveis mantêm o nome.
+function escalaoDaTurma(t, niveis) {
+  if (!t) return "—";
+  const m = String(t).match(/^sub[\s-]*(\d+)/i);
+  if (m) return "Sub-" + m[1];
+  const n = (niveis || DEFAULT_NIVEIS).find((x) => String(t).toLowerCase().startsWith(x.toLowerCase()));
+  return n || "Competição (outras)";
+}
+function ehEscolinha(t, niveis) {
+  return (niveis || DEFAULT_NIVEIS).includes(escalaoDaTurma(t, niveis));
+}
+
+// Semana ISO no formato aaaa-Wnn, e etiqueta legível.
+function semanaLabel(key) {
+  if (!key) return "";
+  const [ano, sem] = String(key).split("-W");
+  return `S${sem}/${String(ano).slice(2)}`;
+}
+function mesDaSemana(key) {
+  const [ano, sem] = String(key).split("-W");
+  const d = new Date(Date.UTC(+ano, 0, 4));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + (+sem - 1) * 7);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 const DEFAULT_TIPOS_SANCAO = [
   "Suspensão da pessoa",
   "Treinos à porta fechada",
@@ -1053,12 +1116,13 @@ function StatCard({ label, value, color, subtitle }) {
 }
 
 // ---------- Manage schools/categories modal ----------
-function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, onAdd, onRemove, onClose }) {
+function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, auditAreas, onAdd, onRemove, onClose }) {
   const [newSchool, setNewSchool] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAuditCategory, setNewAuditCategory] = useState("");
   const [newComplaintCategory, setNewComplaintCategory] = useState("");
   const [newSanctionType, setNewSanctionType] = useState("");
+  const [newArea, setNewArea] = useState("");
 
   const submitSchool = () => {
     const v = newSchool.trim();
@@ -1079,6 +1143,11 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
     const v = newComplaintCategory.trim();
     if (v) onAdd("complaintCategories", v);
     setNewComplaintCategory("");
+  };
+  const submitArea = () => {
+    const v = newArea.trim();
+    if (v) onAdd("auditAreas", v);
+    setNewArea("");
   };
   const submitSanctionType = () => {
     const v = newSanctionType.trim();
@@ -1168,6 +1237,29 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
             style={inputStyle}
           />
           <button onClick={submitComplaintCategory} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
+            Adicionar
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          Áreas / Departamentos (auditorias)
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {(auditAreas || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem áreas.</div>}
+          {(auditAreas || []).map((a) => (
+            <Chip key={a} label={a} onDelete={() => onRemove("auditAreas", a)} />
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+          <input
+            type="text"
+            placeholder="Ex: Técnica"
+            value={newArea}
+            onChange={(e) => setNewArea(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitArea()}
+            style={inputStyle}
+          />
+          <button onClick={submitArea} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
             Adicionar
           </button>
         </div>
@@ -1954,17 +2046,40 @@ function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
 }
 
 // ---------- Audit detail: findings management ----------
-function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRemoveFinding, onRemoveAudit, onManageOptions }) {
+function AuditDetail({
+  audit,
+  auditCategoryOptions,
+  areaOptions,
+  onClose,
+  onAddFinding,
+  onRemoveFinding,
+  onUpdateFinding,
+  onRemoveAudit,
+  onManageOptions,
+}) {
   const [classification, setClassification] = useState("NC");
   const [category, setCategory] = useState("");
+  const [area, setArea] = useState("");
   const [description, setDescription] = useState("");
+  const [acaoDraft, setAcaoDraft] = useState({});
 
   const submit = () => {
     const v = description.trim();
     if (!v) return;
-    onAddFinding(audit.id, { id: `f_${Date.now()}`, classification, category, description: v });
+    onAddFinding(audit.id, {
+      id: `f_${Date.now()}`,
+      classification,
+      category,
+      area,
+      description: v,
+      resolvida: false,
+      eficacia: "",
+      acao: "",
+    });
     setDescription("");
   };
+
+  const resolvidas = audit.findings.filter((f) => f.resolvida).length;
 
   return (
     <div
@@ -1972,7 +2087,7 @@ function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRem
       onClick={onClose}
     >
       <div
-        style={{ width: "min(560px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        style={{ width: "min(600px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -1988,12 +2103,15 @@ function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRem
             </button>
           </div>
         </div>
-        <h2 style={{ margin: "0 0 18px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{audit.school}</h2>
+        <h2 style={{ margin: "0 0 4px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{audit.school}</h2>
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 18 }}>
+          {audit.findings.length} constatações · {resolvidas} resolvidas
+        </div>
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           Nova constatação
         </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
           {Object.entries(CLASSIFICATION_META).map(([key, meta]) => (
             <button
               key={key}
@@ -2015,6 +2133,21 @@ function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRem
           ))}
         </div>
         <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 10 }}>{CLASSIFICATION_META[classification].label}</div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <label style={{ ...labelStyle, marginTop: 0 }}>Área / Departamento</label>
+          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>
+            Gerir lista
+          </button>
+        </div>
+        <select value={area} onChange={(e) => setArea(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+          <option value="">{areaOptions.length ? "Selecionar área..." : "Sem áreas — usa 'Gerir lista'"}</option>
+          {areaOptions.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 0 }}>Categoria</label>
@@ -2051,21 +2184,113 @@ function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRem
           <div style={{ fontSize: 13, color: COLORS.slate }}>Ainda sem constatações registadas.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {audit.findings.map((f) => (
-              <div
-                key={f.id}
-                style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}
-              >
-                <Tag label={f.classification} color={CLASSIFICATION_META[f.classification].color} bg={CLASSIFICATION_META[f.classification].bg} />
-                <div style={{ flex: 1 }}>
-                  {f.category && <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 2 }}>{f.category}</div>}
-                  <div style={{ fontSize: 13.5 }}>{f.description}</div>
+            {audit.findings.map((f) => {
+              const cm = CLASSIFICATION_META[f.classification] || CLASSIFICATION_META.NC;
+              return (
+                <div key={f.id} style={{ padding: "11px 13px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <Tag label={f.classification} color={cm.color} bg={cm.bg} />
+                    <div style={{ flex: 1 }}>
+                      {(f.area || f.category) && (
+                        <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 2 }}>
+                          {[f.area, f.category].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 13.5 }}>{f.description}</div>
+                    </div>
+                    <button title="Remover" onClick={() => onRemoveFinding(audit.id, f.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 7,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      marginTop: 10,
+                      paddingTop: 10,
+                      borderTop: `1px solid ${COLORS.rule}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 11.5, color: COLORS.slate, fontWeight: 600 }}>Resolvida?</span>
+                    <button
+                      onClick={() =>
+                        onUpdateFinding(audit.id, f.id,
+                          f.resolvida ? { resolvida: false, eficacia: "", acao: "" } : { resolvida: true, eficacia: f.eficacia || "eficaz" }
+                        )
+                      }
+                      style={{
+                        padding: "5px 12px",
+                        borderRadius: 20,
+                        border: `1.5px solid ${f.resolvida ? COLORS.ok : COLORS.rule}`,
+                        background: f.resolvida ? COLORS.okBg : "transparent",
+                        color: f.resolvida ? COLORS.ok : COLORS.slate,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {f.resolvida ? "✓ Sim" : "Não"}
+                    </button>
+
+                    {f.resolvida && (
+                      <>
+                        <span style={{ fontSize: 11.5, color: COLORS.slate, fontWeight: 600, marginLeft: 4 }}>Eficácia</span>
+                        {Object.entries(EFICACIA_ACAO_META).map(([k, meta]) => (
+                          <button
+                            key={k}
+                            onClick={() => onUpdateFinding(audit.id, f.id, { eficacia: k })}
+                            style={{
+                              padding: "5px 11px",
+                              borderRadius: 20,
+                              border: `1.5px solid ${f.eficacia === k ? meta.color : COLORS.rule}`,
+                              background: f.eficacia === k ? meta.bg : "transparent",
+                              color: f.eficacia === k ? meta.color : COLORS.slate,
+                              fontSize: 11.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {f.eficacia === k ? "✓ " : ""}
+                            {meta.label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+
+                  {f.resolvida && (
+                    <div style={{ marginTop: 9 }}>
+                      <label style={{ ...labelStyle, marginTop: 0 }}>Ação corretiva / correção aplicada</label>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <textarea
+                          rows={2}
+                          placeholder="O que foi feito para resolver..."
+                          value={acaoDraft[f.id] !== undefined ? acaoDraft[f.id] : f.acao || ""}
+                          onChange={(e) => setAcaoDraft((d) => ({ ...d, [f.id]: e.target.value }))}
+                          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
+                        />
+                        <button
+                          onClick={() => {
+                            onUpdateFinding(audit.id, f.id, { acao: (acaoDraft[f.id] !== undefined ? acaoDraft[f.id] : f.acao || "").trim() });
+                            setAcaoDraft((d) => {
+                              const n = { ...d };
+                              delete n[f.id];
+                              return n;
+                            });
+                          }}
+                          style={{ ...primaryBtnStyle, flex: "none", padding: "0 14px" }}
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button title="Remover" onClick={() => onRemoveFinding(audit.id, f.id)} style={{ ...iconBtnStyle, padding: 0 }}>
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -2073,153 +2298,605 @@ function AuditDetail({ audit, auditCategoryOptions, onClose, onAddFinding, onRem
   );
 }
 
-// ---------- Audits page (list + analysis) ----------
-function AuditsPage({ audits, onNewAudit, onOpenAudit }) {
-  const allFindings = useMemo(() => audits.flatMap((a) => a.findings.map((f) => ({ ...f, school: a.school }))), [audits]);
+// ---------- Quadrant matrix (shared by audits and enrolment analysis) ----------
+function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
+  const keys = Object.keys(metrics);
+  const [mx, setMx] = useState(defaultX && metrics[defaultX] ? defaultX : keys[0]);
+  const [my, setMy] = useState(defaultY && metrics[defaultY] ? defaultY : keys[1] || keys[0]);
+  const MX = metrics[mx] || metrics[keys[0]];
+  const MY = metrics[my] || metrics[keys[0]];
 
-  const classificationCounts = Object.keys(CLASSIFICATION_META).map((key) => ({
-    name: key,
-    value: allFindings.filter((f) => f.classification === key).length,
-    color: CLASSIFICATION_META[key].color,
-  }));
+  const pts = subjects.map((s) => ({ x: MX.v(s), y: MY.v(s), name: s }));
+  const median = (arr) => {
+    if (!arr.length) return 0;
+    const v = [...arr].sort((a, b) => a - b);
+    const m = Math.floor(v.length / 2);
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+  };
+  const cx = median(pts.map((p) => p.x));
+  const cy = median(pts.map((p) => p.y));
 
-  const schoolData = useMemo(() => topCounts(allFindings, "school").slice(0, 8).map(([name, value]) => ({ name, value })), [allFindings]);
-  const categoryData = useMemo(() => topCounts(allFindings, "category").slice(0, 8).map(([name, value]) => ({ name, value })), [allFindings]);
+  const quads = [
+    { label: `${MX.label} baixo · ${MY.label} alto`, color: COLORS.ok, pts: pts.filter((p) => p.x < cx && p.y >= cy) },
+    { label: `${MX.label} alto · ${MY.label} alto`, color: COLORS.warn, pts: pts.filter((p) => p.x >= cx && p.y >= cy) },
+    { label: `${MX.label} baixo · ${MY.label} baixo`, color: COLORS.slate, pts: pts.filter((p) => p.x < cx && p.y < cy) },
+    { label: `${MX.label} alto · ${MY.label} baixo`, color: COLORS.danger, pts: pts.filter((p) => p.x >= cx && p.y < cy) },
+  ];
+  const colorFor = (p) => (p.x >= cx && p.y >= cy ? COLORS.warn : p.x < cx && p.y >= cy ? COLORS.ok : p.x >= cx ? COLORS.danger : COLORS.slate);
+
+  return (
+    <div style={panelStyle}>
+      <div style={panelTitle}>{label}</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <div>
+          <label style={{ ...labelStyle, marginTop: 0 }}>Eixo horizontal (X)</label>
+          <select value={mx} onChange={(e) => setMx(e.target.value)} style={{ ...inputStyle, width: 240 }}>
+            {keys.map((k) => (
+              <option key={k} value={k}>
+                {metrics[k].label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={{ ...labelStyle, marginTop: 0 }}>Eixo vertical (Y)</label>
+          <select value={my} onChange={(e) => setMy(e.target.value)} style={{ ...inputStyle, width: 240 }}>
+            {keys.map((k) => (
+              <option key={k} value={k}>
+                {metrics[k].label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {pts.length === 0 ? (
+        <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados para cruzar.</div>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={320}>
+            <ScatterChart margin={{ top: 14, right: 22, bottom: 30, left: 6 }}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name={MX.label}
+                tick={{ fontSize: 11, fill: COLORS.slate }}
+                label={{ value: MX.label, position: "insideBottom", offset: -18, fontSize: 11, fill: COLORS.slate }}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name={MY.label}
+                tick={{ fontSize: 11, fill: COLORS.slate }}
+                label={{ value: MY.label, angle: -90, position: "insideLeft", fontSize: 11, fill: COLORS.slate }}
+              />
+              <Tooltip
+                contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }}
+                formatter={(v, n) => [n === "x" ? MX.fmt(v) : MY.fmt(v), n === "x" ? MX.label : MY.label]}
+                labelFormatter={() => ""}
+                content={({ payload }) => {
+                  if (!payload || !payload.length) return null;
+                  const d = payload[0].payload;
+                  return (
+                    <div style={{ background: "#fff", border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "7px 10px", fontSize: 12 }}>
+                      <strong>{d.name}</strong>
+                      <div>
+                        {MX.label}: {MX.fmt(d.x)}
+                      </div>
+                      <div>
+                        {MY.label}: {MY.fmt(d.y)}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+              <ReferenceLine x={cx} stroke={COLORS.slate} strokeDasharray="5 4" />
+              <ReferenceLine y={cy} stroke={COLORS.slate} strokeDasharray="5 4" />
+              <Scatter data={pts}>
+                {pts.map((p, i) => (
+                  <Cell key={i} fill={colorFor(p)} />
+                ))}
+              </Scatter>
+            </ScatterChart>
+          </ResponsiveContainer>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+            {quads.map((q) => (
+              <div key={q.label} style={{ border: `1px solid ${COLORS.rule}`, borderLeft: `3px solid ${q.color}`, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 3 }}>{q.label}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{q.pts.length ? q.pts.map((p) => p.name).join(", ") : "—"}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 8 }}>
+            As linhas tracejadas marcam a mediana de cada eixo, por isso os quadrantes são uma comparação relativa entre
+            escolas, não um padrão de qualidade absoluto.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Chart parameter toggles ----------
+function ParamChips({ params, visible, onToggle }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+        Parâmetros de análise mostrados
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {params.map((p) => {
+          const on = visible.has(p.key);
+          return (
+            <button
+              key={p.key}
+              onClick={() => onToggle(p.key)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 20,
+                border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
+                background: on ? COLORS.navy : "transparent",
+                color: on ? "#fff" : COLORS.slate,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {on ? "✓ " : "+ "}
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const AUDIT_PARAMS = [
+  { key: "catArea", label: "Categoria e área" },
+  { key: "clsArea", label: "Classificação por área" },
+  { key: "quad", label: "Matriz de quadrantes" },
+  { key: "rank", label: "Ranking de escolas" },
+  { key: "clsEsc", label: "Classificação por escola" },
+  { key: "pend", label: "Por resolver" },
+  { key: "estado", label: "Estado e eficácia" },
+  { key: "totArea", label: "Total por área" },
+];
+
+// ---------- Audits analysis ----------
+function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptions }) {
+  const [fEsc, setFEsc] = useState("todas");
+  const [fArea, setFArea] = useState("todas");
+  const [fCls, setFCls] = useState("todas");
+  const [visible, setVisible] = useState(new Set(AUDIT_PARAMS.map((p) => p.key)));
+
+  const toggle = (k) =>
+    setVisible((prev) => {
+      const n = new Set(prev);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+
+  // Cada constatação leva consigo a escola e a data da auditoria a que pertence.
+  const all = useMemo(
+    () => audits.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date, auditId: a.id }))),
+    [audits]
+  );
+  const F = useMemo(
+    () =>
+      all
+        .filter((f) => (fEsc === "todas" ? true : f.escola === fEsc))
+        .filter((f) => (fArea === "todas" ? true : f.area === fArea))
+        .filter((f) => (fCls === "todas" ? true : f.classification === fCls)),
+    [all, fEsc, fArea, fCls]
+  );
+
+  const escolas = useMemo(() => [...new Set(all.map((f) => f.escola))].sort(), [all]);
+  const areas = useMemo(() => {
+    const usadas = [...new Set(all.map((f) => f.area).filter(Boolean))];
+    return [...new Set([...areaOptions, ...usadas])];
+  }, [all, areaOptions]);
+  const classes = Object.keys(CLASSIFICATION_META);
+
+  const resolvidas = F.filter((f) => f.resolvida);
+  const eficazes = resolvidas.filter((f) => f.eficacia === "eficaz");
+
+  const catAreaData = useMemo(() => {
+    const cats = [...new Set(F.map((f) => f.category).filter(Boolean))].slice(0, 10);
+    return cats.map((c) => {
+      const row = { name: c };
+      areas.forEach((a) => (row[a] = F.filter((f) => f.category === c && f.area === a).length));
+      return row;
+    });
+  }, [F, areas]);
+
+  const clsAreaData = useMemo(
+    () =>
+      areas.map((a) => {
+        const row = { name: a };
+        classes.forEach((c) => (row[c] = F.filter((f) => f.area === a && f.classification === c).length));
+        return row;
+      }),
+    [F, areas]
+  );
+
+  const rankData = useMemo(
+    () =>
+      escolas
+        .map((e) => ({ name: e, value: F.filter((f) => f.escola === e).length }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10),
+    [F, escolas]
+  );
+
+  const clsEscData = useMemo(
+    () =>
+      escolas.map((e) => {
+        const row = { name: e };
+        classes.forEach((c) => (row[c] = F.filter((f) => f.escola === e && f.classification === c).length));
+        return row;
+      }),
+    [F, escolas]
+  );
+
+  const pendData = useMemo(
+    () =>
+      areas.map((a) => ({
+        name: a,
+        pendentes: F.filter((f) => f.area === a && !f.resolvida).length,
+        graves: F.filter((f) => f.area === a && (f.classification === "NCM" || f.classification === "NC")).length,
+      })),
+    [F, areas]
+  );
+
+  const estadoData = useMemo(
+    () =>
+      classes.map((c) => ({
+        name: c,
+        eficaz: F.filter((f) => f.classification === c && f.resolvida && f.eficacia === "eficaz").length,
+        parcial: F.filter((f) => f.classification === c && f.resolvida && f.eficacia === "parcial").length,
+        ineficaz: F.filter((f) => f.classification === c && f.resolvida && f.eficacia === "ineficaz").length,
+        pendente: F.filter((f) => f.classification === c && !f.resolvida).length,
+      })),
+    [F]
+  );
+
+  const totAreaData = useMemo(() => areas.map((a) => ({ name: a, value: F.filter((f) => f.area === a).length })), [F, areas]);
+
+  const metrics = useMemo(
+    () => ({
+      constat: { label: "Nº de constatações", v: (e) => F.filter((f) => f.escola === e).length, fmt: (v) => v },
+      graves: {
+        label: "Graves (NCM+NC)",
+        v: (e) => F.filter((f) => f.escola === e && (f.classification === "NCM" || f.classification === "NC")).length,
+        fmt: (v) => v,
+      },
+      ncm: { label: "Não conformidades maiores", v: (e) => F.filter((f) => f.escola === e && f.classification === "NCM").length, fmt: (v) => v },
+      om: { label: "Oportunidades de melhoria", v: (e) => F.filter((f) => f.escola === e && f.classification === "OM").length, fmt: (v) => v },
+      as: { label: "Áreas sensíveis", v: (e) => F.filter((f) => f.escola === e && f.classification === "AS").length, fmt: (v) => v },
+      pend: { label: "Por resolver", v: (e) => F.filter((f) => f.escola === e && !f.resolvida).length, fmt: (v) => v },
+      taxares: {
+        label: "Taxa de resolução (%)",
+        v: (e) => {
+          const t = F.filter((f) => f.escola === e);
+          return t.length ? Math.round((t.filter((f) => f.resolvida).length / t.length) * 100) : 0;
+        },
+        fmt: (v) => v + "%",
+      },
+      eficacia: {
+        label: "Eficácia das resoluções (%)",
+        v: (e) => {
+          const r = F.filter((f) => f.escola === e && f.resolvida);
+          return r.length ? Math.round((r.filter((f) => f.eficacia === "eficaz").length / r.length) * 100) : 0;
+        },
+        fmt: (v) => v + "%",
+      },
+      ineficaz: { label: "Resoluções ineficazes", v: (e) => F.filter((f) => f.escola === e && f.resolvida && f.eficacia === "ineficaz").length, fmt: (v) => v },
+      nareas: { label: "Nº de áreas afetadas", v: (e) => new Set(F.filter((f) => f.escola === e).map((f) => f.area).filter(Boolean)).size, fmt: (v) => v },
+    }),
+    [F]
+  );
+
+  const stackedBars = (data, keys, colors, height) => (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data}>
+        <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+        {keys.map((k, i) => (
+          <Bar key={k} dataKey={k} stackId="a" fill={colors[i]} />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+
+  const legend = (items) => (
+    <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6, flexWrap: "wrap" }}>
+      {items.map(([l, c]) => (
+        <div key={l} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: c, display: "inline-block" }} />
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+
+  const filterStyle = { ...inputStyle, width: 190 };
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", flex: 1 }}>
-          {Object.entries(CLASSIFICATION_META).map(([key, meta]) => (
-            <StatCard key={key} label={meta.label} value={allFindings.filter((f) => f.classification === key).length} color={meta.color} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={filterStyle}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
           ))}
-        </div>
-        <button
-          onClick={onNewAudit}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: COLORS.navy,
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "10px 16px",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <Plus size={16} /> Nova auditoria
-        </button>
+        </select>
+        <select value={fArea} onChange={(e) => setFArea(e.target.value)} style={filterStyle}>
+          <option value="todas">Todas as áreas</option>
+          {areas.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+        <select value={fCls} onChange={(e) => setFCls(e.target.value)} style={filterStyle}>
+          <option value="todas">Todas as classificações</option>
+          {classes.map((c) => (
+            <option key={c} value={c}>
+              {c} — {CLASSIFICATION_META[c].label}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {allFindings.length > 0 && (
-        <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
-          <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-            <div style={panelTitle}>Distribuição por classificação</div>
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={classificationCounts} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                  {classificationCounts.map((d, i) => (
-                    <Cell key={i} fill={d.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
-              {classificationCounts.map((d) => (
-                <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: "inline-block" }} />
-                  {d.name} ({d.value})
-                </div>
-              ))}
-            </div>
-          </div>
+      <ParamChips params={AUDIT_PARAMS} visible={visible} onToggle={toggle} />
 
-          <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-            <div style={panelTitle}>Escolas com mais constatações</div>
-            {schoolData.length === 0 ? (
-              <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados ainda.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
-                <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <div style={{ ...panelStyle, flex: "1 1 260px" }}>
-            <div style={panelTitle}>Categorias mais recorrentes</div>
-            {categoryData.length === 0 ? (
-              <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados de categoria ainda.</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={Math.max(160, categoryData.length * 32)}>
-                <BarChart data={categoryData} layout="vertical" margin={{ left: 8 }}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div style={panelTitle}>Auditorias realizadas</div>
-      {audits.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Ainda não há auditorias registadas. Cria a primeira com "Nova auditoria".
+      {F.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+          Sem constatações para os filtros selecionados.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {[...audits]
-            .sort((a, b) => new Date(b.date) - new Date(a.date))
-            .map((a) => {
-              const counts = Object.keys(CLASSIFICATION_META).map((k) => [k, a.findings.filter((f) => f.classification === k).length]).filter(([, n]) => n > 0);
-              return (
-                <div
-                  key={a.id}
-                  onClick={() => onOpenAudit(a)}
-                  style={{
-                    ...panelStyle,
-                    padding: "14px 18px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    cursor: "pointer",
-                    flexWrap: "wrap",
-                    gap: 10,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14.5 }}>{a.school}</div>
-                    <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
-                      {fmt(new Date(a.date + "T00:00:00"))} · {a.findings.length} constatações
+        <>
+          <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
+            <StatCard label="Total de constatações" value={F.length} />
+            <StatCard label="Escolas auditadas" value={new Set(F.map((f) => f.escola)).size} />
+            <StatCard
+              label="Resolvidas"
+              value={resolvidas.length}
+              color={COLORS.ok}
+              subtitle={F.length ? `${Math.round((resolvidas.length / F.length) * 100)}% do total` : ""}
+            />
+            <StatCard
+              label="Eficácia das resoluções"
+              value={resolvidas.length ? `${Math.round((eficazes.length / resolvidas.length) * 100)}%` : "—"}
+              subtitle="verificadas como eficazes"
+            />
+          </div>
+
+          {visible.has("catArea") && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Incidência por categoria e área</div>
+              {catAreaData.length === 0 ? (
+                <div style={{ fontSize: 13, color: COLORS.slate }}>Sem categorias registadas nas constatações.</div>
+              ) : (
+                <>
+                  {stackedBars(catAreaData, areas, areas.map((_, i) => TAG_PALETTE[i % TAG_PALETTE.length].color), 260)}
+                  {legend(areas.map((a, i) => [a, TAG_PALETTE[i % TAG_PALETTE.length].color]))}
+                </>
+              )}
+            </div>
+          )}
+
+          {visible.has("clsArea") && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Classificações (NCM / NC / OM / AS) por área</div>
+              {stackedBars(clsAreaData, classes, classes.map((c) => CLASSIFICATION_META[c].color), 260)}
+              {legend(classes.map((c) => [`${c} — ${CLASSIFICATION_META[c].label}`, CLASSIFICATION_META[c].color]))}
+            </div>
+          )}
+
+          {visible.has("quad") && (
+            <div style={{ marginBottom: 16 }}>
+              <QuadrantMatrix
+                subjects={escolas}
+                metrics={metrics}
+                defaultX="constat"
+                defaultY="taxares"
+                label="Matriz de quadrantes — cruzar duas métricas de auditoria por escola"
+              />
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+            {visible.has("rank") && (
+              <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+                <div style={panelTitle}>Ranking de escolas por constatações</div>
+                <ResponsiveContainer width="100%" height={Math.max(180, rankData.length * 34)}>
+                  <BarChart data={rankData} layout="vertical" margin={{ left: 8 }}>
+                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {visible.has("clsEsc") && (
+              <div style={{ ...panelStyle, flex: "1 1 320px" }}>
+                <div style={panelTitle}>Classificação por escola</div>
+                {stackedBars(clsEscData, classes, classes.map((c) => CLASSIFICATION_META[c].color), 260)}
+                {legend(classes.map((c) => [c, CLASSIFICATION_META[c].color]))}
+              </div>
+            )}
+          </div>
+
+          {visible.has("pend") && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Constatações por resolver, por área</div>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={pendData}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="pendentes" name="Por resolver" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="graves" name="NCM + NC" fill={COLORS.danger} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              {legend([
+                ["Por resolver", COLORS.slate],
+                ["NCM + NC (gravidade)", COLORS.danger],
+              ])}
+            </div>
+          )}
+
+          {visible.has("estado") && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Estado das constatações por classificação</div>
+              {stackedBars(estadoData, ["eficaz", "parcial", "ineficaz", "pendente"], [COLORS.ok, COLORS.warn, COLORS.danger, COLORS.slate], 250)}
+              {legend([
+                ["Eficaz", COLORS.ok],
+                ["Parcialmente eficaz", COLORS.warn],
+                ["Ineficaz", COLORS.danger],
+                ["Por resolver", COLORS.slate],
+              ])}
+            </div>
+          )}
+
+          {visible.has("totArea") && (
+            <div style={panelStyle}>
+              <div style={panelTitle}>Total de constatações por área</div>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={totAreaData}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} barSize={34} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Audits page (registo + análise) ----------
+function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOptions, auditCategoryOptions }) {
+  const [view, setView] = useState("registo");
+
+  const sorted = [...audits].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22 }}>
+        {[
+          { key: "registo", label: "Registo" },
+          { key: "analise", label: "Análise" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setView(t.key)}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: "9px 15px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: view === t.key ? COLORS.navy : COLORS.slate,
+              cursor: "pointer",
+              borderBottom: `2.5px solid ${view === t.key ? COLORS.navy : "transparent"}`,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {view === "analise" ? (
+        <AuditsAnalysis audits={audits} schoolOptions={schoolOptions} areaOptions={areaOptions} auditCategoryOptions={auditCategoryOptions} />
+      ) : (
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+            <button
+              onClick={onNewAudit}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: COLORS.navy,
+                color: "#fff",
+                border: "none",
+                borderRadius: 4,
+                padding: "10px 16px",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              <Plus size={16} /> Nova auditoria
+            </button>
+          </div>
+
+          {sorted.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+              Ainda sem auditorias registadas.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {sorted.map((a) => {
+                const fs = a.findings || [];
+                const pend = fs.filter((f) => !f.resolvida).length;
+                return (
+                  <div
+                    key={a.id}
+                    onClick={() => onOpenAudit(a)}
+                    style={{
+                      background: COLORS.paperRaised,
+                      border: `1px solid ${COLORS.rule}`,
+                      borderRadius: 6,
+                      padding: "13px 16px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14.5 }}>{a.school}</div>
+                      <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+                        {fmt(new Date(a.date + "T00:00:00"))} · {fs.length} constatações
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {Object.keys(CLASSIFICATION_META).map((c) => {
+                        const n = fs.filter((f) => f.classification === c).length;
+                        if (!n) return null;
+                        return <Tag key={c} label={`${n} ${c}`} color={CLASSIFICATION_META[c].color} bg={CLASSIFICATION_META[c].bg} />;
+                      })}
+                      {fs.length > 0 &&
+                        (pend ? (
+                          <Tag label={`${pend} por resolver`} color={COLORS.warn} bg={COLORS.warnBg} />
+                        ) : (
+                          <Tag label="todas resolvidas" color={COLORS.ok} bg={COLORS.okBg} />
+                        ))}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {counts.length === 0 ? (
-                      <span style={{ fontSize: 12, color: COLORS.slate }}>Sem constatações</span>
-                    ) : (
-                      counts.map(([k, n]) => (
-                        <Tag key={k} label={`${k} · ${n}`} color={CLASSIFICATION_META[k].color} bg={CLASSIFICATION_META[k].bg} />
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2846,13 +3523,1072 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
   );
 }
 
+// ---------- Inscritos: registo semanal, turmas e análise ----------
+
+function TurmaChip({ label, onDelete }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: COLORS.doneBg,
+        border: `1px solid ${COLORS.rule}`,
+        borderRadius: 20,
+        padding: "5px 11px",
+        fontSize: 12.5,
+      }}
+    >
+      {label}
+      <button onClick={onDelete} style={{ ...iconBtnStyle, padding: 0, lineHeight: 0 }} title="Remover">
+        <X size={12} />
+      </button>
+    </span>
+  );
+}
+
+
+const INSC_PARAMS = [
+  { key: "classes", label: "Classificação de crescimento" },
+  { key: "quad", label: "Matriz de quadrantes" },
+  { key: "evolucao", label: "Evolução de inscritos" },
+  { key: "crescimento", label: "Crescimento (%)" },
+  { key: "escalao", label: "Alunos por escalão" },
+  { key: "escolinha", label: "Escolinha por nível" },
+  { key: "genero", label: "Distribuição por género" },
+  { key: "ano", label: "Ano de nascimento" },
+  { key: "homologo", label: "Comparação homóloga" },
+  { key: "fluxo", label: "Novas inscrições vs desistências" },
+];
+
+// Agrega a série semanal de uma escola: por semana (tal e qual) ou por mês
+// (o valor de inscritos é o da última semana do mês, porque é o retrato real
+// nessa altura; novas e desistências somam-se).
+function agregaSerie(registos, periodo) {
+  const ordenados = [...registos].sort((a, b) => a.semana.localeCompare(b.semana));
+  if (periodo === "semana") {
+    return ordenados.map((r) => ({ label: semanaLabel(r.semana), total: r.total, novas: r.novas || 0, desist: r.desist || 0 }));
+  }
+  const porMes = new Map();
+  ordenados.forEach((r) => {
+    const m = mesDaSemana(r.semana);
+    const atual = porMes.get(m) || { label: m, total: 0, novas: 0, desist: 0 };
+    atual.total = r.total;
+    atual.novas += r.novas || 0;
+    atual.desist += r.desist || 0;
+    porMes.set(m, atual);
+  });
+  return [...porMes.values()];
+}
+
+function InscritosPage({
+  inscritos,
+  turmasAlunos,
+  epocaAnterior,
+  options,
+  onSaveSemana,
+  onSaveTurma,
+  onRemoveTurma,
+  onSaveEpocaAnterior,
+  onToggleTurmaEscola,
+  onAddOption,
+  onRemoveOption,
+}) {
+  const [view, setView] = useState("registo");
+  const escolas = options.schools || [];
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22 }}>
+        {[
+          { key: "registo", label: "Registo" },
+          { key: "analise", label: "Análise" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setView(t.key)}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: "9px 15px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: view === t.key ? COLORS.navy : COLORS.slate,
+              cursor: "pointer",
+              borderBottom: `2.5px solid ${view === t.key ? COLORS.navy : "transparent"}`,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {escolas.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+          Ainda não há escolas na app. Adiciona-as em "Escolas e listas", no topo.
+        </div>
+      ) : view === "registo" ? (
+        <InscritosRegisto
+          escolas={escolas}
+          inscritos={inscritos}
+          turmasAlunos={turmasAlunos}
+          epocaAnterior={epocaAnterior}
+          options={options}
+          onSaveSemana={onSaveSemana}
+          onSaveTurma={onSaveTurma}
+          onRemoveTurma={onRemoveTurma}
+          onSaveEpocaAnterior={onSaveEpocaAnterior}
+          onToggleTurmaEscola={onToggleTurmaEscola}
+          onAddOption={onAddOption}
+          onRemoveOption={onRemoveOption}
+        />
+      ) : (
+        <InscritosAnalise
+          escolas={escolas}
+          inscritos={inscritos}
+          turmasAlunos={turmasAlunos}
+          epocaAnterior={epocaAnterior}
+          niveis={options.niveis || DEFAULT_NIVEIS}
+        />
+      )}
+    </div>
+  );
+}
+
+function InscritosRegisto({
+  escolas,
+  inscritos,
+  turmasAlunos,
+  epocaAnterior,
+  options,
+  onSaveSemana,
+  onSaveTurma,
+  onRemoveTurma,
+  onSaveEpocaAnterior,
+  onToggleTurmaEscola,
+  onAddOption,
+  onRemoveOption,
+}) {
+  const hoje = new Date();
+  const semanaAtual = (() => {
+    const d = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const inicio = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const n = Math.ceil(((d - inicio) / 86400000 + 1) / 7);
+    return `${d.getUTCFullYear()}-W${String(n).padStart(2, "0")}`;
+  })();
+
+  const turmas = options.turmas || DEFAULT_TURMAS;
+  const niveis = options.niveis || DEFAULT_NIVEIS;
+  const porEscola = options.turmasPorEscola || {};
+
+  const [sEsc, setSEsc] = useState(escolas[0] || "");
+  const [sSem, setSSem] = useState(semanaAtual);
+  const [sTot, setSTot] = useState("");
+  const [sNov, setSNov] = useState("");
+  const [sDes, setSDes] = useState("");
+  const [erroSemana, setErroSemana] = useState("");
+
+  const [tEsc, setTEsc] = useState(escolas[0] || "");
+  const [tTurma, setTTurma] = useState("");
+  const [tAno, setTAno] = useState(String(hoje.getFullYear() - 10));
+  const [tM, setTM] = useState("");
+  const [tF, setTF] = useState("");
+  const [erroTurma, setErroTurma] = useState("");
+
+  const [hEsc, setHEsc] = useState(escolas[0] || "");
+  const [hIns, setHIns] = useState("");
+  const [hDes, setHDes] = useState("");
+  const [erroH, setErroH] = useState("");
+
+  const [gEsc, setGEsc] = useState(escolas[0] || "");
+  const [novaTurma, setNovaTurma] = useState("");
+  const [novoTipo, setNovoTipo] = useState("escolinha");
+  const [erroG, setErroG] = useState("");
+
+  const turmasDaEscola = porEscola[tEsc] || [];
+  const anos = [];
+  for (let a = hoje.getFullYear(); a >= hoje.getFullYear() - 20; a--) anos.push(String(a));
+
+  const guardarSemana = () => {
+    if (sTot === "" || isNaN(sTot) || Number(sTot) < 0) {
+      setErroSemana("Introduz um número de inscritos válido.");
+      return;
+    }
+    setErroSemana("");
+    onSaveSemana(sEsc, sSem, { total: Math.round(Number(sTot)), novas: Math.round(Number(sNov || 0)), desist: Math.round(Number(sDes || 0)) });
+    setSTot("");
+    setSNov("");
+    setSDes("");
+  };
+
+  const guardarTurma = () => {
+    if ((tM === "" && tF === "") || Number(tM || 0) < 0 || Number(tF || 0) < 0) {
+      setErroTurma("Introduz pelo menos um número válido de atletas.");
+      return;
+    }
+    if (!tTurma) {
+      setErroTurma("Escolhe a turma.");
+      return;
+    }
+    setErroTurma("");
+    onSaveTurma({ escola: tEsc, turma: tTurma, ano: Number(tAno), m: Math.round(Number(tM || 0)), f: Math.round(Number(tF || 0)) });
+    setTM("");
+    setTF("");
+  };
+
+  const guardarEpocaAnterior = () => {
+    if (hIns === "" || isNaN(hIns) || Number(hIns) < 0) {
+      setErroH("Introduz um número de inscritos válido.");
+      return;
+    }
+    setErroH("");
+    onSaveEpocaAnterior(hEsc, { inscritos: Math.round(Number(hIns)), desist: Math.round(Number(hDes || 0)) });
+    setHIns("");
+    setHDes("");
+  };
+
+  const registosSemana = escolas
+    .flatMap((e) => (inscritos[e] || []).map((r) => ({ ...r, escola: e })))
+    .sort((a, b) => b.semana.localeCompare(a.semana))
+    .slice(0, 10);
+
+  const th = { textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "9px 12px", borderBottom: `1px solid ${COLORS.rule}` };
+  const td = { padding: "9px 12px", borderBottom: "1px solid #EFEDE7", fontSize: 13.5 };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Turmas e equipas por escola</div>
+        <div style={{ display: "flex", gap: 26, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 240px" }}>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escolas</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {escolas.map((e) => (
+                <span key={e} style={{ fontSize: 12, fontWeight: 600, padding: "5px 11px", borderRadius: 20, background: COLORS.rule, color: COLORS.navy }}>
+                  {e}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.slate, lineHeight: 1.5 }}>
+              Vêm da lista de escolas da app. Adiciona ou remove em "Escolas e listas" e aparecem aqui.
+            </div>
+          </div>
+          <div style={{ flex: "1 1 320px" }}>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Turmas / escalões (lista geral)</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {turmas.map((t) => (
+                <TurmaChip key={t} label={t} onDelete={() => {
+                  if (turmasAlunos.some((r) => r.turma === t)) {
+                    setErroG(`Não dá para remover "${t}": já tem alunos registados.`);
+                    return;
+                  }
+                  setErroG("");
+                  onRemoveOption("turmas", t);
+                  if (niveis.includes(t)) onRemoveOption("niveis", t);
+                }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                placeholder="Ex: Sub-20"
+                value={novaTurma}
+                onChange={(e) => {
+                  setNovaTurma(e.target.value);
+                  setErroG("");
+                }}
+                style={inputStyle}
+              />
+              <select value={novoTipo} onChange={(e) => setNovoTipo(e.target.value)} style={{ ...inputStyle, width: 140 }}>
+                <option value="escolinha">Escolinha</option>
+                <option value="competicao">Competição</option>
+              </select>
+              <button
+                onClick={() => {
+                  const v = novaTurma.trim();
+                  if (!v) {
+                    setErroG("Escreve o nome da turma.");
+                    return;
+                  }
+                  if (turmas.includes(v)) {
+                    setErroG("Essa turma já existe.");
+                    return;
+                  }
+                  setErroG("");
+                  onAddOption("turmas", v);
+                  if (novoTipo === "escolinha") onAddOption("niveis", v);
+                  setNovaTurma("");
+                }}
+                style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}
+              >
+                Adicionar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${COLORS.rule}`, marginTop: 18, paddingTop: 14 }}>
+          <label style={{ ...labelStyle, marginTop: 0 }}>Turmas existentes em cada escola</label>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+            <select value={gEsc} onChange={(e) => setGEsc(e.target.value)} style={{ ...inputStyle, width: 190 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12.5, color: COLORS.slate }}>Clica para ativar ou desativar nesta escola</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {turmas.map((t) => {
+              const on = (porEscola[gEsc] || []).includes(t);
+              return (
+                <button
+                  key={t}
+                  onClick={() => {
+                    if (on && turmasAlunos.some((r) => r.escola === gEsc && r.turma === t)) {
+                      setErroG(`"${t}" tem alunos registados em ${gEsc}.`);
+                      return;
+                    }
+                    setErroG("");
+                    onToggleTurmaEscola(gEsc, t);
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 20,
+                    border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
+                    background: on ? COLORS.navy : "transparent",
+                    color: on ? "#fff" : COLORS.slate,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {on ? "✓ " : "+ "}
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+          {erroG && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroG}</div>}
+        </div>
+      </div>
+
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Registar semana</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={sEsc} onChange={(e) => setSEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Semana</label>
+            <input type="week" value={sSem} onChange={(e) => setSSem(e.target.value)} style={{ ...inputStyle, width: 170 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos</label>
+            <input type="number" min="0" value={sTot} onChange={(e) => { setSTot(e.target.value); setErroSemana(""); }} style={{ ...inputStyle, width: 110 }} placeholder="120" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Novas inscrições</label>
+            <input type="number" min="0" value={sNov} onChange={(e) => setSNov(e.target.value)} style={{ ...inputStyle, width: 130 }} placeholder="4" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Desistências</label>
+            <input type="number" min="0" value={sDes} onChange={(e) => setSDes(e.target.value)} style={{ ...inputStyle, width: 120 }} placeholder="2" />
+          </div>
+          <button onClick={guardarSemana} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
+            Registar
+          </button>
+        </div>
+        {erroSemana && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroSemana}</div>}
+
+        {registosSemana.length > 0 && (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+            <thead>
+              <tr>
+                {["Semana", "Escola", "Inscritos", "Novas", "Desistências"].map((h) => (
+                  <th key={h} style={th}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {registosSemana.map((r) => (
+                <tr key={r.escola + r.semana}>
+                  <td style={{ ...td, fontFamily: "'IBM Plex Mono', monospace" }}>{semanaLabel(r.semana)}</td>
+                  <td style={td}>{r.escola}</td>
+                  <td style={{ ...td, fontWeight: 600 }}>{r.total}</td>
+                  <td style={td}>{r.novas || 0}</td>
+                  <td style={td}>{r.desist || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Alunos por turma / escalão</div>
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>Apenas números absolutos — nenhum dado pessoal de atletas.</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select
+              value={tEsc}
+              onChange={(e) => {
+                setTEsc(e.target.value);
+                setTTurma("");
+              }}
+              style={{ ...inputStyle, width: 160 }}
+            >
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Turma / equipa</label>
+            <select value={tTurma} onChange={(e) => setTTurma(e.target.value)} style={{ ...inputStyle, width: 175 }}>
+              <option value="">{turmasDaEscola.length ? "Selecionar..." : "Sem turmas nesta escola"}</option>
+              {turmasDaEscola.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Ano de nascimento</label>
+            <select value={tAno} onChange={(e) => setTAno(e.target.value)} style={{ ...inputStyle, width: 150 }}>
+              {anos.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Masculinos</label>
+            <input type="number" min="0" value={tM} onChange={(e) => { setTM(e.target.value); setErroTurma(""); }} style={{ ...inputStyle, width: 110 }} placeholder="14" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Femininos</label>
+            <input type="number" min="0" value={tF} onChange={(e) => { setTF(e.target.value); setErroTurma(""); }} style={{ ...inputStyle, width: 110 }} placeholder="3" />
+          </div>
+          <button onClick={guardarTurma} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
+            Registar
+          </button>
+        </div>
+        {erroTurma && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroTurma}</div>}
+
+        {turmasAlunos.length > 0 && (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+            <thead>
+              <tr>
+                {["Escola", "Turma", "Ano", "M", "F", "Total", ""].map((h) => (
+                  <th key={h} style={th}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[...turmasAlunos]
+                .sort((a, b) => a.escola.localeCompare(b.escola) || a.turma.localeCompare(b.turma))
+                .slice(0, 15)
+                .map((r) => (
+                  <tr key={r.escola + r.turma + r.ano}>
+                    <td style={td}>{r.escola}</td>
+                    <td style={td}>{r.turma}</td>
+                    <td style={{ ...td, fontFamily: "'IBM Plex Mono', monospace" }}>{r.ano}</td>
+                    <td style={td}>{r.m}</td>
+                    <td style={td}>{r.f}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>{r.m + r.f}</td>
+                    <td style={td}>
+                      <button title="Remover" onClick={() => onRemoveTurma(r)} style={{ ...iconBtnStyle, padding: 0 }}>
+                        <X size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              {turmasAlunos.length > 15 && (
+                <tr>
+                  <td colSpan={7} style={{ ...td, color: COLORS.slate, fontSize: 12 }}>
+                    {turmasAlunos.length} registos no total (a mostrar 15)
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div style={panelStyle}>
+        <div style={panelTitle}>Época passada (referência)</div>
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>
+          Introduz uma vez por época. É daqui que sai a taxa de crescimento homóloga.
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={hEsc} onChange={(e) => setHEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos no final</label>
+            <input type="number" min="0" value={hIns} onChange={(e) => { setHIns(e.target.value); setErroH(""); }} style={{ ...inputStyle, width: 140 }} placeholder="112" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Desistências na época</label>
+            <input type="number" min="0" value={hDes} onChange={(e) => setHDes(e.target.value)} style={{ ...inputStyle, width: 155 }} placeholder="18" />
+          </div>
+          <button onClick={guardarEpocaAnterior} style={{ ...secondaryBtnStyle, flex: "none", padding: "9px 16px" }}>
+            Guardar
+          </button>
+        </div>
+        {erroH && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroH}</div>}
+
+        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+          <thead>
+            <tr>
+              {["Escola", "Inscritos época passada", "Desist. passada", "Inscritos atual", "Desist. até agora", "Variação homóloga"].map((h) => (
+                <th key={h} style={th}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {escolas.map((e) => {
+              const serie = inscritos[e] || [];
+              const atual = serie.length ? [...serie].sort((a, b) => a.semana.localeCompare(b.semana))[serie.length - 1].total : 0;
+              const ant = (epocaAnterior[e] || {}).inscritos;
+              const dAt = serie.reduce((t, r) => t + (r.desist || 0), 0);
+              const dAnt = (epocaAnterior[e] || {}).desist;
+              const v = ant ? ((atual - ant) / ant) * 100 : null;
+              return (
+                <tr key={e}>
+                  <td style={td}>{e}</td>
+                  <td style={td}>{ant ?? "—"}</td>
+                  <td style={td}>{dAnt ?? "—"}</td>
+                  <td style={td}>{atual || "—"}</td>
+                  <td style={td}>{dAt}</td>
+                  <td style={{ ...td, fontWeight: 600, color: v === null ? COLORS.slate : v >= 0 ? COLORS.ok : COLORS.danger }}>
+                    {v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niveis }) {
+  const [fEsc, setFEsc] = useState("todas");
+  const [periodo, setPeriodo] = useState("semana");
+  const [limites, setLimites] = useState(LIMITES_CRESC_PADRAO);
+  const [visible, setVisible] = useState(new Set(INSC_PARAMS.map((p) => p.key)));
+
+  const toggle = (k) =>
+    setVisible((prev) => {
+      const n = new Set(prev);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+
+  const todas = fEsc === "todas";
+  const alvo = todas ? escolas : [fEsc];
+  const series = useMemo(() => alvo.map((e) => ({ escola: e, dados: agregaSerie(inscritos[e] || [], periodo) })), [alvo, inscritos, periodo]);
+  const labels = series.length ? series.reduce((best, s) => (s.dados.length > best.length ? s.dados : best), []).map((p) => p.label) : [];
+
+  const somaPor = (campo) =>
+    labels.map((_, i) => series.reduce((t, s) => t + (s.dados[i] ? s.dados[i][campo] : 0), 0));
+  const totais = somaPor("total");
+  const novas = somaPor("novas");
+  const desist = somaPor("desist");
+
+  const ultimo = (e) => {
+    const s = inscritos[e] || [];
+    if (!s.length) return 0;
+    return [...s].sort((a, b) => a.semana.localeCompare(b.semana))[s.length - 1].total;
+  };
+  const primeiro = (e) => {
+    const s = inscritos[e] || [];
+    if (!s.length) return 0;
+    return [...s].sort((a, b) => a.semana.localeCompare(b.semana))[0].total;
+  };
+
+  const totalAtual = alvo.reduce((t, e) => t + ultimo(e), 0);
+  const ultimoPeriodo = totais.length ? totais[totais.length - 1] : 0;
+  const penultimo = totais.length > 1 ? totais[totais.length - 2] : ultimoPeriodo;
+  const varPeriodo = ultimoPeriodo - penultimo;
+  const crescEpoca = totais.length && totais[0] ? ((ultimoPeriodo - totais[0]) / totais[0]) * 100 : 0;
+  const antTotal = alvo.reduce((t, e) => t + ((epocaAnterior[e] || {}).inscritos || 0), 0);
+  const homologo = antTotal ? ((totalAtual - antTotal) / antTotal) * 100 : null;
+
+  const regT = todas ? turmasAlunos : turmasAlunos.filter((r) => r.escola === fEsc);
+  const totM = regT.reduce((t, r) => t + r.m, 0);
+  const totF = regT.reduce((t, r) => t + r.f, 0);
+  const totEscolinha = regT.filter((r) => ehEscolinha(r.turma, niveis)).reduce((t, r) => t + r.m + r.f, 0);
+  const totComp = regT.filter((r) => !ehEscolinha(r.turma, niveis)).reduce((t, r) => t + r.m + r.f, 0);
+
+  const escaloes = useMemo(() => {
+    const ordem = [...niveis, "Competição (outras)"];
+    const subs = [...new Set(regT.map((r) => escalaoDaTurma(r.turma, niveis)))]
+      .filter((x) => x.startsWith("Sub-"))
+      .sort((a, b) => parseInt(a.slice(4)) - parseInt(b.slice(4)));
+    return [...ordem, ...subs].filter((x) => regT.some((r) => escalaoDaTurma(r.turma, niveis) === x));
+  }, [regT, niveis]);
+
+  const escalaoData = escaloes.map((x) => ({
+    name: x,
+    M: regT.filter((r) => escalaoDaTurma(r.turma, niveis) === x).reduce((t, r) => t + r.m, 0),
+    F: regT.filter((r) => escalaoDaTurma(r.turma, niveis) === x).reduce((t, r) => t + r.f, 0),
+  }));
+  const escolinhaData = niveis.map((n) => ({
+    name: n,
+    M: regT.filter((r) => escalaoDaTurma(r.turma, niveis) === n).reduce((t, r) => t + r.m, 0),
+    F: regT.filter((r) => escalaoDaTurma(r.turma, niveis) === n).reduce((t, r) => t + r.f, 0),
+  }));
+  const generoData = [
+    { name: "Masculino", value: totM, color: COLORS.progress },
+    { name: "Feminino", value: totF, color: COLORS.purple },
+  ];
+  const anoData = [...new Set(regT.map((r) => r.ano))]
+    .sort()
+    .map((a) => ({ name: String(a), value: regT.filter((r) => r.ano === a).reduce((t, r) => t + r.m + r.f, 0) }));
+
+  const evolucaoData = labels.map((l, i) => {
+    const row = { name: l };
+    series.forEach((s) => (row[s.escola] = s.dados[i] ? s.dados[i].total : null));
+    return row;
+  });
+  const crescData = labels.map((l, i) => ({
+    name: l,
+    valor: i === 0 || !totais[i - 1] ? 0 : ((totais[i] - totais[i - 1]) / totais[i - 1]) * 100,
+  }));
+  const homologoData = escolas.map((e) => ({ name: e, passada: (epocaAnterior[e] || {}).inscritos || 0, atual: ultimo(e) }));
+  const desistHomData = escolas.map((e) => ({
+    name: e,
+    passada: (epocaAnterior[e] || {}).desist || 0,
+    atual: (inscritos[e] || []).reduce((t, r) => t + (r.desist || 0), 0),
+  }));
+  const fluxoData = labels.map((l, i) => ({ name: l, novas: novas[i], desist: -desist[i] }));
+
+  const metrics = useMemo(
+    () => ({
+      inscritos: { label: "Nº de inscritos", v: (e) => ultimo(e), fmt: (v) => v },
+      cresc: {
+        label: "Crescimento na época (%)",
+        v: (e) => (primeiro(e) ? +(((ultimo(e) - primeiro(e)) / primeiro(e)) * 100).toFixed(1) : 0),
+        fmt: (v) => (v > 0 ? "+" : "") + v + "%",
+      },
+      homologo: {
+        label: "Crescimento homólogo (%)",
+        v: (e) => {
+          const a = (epocaAnterior[e] || {}).inscritos;
+          return a ? +(((ultimo(e) - a) / a) * 100).toFixed(1) : 0;
+        },
+        fmt: (v) => (v > 0 ? "+" : "") + v + "%",
+      },
+      desist: { label: "Desistências na época", v: (e) => (inscritos[e] || []).reduce((t, r) => t + (r.desist || 0), 0), fmt: (v) => v },
+      taxadesist: {
+        label: "Taxa de desistência (%)",
+        v: (e) => {
+          const t = ultimo(e);
+          const d = (inscritos[e] || []).reduce((a, r) => a + (r.desist || 0), 0);
+          return t + d ? +((d / (t + d)) * 100).toFixed(1) : 0;
+        },
+        fmt: (v) => v + "%",
+      },
+      novas: { label: "Novas inscrições", v: (e) => (inscritos[e] || []).reduce((t, r) => t + (r.novas || 0), 0), fmt: (v) => v },
+      turmas: { label: "Nº de turmas", v: (e) => new Set(turmasAlunos.filter((r) => r.escola === e).map((r) => r.turma)).size, fmt: (v) => v },
+      pctfem: {
+        label: "% de atletas femininas",
+        v: (e) => {
+          const r = turmasAlunos.filter((x) => x.escola === e);
+          const m = r.reduce((t, x) => t + x.m, 0);
+          const f = r.reduce((t, x) => t + x.f, 0);
+          return m + f ? +((f / (m + f)) * 100).toFixed(1) : 0;
+        },
+        fmt: (v) => v + "%",
+      },
+      pctescolinha: {
+        label: "% em escolinha",
+        v: (e) => {
+          const r = turmasAlunos.filter((x) => x.escola === e);
+          const t = r.reduce((a, x) => a + x.m + x.f, 0);
+          const es = r.filter((x) => ehEscolinha(x.turma, niveis)).reduce((a, x) => a + x.m + x.f, 0);
+          return t ? +((es / t) * 100).toFixed(1) : 0;
+        },
+        fmt: (v) => v + "%",
+      },
+    }),
+    [inscritos, turmasAlunos, epocaAnterior, niveis]
+  );
+
+  const semDados = escolas.every((e) => !(inscritos[e] || []).length) && turmasAlunos.length === 0;
+  const filterStyle = { ...inputStyle, width: 190 };
+  const legend = (items) => (
+    <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6, flexWrap: "wrap" }}>
+      {items.map(([l, c]) => (
+        <div key={l} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: c, display: "inline-block" }} />
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+
+  if (semDados) {
+    return (
+      <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+        Ainda sem dados de inscritos. Regista pelo menos uma semana no separador Registo.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={filterStyle}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+        <select value={periodo} onChange={(e) => setPeriodo(e.target.value)} style={filterStyle}>
+          <option value="semana">Vista semanal</option>
+          <option value="mes">Vista mensal</option>
+        </select>
+      </div>
+
+      <ParamChips params={INSC_PARAMS} visible={visible} onToggle={toggle} />
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
+        <StatCard label="Inscritos" value={totalAtual} />
+        <StatCard
+          label="Variação no período"
+          value={`${varPeriodo > 0 ? "+" : ""}${varPeriodo}`}
+          color={varPeriodo > 0 ? COLORS.ok : varPeriodo < 0 ? COLORS.danger : COLORS.navy}
+          subtitle={`${penultimo ? (((varPeriodo / penultimo) * 100).toFixed(1) > 0 ? "+" : "") + ((varPeriodo / penultimo) * 100).toFixed(1) : "0"}% vs ${periodo === "semana" ? "semana" : "mês"} anterior`}
+        />
+        <StatCard
+          label="Crescimento na época"
+          value={`${crescEpoca > 0 ? "+" : ""}${crescEpoca.toFixed(1)}%`}
+          color={crescEpoca > 0 ? COLORS.ok : crescEpoca < 0 ? COLORS.danger : COLORS.navy}
+        />
+        <StatCard
+          label="Crescimento homólogo"
+          value={homologo === null ? "—" : `${homologo > 0 ? "+" : ""}${homologo.toFixed(1)}%`}
+          color={homologo === null ? COLORS.navy : homologo > 0 ? COLORS.ok : COLORS.danger}
+          subtitle={antTotal ? `${totalAtual} vs ${antTotal} na época passada` : "sem dados da época passada"}
+        />
+        <StatCard
+          label="Alunos de escolinha"
+          value={totEscolinha}
+          subtitle={totEscolinha + totComp ? `${Math.round((totEscolinha / (totEscolinha + totComp)) * 100)}% · ${totComp} em competição` : ""}
+        />
+      </div>
+
+      {visible.has("classes") && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Classificação de crescimento por escola</div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end" }}>
+            {[
+              ["critico", "Crítico abaixo de"],
+              ["declinio", "Declínio abaixo de"],
+              ["estavel", "Estável até"],
+            ].map(([k, l]) => (
+              <div key={k}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>{l}</label>
+                <input
+                  type="number"
+                  value={limites[k]}
+                  onChange={(e) => setLimites((p) => ({ ...p, [k]: Number(e.target.value) }))}
+                  style={{ ...inputStyle, width: 100 }}
+                />
+              </div>
+            ))}
+            <div style={{ fontSize: 12, color: COLORS.slate, paddingBottom: 10 }}>valores em % de crescimento homólogo</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10 }}>
+            {escolas.map((e) => {
+              const a = (epocaAnterior[e] || {}).inscritos;
+              const v = a ? ((ultimo(e) - a) / a) * 100 : null;
+              const cls = v === null ? null : classificarCrescimento(v, limites);
+              return (
+                <div
+                  key={e}
+                  style={{
+                    border: `1px solid ${COLORS.rule}`,
+                    borderLeft: `3px solid ${cls ? cls.color : COLORS.rule}`,
+                    padding: "10px 12px",
+                    background: COLORS.paper,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{e}</div>
+                  <div style={{ fontSize: 20, fontFamily: "'Fraunces', serif", color: cls ? cls.color : COLORS.slate, margin: "3px 0" }}>
+                    {v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: cls ? cls.color : COLORS.slate, fontWeight: 600 }}>
+                    {cls ? cls.label : "sem época passada"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {visible.has("quad") && (
+        <div style={{ marginBottom: 16 }}>
+          <QuadrantMatrix
+            subjects={escolas}
+            metrics={metrics}
+            defaultX="taxadesist"
+            defaultY="homologo"
+            label="Matriz de quadrantes — cruzar duas métricas de inscritos por escola"
+          />
+        </div>
+      )}
+
+      {visible.has("evolucao") && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Evolução de inscritos — vista {periodo === "semana" ? "semanal" : "mensal"}</div>
+          <ResponsiveContainer width="100%" height={270}>
+            <LineChart data={evolucaoData}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              {series.map((s, i) => (
+                <Line
+                  key={s.escola}
+                  type="monotone"
+                  dataKey={s.escola}
+                  stroke={TAG_PALETTE[i % TAG_PALETTE.length].color}
+                  strokeWidth={2.2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+          {legend(series.map((s, i) => [s.escola, TAG_PALETTE[i % TAG_PALETTE.length].color]))}
+        </div>
+      )}
+
+      {visible.has("crescimento") && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Crescimento {periodo === "semana" ? "semanal" : "mensal"} (%) — positivo e negativo</div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={crescData}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`} />
+              <ReferenceLine y={0} stroke={COLORS.slate} />
+              <Bar dataKey="valor" radius={[3, 3, 0, 0]}>
+                {crescData.map((d, i) => (
+                  <Cell key={i} fill={d.valor >= 0 ? COLORS.progress : COLORS.danger} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        {visible.has("escalao") && (
+          <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+            <div style={panelTitle}>Alunos por escalão</div>
+            {escalaoData.length === 0 ? (
+              <div style={{ fontSize: 13, color: COLORS.slate }}>Sem alunos registados por turma.</div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={Math.max(200, escalaoData.length * 26)}>
+                  <BarChart data={escalaoData} layout="vertical" margin={{ left: 8 }}>
+                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Bar dataKey="M" stackId="g" fill={COLORS.progress} />
+                    <Bar dataKey="F" stackId="g" fill={COLORS.purple} />
+                  </BarChart>
+                </ResponsiveContainer>
+                {legend([
+                  ["Masculino", COLORS.progress],
+                  ["Feminino", COLORS.purple],
+                ])}
+              </>
+            )}
+          </div>
+        )}
+
+        {visible.has("escolinha") && (
+          <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+            <div style={panelTitle}>Escolinha, por nível</div>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={escolinhaData}>
+                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                <Bar dataKey="M" stackId="g" fill={COLORS.progress} />
+                <Bar dataKey="F" stackId="g" fill={COLORS.purple} />
+              </BarChart>
+            </ResponsiveContainer>
+            <div style={{ textAlign: "center", fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>
+              Escolinha {totEscolinha} · Competição {totComp}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        {visible.has("genero") && (
+          <div style={{ ...panelStyle, flex: "1 1 280px" }}>
+            <div style={panelTitle}>Distribuição por género</div>
+            {totM + totF === 0 ? (
+              <div style={{ fontSize: 13, color: COLORS.slate }}>Sem alunos registados.</div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={generoData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                      {generoData.map((d, i) => (
+                        <Cell key={i} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                {legend([
+                  [`Masculino ${totM}`, COLORS.progress],
+                  [`Feminino ${totF}`, COLORS.purple],
+                ])}
+              </>
+            )}
+          </div>
+        )}
+
+        {visible.has("ano") && (
+          <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+            <div style={panelTitle}>Alunos por ano de nascimento</div>
+            {anoData.length === 0 ? (
+              <div style={{ fontSize: 13, color: COLORS.slate }}>Sem alunos registados.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={anoData}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {visible.has("homologo") && (
+          <>
+            <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+              <div style={panelTitle}>Inscritos: atual vs época passada</div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={homologoData}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="atual" name="Época atual" fill={COLORS.progress} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              {legend([
+                ["Época passada", COLORS.slate],
+                ["Época atual", COLORS.progress],
+              ])}
+            </div>
+            <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+              <div style={panelTitle}>Desistências: atual vs época passada</div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={desistHomData}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="atual" name="Época atual" fill={COLORS.danger} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              {legend([
+                ["Época passada", COLORS.slate],
+                ["Época atual", COLORS.danger],
+              ])}
+            </div>
+          </>
+        )}
+
+        {visible.has("fluxo") && (
+          <div style={{ ...panelStyle, flex: "1 1 340px" }}>
+            <div style={panelTitle}>Novas inscrições vs desistências</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={fluxoData} stackOffset="sign">
+                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => Math.abs(v)} />
+                <ReferenceLine y={0} stroke={COLORS.slate} />
+                <Bar dataKey="novas" name="Novas" stackId="f" fill={COLORS.ok} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="desist" name="Desistências" stackId="f" fill={COLORS.danger} radius={[0, 0, 3, 3]} />
+              </BarChart>
+            </ResponsiveContainer>
+            {legend([
+              ["Novas inscrições", COLORS.ok],
+              ["Desistências", COLORS.danger],
+            ])}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {} });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
+  const [inscritos, setInscritos] = useState({});
+  const [turmasAlunos, setTurmasAlunos] = useState([]);
+  const [epocaAnterior, setEpocaAnterior] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -2910,6 +4646,36 @@ export default function App() {
     }
   }, []);
 
+  const persistInscritos = useCallback(async (next) => {
+    setInscritos(next);
+    try {
+      await dbStorage.set(STORAGE_INSCRITOS_KEY, JSON.stringify(next));
+    } catch (e) {
+      console.error("Erro ao guardar inscritos:", e);
+      setError(`Não foi possível guardar os inscritos: ${e?.message || e}`);
+    }
+  }, []);
+
+  const persistTurmas = useCallback(async (next) => {
+    setTurmasAlunos(next);
+    try {
+      await dbStorage.set(STORAGE_TURMAS_KEY, JSON.stringify(next));
+    } catch (e) {
+      console.error("Erro ao guardar turmas:", e);
+      setError(`Não foi possível guardar as turmas: ${e?.message || e}`);
+    }
+  }, []);
+
+  const persistEpocaAnterior = useCallback(async (next) => {
+    setEpocaAnterior(next);
+    try {
+      await dbStorage.set(STORAGE_EPOCA_ANT_KEY, JSON.stringify(next));
+    } catch (e) {
+      console.error("Erro ao guardar época anterior:", e);
+      setError(`Não foi possível guardar a época anterior: ${e?.message || e}`);
+    }
+  }, []);
+
   const persistLearned = useCallback(async (next) => {
     setLearned(next);
     try {
@@ -2929,7 +4695,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -2946,6 +4712,24 @@ export default function App() {
         // chave ainda não existe — arranque limpo
       }
       try {
+        const res = await dbStorage.get(STORAGE_INSCRITOS_KEY);
+        if (res && res.value) setInscritos(JSON.parse(res.value));
+      } catch (e) {
+        // chave ainda não existe — arranque limpo
+      }
+      try {
+        const res = await dbStorage.get(STORAGE_TURMAS_KEY);
+        if (res && res.value) setTurmasAlunos(JSON.parse(res.value));
+      } catch (e) {
+        // chave ainda não existe — arranque limpo
+      }
+      try {
+        const res = await dbStorage.get(STORAGE_EPOCA_ANT_KEY);
+        if (res && res.value) setEpocaAnterior(JSON.parse(res.value));
+      } catch (e) {
+        // chave ainda não existe — arranque limpo
+      }
+      try {
         const res = await dbStorage.get(STORAGE_TRIAGEM_KEY);
         if (res && res.value) setLearned({ canal: {}, categoria: {}, tema: {}, gravidade: {}, ...JSON.parse(res.value) });
       } catch (e) {
@@ -2957,12 +4741,14 @@ export default function App() {
   }, []);
 
   const addOption = (kind, value) => {
-    if (options[kind].includes(value)) return;
-    persistOptions({ ...options, [kind]: [...options[kind], value] });
+    const lista = options[kind] || [];
+    if (lista.includes(value)) return;
+    persistOptions({ ...options, [kind]: [...lista, value] });
   };
 
   const removeOption = (kind, value) => {
-    persistOptions({ ...options, [kind]: options[kind].filter((v) => v !== value) });
+    const lista = options[kind] || [];
+    persistOptions({ ...options, [kind]: lista.filter((v) => v !== value) });
   };
 
   const addAudit = (audit) => {
@@ -2977,6 +4763,14 @@ export default function App() {
 
   const addFinding = (auditId, finding) => {
     const next = audits.map((a) => (a.id === auditId ? { ...a, findings: [...a.findings, finding] } : a));
+    persistAudits(next);
+    setViewingAudit(next.find((a) => a.id === auditId));
+  };
+
+  const updateFinding = (auditId, findingId, patch) => {
+    const next = audits.map((a) =>
+      a.id === auditId ? { ...a, findings: a.findings.map((f) => (f.id === findingId ? { ...f, ...patch } : f)) } : a
+    );
     persistAudits(next);
     setViewingAudit(next.find((a) => a.id === auditId));
   };
@@ -3019,6 +4813,34 @@ export default function App() {
     );
     persistSanctions(next);
     setViewingSanction(next.find((s) => s.id === id));
+  };
+
+  const saveSemanaInscritos = (escola, semana, dados) => {
+    const lista = inscritos[escola] || [];
+    const existe = lista.some((r) => r.semana === semana);
+    const nova = existe ? lista.map((r) => (r.semana === semana ? { ...r, ...dados, semana } : r)) : [...lista, { semana, ...dados }];
+    persistInscritos({ ...inscritos, [escola]: nova });
+  };
+
+  const saveTurmaAlunos = (registo) => {
+    const i = turmasAlunos.findIndex((r) => r.escola === registo.escola && r.turma === registo.turma && r.ano === registo.ano);
+    const next = i >= 0 ? turmasAlunos.map((r, k) => (k === i ? registo : r)) : [...turmasAlunos, registo];
+    persistTurmas(next);
+  };
+
+  const removeTurmaAlunos = (registo) => {
+    persistTurmas(turmasAlunos.filter((r) => !(r.escola === registo.escola && r.turma === registo.turma && r.ano === registo.ano)));
+  };
+
+  const saveEpocaAnterior = (escola, dados) => {
+    persistEpocaAnterior({ ...epocaAnterior, [escola]: { ...(epocaAnterior[escola] || {}), ...dados } });
+  };
+
+  const toggleTurmaEscola = (escola, turma) => {
+    const mapa = options.turmasPorEscola || {};
+    const atual = mapa[escola] || [];
+    const nova = atual.includes(turma) ? atual.filter((t) => t !== turma) : [...atual, turma];
+    persistOptions({ ...options, turmasPorEscola: { ...mapa, [escola]: nova } });
   };
 
   const nextNumber = entries.length ? Math.max(...entries.map((e) => e.entryNumber)) + 1 : 1;
@@ -3125,6 +4947,8 @@ export default function App() {
               ? "Auditorias"
               : page === "sancoes"
               ? "Sanções"
+              : page === "inscritos"
+              ? "Inscritos"
               : reclamacoesView === "analise"
               ? "Reclamações — Análise"
               : "Reclamações — Registo"}
@@ -3189,6 +5013,7 @@ export default function App() {
           { key: "registo", label: "Reclamações", icon: LayoutGrid },
           { key: "auditorias", label: "Auditorias", icon: ClipboardList },
           { key: "sancoes", label: "Sanções", icon: Scale },
+          { key: "inscritos", label: "Inscritos", icon: Users },
         ].map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -3216,7 +5041,28 @@ export default function App() {
 
       <div style={{ padding: "22px 28px 60px", maxWidth: 1100, margin: "0 auto" }}>
         {page === "auditorias" ? (
-          <AuditsPage audits={audits} onNewAudit={() => setShowAuditForm(true)} onOpenAudit={(a) => setViewingAudit(a)} />
+          <AuditsPage
+            audits={audits}
+            onNewAudit={() => setShowAuditForm(true)}
+            onOpenAudit={(a) => setViewingAudit(a)}
+            schoolOptions={options.schools}
+            areaOptions={options.auditAreas}
+            auditCategoryOptions={options.auditCategories}
+          />
+        ) : page === "inscritos" ? (
+          <InscritosPage
+            inscritos={inscritos}
+            turmasAlunos={turmasAlunos}
+            epocaAnterior={epocaAnterior}
+            options={options}
+            onSaveSemana={saveSemanaInscritos}
+            onSaveTurma={saveTurmaAlunos}
+            onRemoveTurma={removeTurmaAlunos}
+            onSaveEpocaAnterior={saveEpocaAnterior}
+            onToggleTurmaEscola={toggleTurmaEscola}
+            onAddOption={addOption}
+            onRemoveOption={removeOption}
+          />
         ) : page === "sancoes" ? (
           <SanctionsPage
             sanctions={sanctions}
@@ -3461,6 +5307,7 @@ export default function App() {
           auditCategories={options.auditCategories}
           complaintCategories={options.complaintCategories}
           sanctionTypes={options.sanctionTypes}
+          auditAreas={options.auditAreas}
           onAdd={addOption}
           onRemove={removeOption}
           onClose={() => setShowManage(false)}
@@ -3500,9 +5347,11 @@ export default function App() {
         <AuditDetail
           audit={audits.find((a) => a.id === viewingAudit.id) || viewingAudit}
           auditCategoryOptions={options.auditCategories}
+          areaOptions={options.auditAreas}
           onClose={() => setViewingAudit(null)}
           onAddFinding={addFinding}
           onRemoveFinding={removeFinding}
+          onUpdateFinding={updateFinding}
           onRemoveAudit={removeAudit}
           onManageOptions={() => setShowManage(true)}
         />
