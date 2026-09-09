@@ -105,6 +105,26 @@ function fmt(date) {
   return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
+// Época desportiva: começa em julho. Uma data de 2026-03 pertence a 2025/26.
+function epocaDe(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return "";
+  const ano = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${ano}/${String(ano + 1).slice(2)}`;
+}
+
+// Lista de épocas para escolher: a atual e as anteriores, mais a seguinte.
+function epocasDisponiveis(extra) {
+  const hoje = new Date();
+  const anoBase = hoje.getMonth() >= 6 ? hoje.getFullYear() : hoje.getFullYear() - 1;
+  const lista = [];
+  for (let a = anoBase + 1; a >= anoBase - 8; a--) lista.push(`${a}/${String(a + 1).slice(2)}`);
+  (extra || []).forEach((e) => {
+    if (e && !lista.includes(e)) lista.push(e);
+  });
+  return lista.sort().reverse();
+}
+
 function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -615,6 +635,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
   const [form, setForm] = useState(
     initial || {
       receivedDate: new Date().toISOString().slice(0, 10),
+      epoca: epocaDe(new Date().toISOString().slice(0, 10)),
       complainant: "",
       school: "",
       tema: "",
@@ -634,6 +655,13 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
   }, [form.receivedDate]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  // A época acompanha a data de receção, a menos que tenha sido escolhida à mão.
+  const [epocaManual, setEpocaManual] = useState(false);
+  const setReceived = (e) => {
+    const v = e.target.value;
+    setForm((f) => ({ ...f, receivedDate: v, epoca: epocaManual ? f.epoca : epocaDe(v) }));
+  };
 
   const applyTriage = (data) => {
     const next = { ...form };
@@ -677,6 +705,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
     if (data.receivedDate) {
       next.receivedDate = data.receivedDate;
       applied.add("receivedDate");
+      if (!epocaManual) next.epoca = epocaDe(data.receivedDate);
     }
     setForm(next);
     setSuggested(applied);
@@ -751,7 +780,26 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
         </div>
 
         <label style={labelStyle}>Data de receção{fieldHint("receivedDate")}</label>
-        <input type="date" value={form.receivedDate} onChange={set("receivedDate")} style={inputStyle} />
+        <input type="date" value={form.receivedDate} onChange={setReceived} style={inputStyle} />
+
+        <label style={labelStyle}>Época</label>
+        <select
+          value={form.epoca || ""}
+          onChange={(e) => {
+            setEpocaManual(true);
+            setForm((f) => ({ ...f, epoca: e.target.value }));
+          }}
+          style={inputStyle}
+        >
+          {epocasDisponiveis([form.epoca]).map((ep) => (
+            <option key={ep} value={ep}>
+              {ep}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 4 }}>
+          Preenchida a partir da data de receção. Muda-a se estiveres a registar uma reclamação de outra época.
+        </div>
         {preview && (
           <div style={{ margin: "8px 0 4px", fontSize: 12.5, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
             Prazo (10 dias úteis) → <strong style={{ color: COLORS.navy }}>{fmt(preview)}</strong>
@@ -1269,7 +1317,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 14, lineHeight: 1.6 }}>
           {entry.school || "sem escola"} · {entry.tema || "sem tema"} <br />
-          Receção: {fmt(new Date(entry.receivedDate + "T00:00:00"))} · Prazo: {fmt(new Date(entry.deadline))}
+          {entry.epoca ? `Época ${entry.epoca} · ` : ""}Receção: {fmt(new Date(entry.receivedDate + "T00:00:00"))} · Prazo: {fmt(new Date(entry.deadline))}
           {entry.resolvedDate && ` · Concluída: ${fmt(new Date(entry.resolvedDate))}`}
         </div>
 
@@ -1487,6 +1535,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
   const [fCategoria, setFCategoria] = useState("todos");
   const [fCanal, setFCanal] = useState("todos");
   const [fGravidade, setFGravidade] = useState("todos");
+  const [fEpoca, setFEpoca] = useState("todas");
   const [visibleParams, setVisibleParams] = useState(new Set(ANALYSIS_PARAMS.map((p) => p.key)));
 
   const toggleParam = (key) => {
@@ -1505,8 +1554,9 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
         .filter((e) => (fTema === "todos" ? true : e.tema === fTema))
         .filter((e) => (fCategoria === "todos" ? true : e.categoria === fCategoria))
         .filter((e) => (fCanal === "todos" ? true : e.canal === fCanal))
-        .filter((e) => (fGravidade === "todos" ? true : e.severity === fGravidade)),
-    [withStatus, fSchool, fTema, fCategoria, fCanal, fGravidade]
+        .filter((e) => (fGravidade === "todos" ? true : e.severity === fGravidade))
+        .filter((e) => (fEpoca === "todas" ? true : e.epoca === fEpoca)),
+    [withStatus, fSchool, fTema, fCategoria, fCanal, fGravidade, fEpoca]
   );
 
   const total = filtered.length;
@@ -1576,6 +1626,14 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
   return (
     <div>
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <select value={fEpoca} onChange={(e) => setFEpoca(e.target.value)} style={filterSelectStyle}>
+          <option value="todas">Todas as épocas</option>
+          {[...new Set(withStatus.map((e) => e.epoca).filter(Boolean))].sort().reverse().map((ep) => (
+            <option key={ep} value={ep}>
+              Época {ep}
+            </option>
+          ))}
+        </select>
         <select value={fSchool} onChange={(e) => setFSchool(e.target.value)} style={filterSelectStyle}>
           <option value="todos">Todas as escolas</option>
           {schoolOptions.map((s) => (
@@ -2808,6 +2866,7 @@ export default function App() {
   const [reclamacoesView, setReclamacoesView] = useState("registo");
   const [editing, setEditing] = useState(null);
   const [filterCanal, setFilterCanal] = useState("todos");
+  const [filterEpoca, setFilterEpoca] = useState("todas");
   const [filterStatus, setFilterStatus] = useState("todos");
   const [search, setSearch] = useState("");
 
@@ -2968,6 +3027,7 @@ export default function App() {
 
   const filtered = withStatus
     .filter((e) => (filterCanal === "todos" ? true : e.canal === filterCanal))
+    .filter((e) => (filterEpoca === "todas" ? true : e.epoca === filterEpoca))
     .filter((e) => (filterStatus === "todos" ? true : e.derivedStatus === filterStatus))
     .filter((e) => (search ? (e.complainant + e.description).toLowerCase().includes(search.toLowerCase()) : true))
     .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
@@ -3246,6 +3306,14 @@ export default function App() {
               style={{ ...inputStyle, paddingLeft: 32 }}
             />
           </div>
+          <select value={filterEpoca} onChange={(e) => setFilterEpoca(e.target.value)} style={{ ...inputStyle, width: 150 }}>
+            <option value="todas">Todas as épocas</option>
+            {[...new Set(entries.map((e) => e.epoca).filter(Boolean))].sort().reverse().map((ep) => (
+              <option key={ep} value={ep}>
+                {ep}
+              </option>
+            ))}
+          </select>
           <select value={filterCanal} onChange={(e) => setFilterCanal(e.target.value)} style={{ ...inputStyle, width: 190 }}>
             <option value="todos">Todos os canais</option>
             {Object.entries(CANAL_META).map(([key, meta]) => (
@@ -3282,7 +3350,7 @@ export default function App() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 880 }}>
               <thead>
                 <tr style={{ background: "#EFEDE6", textAlign: "left" }}>
-                  {["Nº", "Receção", "Canal", "Gravidade", "Categoria", "Escola", "Tema", "Reclamante", "Prazo", "Estado", ""].map((h) => (
+                  {["Nº", "Receção", "Época", "Canal", "Gravidade", "Categoria", "Escola", "Tema", "Reclamante", "Prazo", "Estado", ""].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -3307,6 +3375,7 @@ export default function App() {
                       {String(e.entryNumber).padStart(4, "0")}
                     </td>
                     <td style={{ padding: "10px 14px" }}>{fmt(new Date(e.receivedDate + "T00:00:00"))}</td>
+                    <td style={{ padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", color: COLORS.slate }}>{e.epoca || "—"}</td>
                     <td style={{ padding: "10px 14px" }}>
                       {e.canal && CANAL_META[e.canal] && <Tag label={CANAL_META[e.canal].label} color={CANAL_META[e.canal].color} bg={CANAL_META[e.canal].bg} />}
                     </td>
