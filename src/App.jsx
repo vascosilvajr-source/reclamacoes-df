@@ -55,6 +55,12 @@ const STORAGE_TRIAGEM_KEY = "reclamacoes:triagem-aprendizagem";
 const STORAGE_INSCRITOS_KEY = "reclamacoes:inscritos";
 const STORAGE_TURMAS_KEY = "reclamacoes:turmas-alunos";
 const STORAGE_EPOCA_ANT_KEY = "reclamacoes:epoca-anterior";
+const STORAGE_DESISTENCIAS_KEY = "reclamacoes:desistencias";
+const STORAGE_EXPERIENCIAS_KEY = "reclamacoes:experiencias";
+const STORAGE_DESVINC_KEY = "reclamacoes:desvinculacoes";
+const STORAGE_ESPACOS_KEY = "reclamacoes:espacos";
+const STORAGE_EVENTOS_KEY = "reclamacoes:eventos";
+const STORAGE_SATISFACAO_KEY = "reclamacoes:satisfacao";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -183,6 +189,59 @@ const CANAL_META = {
 const DEFAULT_CATEGORIAS = ["Disciplinar", "Técnico", "Infraestrutura e Equipamentos"];
 
 // Tipos de sanção aplicáveis a pais/EE — lista editável (options.sanctionTypes).
+const DEFAULT_MOTIVOS_DESISTENCIA = [
+  "Mudança de residência",
+  "Motivos financeiros",
+  "Desmotivação / falta de interesse",
+  "Lesão ou problema de saúde",
+  "Incompatibilidade de horários",
+  "Mudança para outro clube",
+  "Insatisfação com a experiência",
+  "Fim de ciclo / idade",
+  "Não especificado",
+  "Outro",
+];
+
+const DEFAULT_CATEGORIAS_SATISFACAO = [
+  "Treinador / equipa técnica",
+  "Comunicação com os encarregados",
+  "Instalações",
+  "Equipamento e material",
+  "Horários e organização",
+  "Secretaria / atendimento",
+];
+
+const DEFAULT_ESPACOS = ["Campo 1", "Campo 2", "Meio-campo A", "Meio-campo B", "Pavilhão"];
+const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+const QUEM_PEDIU = ["Encarregado de educação", "Outro clube", "Iniciativa da escola"];
+
+const XP_RESULTADO_META = {
+  pendente: { label: "Por avaliar", color: COLORS.warn, bg: COLORS.warnBg },
+  sucesso: { label: "Converteu", color: COLORS.ok, bg: COLORS.okBg },
+  insucesso: { label: "Não converteu", color: COLORS.danger, bg: COLORS.dangerBg },
+};
+
+// Capacidade sugerida por turma, ajustável no registo.
+function capacidadeSugerida(turma, niveis) {
+  const mapa = { "Raíz": 12, "Iniciação": 14, "Básico": 16, "Intermédio": 16, "Avançado": 18, "Expert": 18 };
+  if (mapa[turma]) return mapa[turma];
+  return ehEscolinha(turma, niveis) ? 16 : 20;
+}
+
+// Mês (aaaa-mm) a partir de uma data ISO, para filtros e agregações.
+function mesDeData(d) {
+  return d ? String(d).slice(0, 7) : "";
+}
+
+// Cor da barra de lotação consoante a ocupação.
+function corLotacao(pct) {
+  if (pct >= 95) return COLORS.danger;
+  if (pct >= 80) return COLORS.ok;
+  if (pct >= 50) return COLORS.warn;
+  return COLORS.slate;
+}
+
 const DEFAULT_AREAS_AUDITORIA = ["Técnica", "Médica", "Instalações e Equipamentos", "Administrativa", "Escolar e Social"];
 
 const DEFAULT_NIVEIS = ["Raíz", "Iniciação", "Básico", "Intermédio", "Avançado", "Expert"];
@@ -1119,13 +1178,16 @@ function StatCard({ label, value, color, subtitle }) {
 }
 
 // ---------- Manage schools/categories modal ----------
-function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, auditAreas, onAdd, onRemove, onClose }) {
+function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, auditAreas, motivosDesistencia, categoriasSatisfacao, espacosLista, onAdd, onRemove, onClose }) {
   const [newSchool, setNewSchool] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newAuditCategory, setNewAuditCategory] = useState("");
   const [newComplaintCategory, setNewComplaintCategory] = useState("");
   const [newSanctionType, setNewSanctionType] = useState("");
   const [newArea, setNewArea] = useState("");
+  const [novoMotivo, setNovoMotivo] = useState("");
+  const [novaCatSat, setNovaCatSat] = useState("");
+  const [novoEspaco, setNovoEspaco] = useState("");
 
   const submitSchool = () => {
     const v = newSchool.trim();
@@ -1243,6 +1305,50 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
             Adicionar
           </button>
         </div>
+
+        {[
+          ["Motivos de desistência", motivosDesistencia, "motivosDesistencia", novoMotivo, setNovoMotivo, "Ex: Mudança de escola"],
+          ["Categorias do inquérito de satisfação", categoriasSatisfacao, "categoriasSatisfacao", novaCatSat, setNovaCatSat, "Ex: Comunicação"],
+          ["Espaços de treino", espacosLista, "espacosLista", novoEspaco, setNovoEspaco, "Ex: Campo 3"],
+        ].map(([titulo, lista, chave, valor, setValor, ph]) => (
+          <div key={chave}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              {titulo}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {(lista || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem itens.</div>}
+              {(lista || []).map((x) => (
+                <Chip key={x} label={x} onDelete={() => onRemove(chave, x)} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+              <input
+                type="text"
+                placeholder={ph}
+                value={valor}
+                onChange={(e) => setValor(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && valor.trim()) {
+                    onAdd(chave, valor.trim());
+                    setValor("");
+                  }
+                }}
+                style={inputStyle}
+              />
+              <button
+                onClick={() => {
+                  if (valor.trim()) {
+                    onAdd(chave, valor.trim());
+                    setValor("");
+                  }
+                }}
+                style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}
+              >
+                Adicionar
+              </button>
+            </div>
+          </div>
+        ))}
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
           Áreas / Departamentos (auditorias)
@@ -2800,26 +2906,23 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22 }}>
-        {[
-          { key: "registo", label: "Registo" },
-          { key: "analise", label: "Análise" },
-        ].map((t) => (
+      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22, flexWrap: "wrap" }}>
+        {SECOES_GESTAO.map(([key, label]) => (
           <button
-            key={t.key}
-            onClick={() => setView(t.key)}
+            key={key}
+            onClick={() => setView(key)}
             style={{
               background: "transparent",
               border: "none",
-              padding: "9px 15px",
+              padding: "9px 14px",
               fontSize: 13.5,
               fontWeight: 600,
-              color: view === t.key ? COLORS.navy : COLORS.slate,
+              color: view === key ? COLORS.navy : COLORS.slate,
               cursor: "pointer",
-              borderBottom: `2.5px solid ${view === t.key ? COLORS.navy : "transparent"}`,
+              borderBottom: `2.5px solid ${view === key ? COLORS.navy : "transparent"}`,
             }}
           >
-            {t.label}
+            {label}
           </button>
         ))}
       </div>
@@ -3526,6 +3629,1329 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
   );
 }
 
+// ---------- Componentes partilhados das secções de gestão ----------
+
+// Barra de lotação reutilizada nas turmas e no mapa de espaços.
+function BarraLotacao({ pct, largura }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ height: 7, width: largura || 80, background: COLORS.doneBg, borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: corLotacao(pct) }} />
+      </div>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate }}>{pct}%</span>
+    </div>
+  );
+}
+
+const thStyle = {
+  textAlign: "left",
+  fontSize: 10.5,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  color: COLORS.slate,
+  padding: "9px 10px",
+  borderBottom: `1px solid ${COLORS.rule}`,
+  whiteSpace: "nowrap",
+};
+const tdStyle = { padding: "9px 10px", borderBottom: "1px solid #EFEDE7", fontSize: 13.5 };
+
+function Filtros({ children }) {
+  return <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>{children}</div>;
+}
+
+function SemDados({ texto }) {
+  return (
+    <div style={{ textAlign: "center", padding: "40px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
+      {texto}
+    </div>
+  );
+}
+
+// ---------- Desistências ----------
+function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onManageOptions }) {
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [turma, setTurma] = useState("");
+  const [motivo, setMotivo] = useState(motivos[0] || "");
+  const [n, setN] = useState("1");
+  const [erro, setErro] = useState("");
+
+  const [fEsc, setFEsc] = useState("todas");
+  const [fEsca, setFEsca] = useState("todos");
+  const [fMot, setFMot] = useState("todos");
+
+  const turmasEscola = [...new Set(turmas.filter((t) => t.escola === escola).map((t) => t.turma))];
+  const escaloes = [...new Set(desistencias.map((d) => escalaoDaTurma(d.turma, niveis)))].sort();
+
+  const lista = desistencias
+    .filter((d) => (fEsc === "todas" ? true : d.escola === fEsc))
+    .filter((d) => (fEsca === "todos" ? true : escalaoDaTurma(d.turma, niveis) === fEsca))
+    .filter((d) => (fMot === "todos" ? true : d.motivo === fMot))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
+  const total = lista.reduce((s, d) => s + d.n, 0);
+  const porMotivo = motivos
+    .map((m) => ({ m, n: lista.filter((d) => d.motivo === m).reduce((s, d) => s + d.n, 0) }))
+    .filter((x) => x.n)
+    .sort((a, b) => b.n - a.n);
+
+  const guardar = () => {
+    if (!turma) {
+      setErro("Escolhe a turma.");
+      return;
+    }
+    if (n === "" || Number(n) < 1) {
+      setErro("Indica quantas desistências.");
+      return;
+    }
+    setErro("");
+    onSave({ id: `d_${Date.now()}`, escola, turma, motivo, n: Math.round(Number(n)), data: new Date().toISOString().slice(0, 10) });
+    setN("1");
+  };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Registar desistências</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => { setEscola(e.target.value); setTurma(""); }} style={{ ...inputStyle, width: 170 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Turma / equipa</label>
+            <select value={turma} onChange={(e) => setTurma(e.target.value)} style={{ ...inputStyle, width: 165 }}>
+              <option value="">{turmasEscola.length ? "Selecionar..." : "Sem turmas nesta escola"}</option>
+              {turmasEscola.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Motivo</label>
+              <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
+            </div>
+            <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ ...inputStyle, width: 230 }}>
+              {motivos.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Quantos</label>
+            <input type="number" min="1" value={n} onChange={(e) => { setN(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 95 }} />
+          </div>
+          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
+        </div>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
+          Registam-se contagens e motivos — sem nomes nem identificação de atletas.
+        </div>
+      </div>
+
+      <Filtros>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={fEsca} onChange={(e) => setFEsca(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+          <option value="todos">Todos os escalões</option>
+          {escaloes.map((x) => (
+            <option key={x} value={x}>{x}</option>
+          ))}
+        </select>
+        <select value={fMot} onChange={(e) => setFMot(e.target.value)} style={{ ...inputStyle, width: 230 }}>
+          <option value="todos">Todos os motivos</option>
+          {motivos.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </Filtros>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <StatCard label="Desistências" value={total} color={COLORS.danger} subtitle="nos filtros escolhidos" />
+        <StatCard label="Registos" value={lista.length} />
+        <StatCard label="Motivo mais frequente" value={porMotivo.length ? porMotivo[0].n : "—"} subtitle={porMotivo.length ? porMotivo[0].m : ""} />
+      </div>
+
+      {lista.length === 0 ? (
+        <SemDados texto="Sem desistências para os filtros selecionados." />
+      ) : (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ ...panelStyle, flex: "1 1 300px" }}>
+            <div style={panelTitle}>Por motivo</div>
+            {porMotivo.map((x) => (
+              <div key={x.m} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1, fontSize: 13 }}>{x.m}</div>
+                <div style={{ height: 7, width: 110, background: COLORS.doneBg, borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${(x.n / porMotivo[0].n) * 100}%`, background: COLORS.danger }} />
+                </div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, width: 24, textAlign: "right" }}>{x.n}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...panelStyle, flex: "1 1 380px" }}>
+            <div style={panelTitle}>Registos ({lista.length})</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Data", "Escola", "Turma", "Escalão", "Motivo", "Nº", ""].map((h) => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.map((d) => (
+                    <tr key={d.id}>
+                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{d.data}</td>
+                      <td style={tdStyle}>{d.escola}</td>
+                      <td style={tdStyle}>{d.turma}</td>
+                      <td style={tdStyle}>{escalaoDaTurma(d.turma, niveis)}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{d.motivo}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{d.n}</td>
+                      <td style={tdStyle}>
+                        <button title="Remover" onClick={() => onRemove(d.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                          <X size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Experiências ----------
+function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUpdate, onRemove }) {
+  const [aviso, setAviso] = useState("");
+  const avaliar = (id, resultado) => setAviso(onUpdate(id, resultado) || "");
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [turma, setTurma] = useState("");
+  const [n, setN] = useState("1");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [erro, setErro] = useState("");
+
+  const [fEsc, setFEsc] = useState("todas");
+  const [fRes, setFRes] = useState("todos");
+  const [fMes, setFMes] = useState("todos");
+
+  const turmasEscola = [...new Set(turmas.filter((t) => t.escola === escola).map((t) => t.turma))];
+  const meses = [...new Set(experiencias.map((x) => mesDeData(x.data)).filter(Boolean))].sort().reverse();
+
+  const lista = experiencias
+    .filter((x) => (fEsc === "todas" ? true : x.escola === fEsc))
+    .filter((x) => (fRes === "todos" ? true : x.resultado === fRes))
+    .filter((x) => (fMes === "todos" ? true : mesDeData(x.data) === fMes))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
+  const soma = (arr) => arr.reduce((s, x) => s + x.n, 0);
+  const realizadas = soma(lista);
+  const sucesso = soma(lista.filter((x) => x.resultado === "sucesso"));
+  const fechadas = soma(lista.filter((x) => x.resultado !== "pendente"));
+  const pendentes = soma(lista.filter((x) => x.resultado === "pendente"));
+  const fidelizacao = fechadas ? Math.round((sucesso / fechadas) * 100) : null;
+
+  // Evolução mensal da conversão, para se ver a tendência.
+  const porMes = [...new Set(experiencias.map((x) => mesDeData(x.data)).filter(Boolean))].sort().map((m) => {
+    const doMes = experiencias.filter((x) => mesDeData(x.data) === m && (fEsc === "todas" || x.escola === fEsc));
+    const f = soma(doMes.filter((x) => x.resultado !== "pendente"));
+    const s = soma(doMes.filter((x) => x.resultado === "sucesso"));
+    return { name: m, realizadas: soma(doMes), convertidas: s, taxa: f ? Math.round((s / f) * 100) : 0 };
+  });
+
+  const guardar = () => {
+    if (!turma) {
+      setErro("Escolhe a turma.");
+      return;
+    }
+    if (n === "" || Number(n) < 1) {
+      setErro("Indica pelo menos 1 atleta.");
+      return;
+    }
+    setErro("");
+    onSave({ id: `x_${Date.now()}`, escola, turma, n: Math.round(Number(n)), resultado: "pendente", data });
+    setN("1");
+  };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Registar experiência</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => { setEscola(e.target.value); setTurma(""); }} style={{ ...inputStyle, width: 170 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Turma / equipa</label>
+            <select value={turma} onChange={(e) => setTurma(e.target.value)} style={{ ...inputStyle, width: 165 }}>
+              <option value="">{turmasEscola.length ? "Selecionar..." : "Sem turmas nesta escola"}</option>
+              {turmasEscola.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Nº de atletas</label>
+            <input type="number" min="1" value={n} onChange={(e) => { setN(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 110 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data</label>
+            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={{ ...inputStyle, width: 160 }} />
+          </div>
+          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
+        </div>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
+          Ao marcar como convertida, os atletas entram na turma e passam a contar nos inscritos.
+        </div>
+      </div>
+
+      <Filtros>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={fRes} onChange={(e) => setFRes(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+          <option value="todos">Todos os resultados</option>
+          {Object.entries(XP_RESULTADO_META).map(([k, m]) => (
+            <option key={k} value={k}>{m.label}</option>
+          ))}
+        </select>
+        <select value={fMes} onChange={(e) => setFMes(e.target.value)} style={{ ...inputStyle, width: 160 }}>
+          <option value="todos">Todos os meses</option>
+          {meses.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </Filtros>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <StatCard label="Experiências" value={realizadas} />
+        <StatCard label="Convertidas" value={sucesso} color={COLORS.ok} />
+        <StatCard label="Por avaliar" value={pendentes} color={COLORS.warn} />
+        <StatCard
+          label="Taxa de fidelização"
+          value={fidelizacao === null ? "—" : `${fidelizacao}%`}
+          color={COLORS.ok}
+          subtitle={`${sucesso} de ${fechadas} avaliadas`}
+        />
+      </div>
+
+      {aviso && (
+        <div
+          style={{
+            background: COLORS.warnBg,
+            border: `1px solid ${COLORS.warn}`,
+            color: COLORS.warn,
+            borderRadius: 5,
+            padding: "10px 13px",
+            fontSize: 13,
+            marginBottom: 16,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <span>{aviso}</span>
+          <button onClick={() => setAviso("")} style={{ ...iconBtnStyle, padding: 0 }}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {porMes.length > 1 && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Experiências e conversão por mês</div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={porMes}>
+              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={30} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Bar dataKey="realizadas" name="Realizadas" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="convertidas" name="Convertidas" fill={COLORS.ok} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.slate }} /> Realizadas
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.ok }} /> Convertidas
+            </span>
+          </div>
+        </div>
+      )}
+
+      {lista.length === 0 ? (
+        <SemDados texto="Sem experiências para os filtros selecionados." />
+      ) : (
+        <div style={panelStyle}>
+          <div style={panelTitle}>Registos ({lista.length})</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Data", "Escola", "Turma", "Atletas", "Resultado", "Avaliar", ""].map((h) => (
+                    <th key={h} style={thStyle}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((x) => {
+                  const meta = XP_RESULTADO_META[x.resultado] || XP_RESULTADO_META.pendente;
+                  return (
+                    <tr key={x.id}>
+                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{x.data}</td>
+                      <td style={tdStyle}>{x.escola}</td>
+                      <td style={tdStyle}>{x.turma}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{x.n}</td>
+                      <td style={tdStyle}>
+                        <Tag label={meta.label} color={meta.color} bg={meta.bg} />
+                      </td>
+                      <td style={tdStyle}>
+                        {x.resultado === "pendente" ? (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              onClick={() => avaliar(x.id, "sucesso")}
+                              style={{ ...secondaryBtnStyle, flex: "none", padding: "5px 11px", fontSize: 12, borderColor: COLORS.ok, color: COLORS.ok }}
+                            >
+                              Converteu
+                            </button>
+                            <button
+                              onClick={() => avaliar(x.id, "insucesso")}
+                              style={{ ...secondaryBtnStyle, flex: "none", padding: "5px 11px", fontSize: 12, borderColor: COLORS.danger, color: COLORS.danger }}
+                            >
+                              Não
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => avaliar(x.id, "pendente")} style={{ ...secondaryBtnStyle, flex: "none", padding: "5px 11px", fontSize: 12 }}>
+                            Reverter
+                          </button>
+                        )}
+                      </td>
+                      <td style={tdStyle}>
+                        <button title="Remover" onClick={() => onRemove(x.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                          <X size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Desvinculações ----------
+function SecaoDesvinculacoes({ escolas, desvinculacoes, onSave, onUpdate, onRemove }) {
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [quem, setQuem] = useState(QUEM_PEDIU[0]);
+  const [clube, setClube] = useState("");
+  const [decisao, setDecisao] = useState("");
+  const [cedida, setCedida] = useState("0");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+
+  const [fEsc, setFEsc] = useState("todas");
+  const [fQuem, setFQuem] = useState("todos");
+  const [fClube, setFClube] = useState("todos");
+  const [fCed, setFCed] = useState("todos");
+
+  const clubes = [...new Set(desvinculacoes.map((v) => v.clubeDestino).filter(Boolean))].sort();
+
+  const lista = desvinculacoes
+    .filter((v) => (fEsc === "todas" ? true : v.escola === fEsc))
+    .filter((v) => (fQuem === "todos" ? true : v.quemPediu === fQuem))
+    .filter((v) => (fClube === "todos" ? true : v.clubeDestino === fClube))
+    .filter((v) => (fCed === "todos" ? true : fCed === "sim" ? v.cedida === true : v.cedida !== true))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
+  const aceites = lista.filter((v) => v.aceite === true).length;
+  const recusados = lista.filter((v) => v.aceite === false).length;
+  const cedidos = lista.filter((v) => v.cedida === true).length;
+
+  const guardar = () => {
+    onSave({
+      id: `v_${Date.now()}`,
+      escola,
+      quemPediu: quem,
+      clubeDestino: clube.trim(),
+      aceite: decisao === "" ? null : decisao === "1",
+      cedida: cedida === "1",
+      data,
+    });
+    setClube("");
+    setDecisao("");
+    setCedida("0");
+  };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Registar pedido de desvinculação</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => setEscola(e.target.value)} style={{ ...inputStyle, width: 165 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Pedido por</label>
+            <select value={quem} onChange={(e) => setQuem(e.target.value)} style={{ ...inputStyle, width: 195 }}>
+              {QUEM_PEDIU.map((q) => (
+                <option key={q} value={q}>{q}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Clube de destino</label>
+            <input
+              type="text"
+              value={clube}
+              onChange={(e) => setClube(e.target.value)}
+              placeholder="Nome do clube"
+              list="lista-clubes"
+              style={{ ...inputStyle, width: 190 }}
+            />
+            <datalist id="lista-clubes">
+              {clubes.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Decisão</label>
+            <select value={decisao} onChange={(e) => setDecisao(e.target.value)} style={{ ...inputStyle, width: 140 }}>
+              <option value="">Pendente</option>
+              <option value="1">Aceite</option>
+              <option value="0">Recusado</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Passe cedido</label>
+            <select value={cedida} onChange={(e) => setCedida(e.target.value)} style={{ ...inputStyle, width: 110 }}>
+              <option value="0">Não</option>
+              <option value="1">Sim</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data</label>
+            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={{ ...inputStyle, width: 155 }} />
+          </div>
+          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
+          Sem identificação do atleta — apenas o pedido, o destino, a decisão e se houve cedência.
+        </div>
+      </div>
+
+      <Filtros>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 170 }}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={fQuem} onChange={(e) => setFQuem(e.target.value)} style={{ ...inputStyle, width: 195 }}>
+          <option value="todos">Pedido por (todos)</option>
+          {QUEM_PEDIU.map((q) => (
+            <option key={q} value={q}>{q}</option>
+          ))}
+        </select>
+        <select value={fClube} onChange={(e) => setFClube(e.target.value)} style={{ ...inputStyle, width: 190 }}>
+          <option value="todos">Todos os clubes de destino</option>
+          {clubes.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select value={fCed} onChange={(e) => setFCed(e.target.value)} style={{ ...inputStyle, width: 160 }}>
+          <option value="todos">Cedido ou não</option>
+          <option value="sim">Apenas cedidos</option>
+          <option value="nao">Apenas não cedidos</option>
+        </select>
+      </Filtros>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <StatCard label="Pedidos" value={lista.length} />
+        <StatCard label="Aceites" value={aceites} color={COLORS.ok} subtitle={lista.length ? `${Math.round((aceites / lista.length) * 100)}% dos pedidos` : ""} />
+        <StatCard label="Recusados" value={recusados} color={COLORS.danger} />
+        <StatCard label="Passes cedidos" value={cedidos} color={COLORS.progress} />
+      </div>
+
+      {lista.length === 0 ? (
+        <SemDados texto="Sem pedidos para os filtros selecionados." />
+      ) : (
+        <div style={panelStyle}>
+          <div style={panelTitle}>Pedidos ({lista.length})</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Data", "Escola", "Pedido por", "Clube de destino", "Decisão", "Passe cedido", ""].map((h) => (
+                    <th key={h} style={thStyle}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((v) => (
+                  <tr key={v.id}>
+                    <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{v.data}</td>
+                    <td style={tdStyle}>{v.escola}</td>
+                    <td style={{ ...tdStyle, fontSize: 12.5 }}>{v.quemPediu}</td>
+                    <td style={tdStyle}>{v.clubeDestino || "—"}</td>
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => onUpdate(v.id, { aceite: v.aceite === null ? true : v.aceite ? false : null })}
+                        title="Clica para alternar"
+                        style={{
+                          border: "none",
+                          cursor: "pointer",
+                          borderRadius: 3,
+                          padding: "3px 9px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: v.aceite === null ? COLORS.doneBg : v.aceite ? COLORS.okBg : COLORS.dangerBg,
+                          color: v.aceite === null ? COLORS.slate : v.aceite ? COLORS.ok : COLORS.danger,
+                        }}
+                      >
+                        {v.aceite === null ? "Pendente" : v.aceite ? "Aceite" : "Recusado"}
+                      </button>
+                    </td>
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => onUpdate(v.id, { cedida: !v.cedida })}
+                        title="Clica para alternar"
+                        style={{
+                          border: "none",
+                          cursor: "pointer",
+                          borderRadius: 3,
+                          padding: "3px 9px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: v.cedida ? COLORS.progressBg : COLORS.doneBg,
+                          color: v.cedida ? COLORS.progress : COLORS.slate,
+                        }}
+                      >
+                        {v.cedida ? "Sim" : "Não"}
+                      </button>
+                    </td>
+                    <td style={tdStyle}>
+                      <button title="Remover" onClick={() => onRemove(v.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                        <X size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Espaços: mapa de ocupação com lotação automática ----------
+function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, onSave, onRemove, onManageOptions }) {
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [espaco, setEspaco] = useState(listaEspacos[0] || "");
+  const [dia, setDia] = useState(DIAS_SEMANA[0]);
+  const [hora, setHora] = useState("18:00");
+  const [turma, setTurma] = useState("");
+  const [erro, setErro] = useState("");
+
+  const turmasEscola = turmas.filter((t) => t.escola === escola);
+  const doEscola = espacos.filter((s) => s.escola === escola);
+  const usados = [...new Set(doEscola.map((s) => s.espaco))];
+  const mostrar = usados.length ? usados : listaEspacos.slice(0, 3);
+
+  // Para cada bloco do mapa, mostra a lotação real da turma que lá treina.
+  const infoTurma = (nome) => {
+    const t = turmasEscola.find((x) => x.turma === nome);
+    if (!t) return null;
+    const total = t.m + t.f;
+    const cap = t.cap || capacidadeSugerida(nome, niveis);
+    return { total, cap, pct: cap ? Math.round((total / cap) * 100) : 0 };
+  };
+
+  const guardar = () => {
+    if (!turma) {
+      setErro("Esta escola não tem turmas registadas.");
+      return;
+    }
+    if (espacos.some((s) => s.escola === escola && s.espaco === espaco && s.dia === dia && s.hora === hora)) {
+      setErro(`${espaco} já está ocupado ${dia} às ${hora}.`);
+      return;
+    }
+    setErro("");
+    onSave({ id: `s_${Date.now()}`, escola, espaco, dia, hora, turma });
+  };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Atribuir espaço</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => { setEscola(e.target.value); setTurma(""); }} style={{ ...inputStyle, width: 165 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Espaço</label>
+              <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
+            </div>
+            <select value={espaco} onChange={(e) => setEspaco(e.target.value)} style={{ ...inputStyle, width: 160 }}>
+              {listaEspacos.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Dia</label>
+            <select value={dia} onChange={(e) => setDia(e.target.value)} style={{ ...inputStyle, width: 130 }}>
+              {DIAS_SEMANA.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Hora</label>
+            <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} style={{ ...inputStyle, width: 120 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Turma / equipa</label>
+            <select value={turma} onChange={(e) => { setTurma(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 175 }}>
+              <option value="">{turmasEscola.length ? "Selecionar..." : "Sem turmas nesta escola"}</option>
+              {turmasEscola.map((t) => (
+                <option key={t.turma} value={t.turma}>
+                  {t.turma} ({t.m + t.f}/{t.cap || capacidadeSugerida(t.turma, niveis)})
+                </option>
+              ))}
+            </select>
+          </div>
+          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Atribuir</button>
+        </div>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
+      </div>
+
+      <div style={panelStyle}>
+        <div style={panelTitle}>Mapa de ocupação — {escola}</div>
+        {doEscola.length === 0 && <div style={{ fontSize: 13, color: COLORS.slate, marginBottom: 12 }}>Sem atribuições nesta escola.</div>}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Espaço</th>
+                {DIAS_SEMANA.map((d) => (
+                  <th key={d} style={thStyle}>{d}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {mostrar.map((sp) => (
+                <tr key={sp}>
+                  <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap" }}>{sp}</td>
+                  {DIAS_SEMANA.map((d) => {
+                    const blocos = doEscola
+                      .filter((s) => s.espaco === sp && s.dia === d)
+                      .sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+                    return (
+                      <td key={d} style={{ ...tdStyle, verticalAlign: "top", minWidth: 150 }}>
+                        {blocos.length === 0 ? (
+                          <span style={{ color: COLORS.rule }}>—</span>
+                        ) : (
+                          blocos.map((b) => {
+                            const info = infoTurma(b.turma);
+                            return (
+                              <div
+                                key={b.id}
+                                style={{
+                                  background: COLORS.paper,
+                                  border: `1px solid ${COLORS.rule}`,
+                                  borderLeft: `3px solid ${info ? corLotacao(info.pct) : COLORS.rule}`,
+                                  borderRadius: 3,
+                                  padding: "6px 8px",
+                                  marginBottom: 5,
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: COLORS.navy }}>{b.hora}</span>
+                                  <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                                    <X size={11} />
+                                  </button>
+                                </div>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, margin: "2px 0" }}>{b.turma}</div>
+                                {info ? (
+                                  <>
+                                    <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 3 }}>
+                                      {info.total} de {info.cap} atletas
+                                    </div>
+                                    <BarraLotacao pct={info.pct} largura={62} />
+                                  </>
+                                ) : (
+                                  <div style={{ fontSize: 11, color: COLORS.warn }}>turma sem registo de alunos</div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10 }}>
+          A lotação de cada bloco vem automaticamente do registo de alunos dessa turma.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Eventos ----------
+function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
+  const [nome, setNome] = useState("");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [nTurmas, setNTurmas] = useState("");
+  const [nComp, setNComp] = useState("");
+  const [satisf, setSatisf] = useState("");
+  const [reclam, setReclam] = useState("");
+  const [erro, setErro] = useState("");
+
+  const [fEsc, setFEsc] = useState("todas");
+  const [fMes, setFMes] = useState("todos");
+
+  const meses = [...new Set(eventos.map((e) => mesDeData(e.data)).filter(Boolean))].sort().reverse();
+  const lista = eventos
+    .filter((e) => (fEsc === "todas" ? true : e.escola === fEsc))
+    .filter((e) => (fMes === "todos" ? true : mesDeData(e.data) === fMes))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
+  const totalInscritos = lista.reduce((s, e) => s + (e.nTurmas || 0) + (e.nComp || 0), 0);
+  const totalReclam = lista.reduce((s, e) => s + (e.reclamacoes || 0), 0);
+  const comSatisf = lista.filter((e) => e.satisfacao !== null && e.satisfacao !== undefined);
+  const satisfMedia = comSatisf.length ? Math.round(comSatisf.reduce((s, e) => s + e.satisfacao, 0) / comSatisf.length) : null;
+
+  // Um evento pode envolver várias escolas: agrupa-se pelo nome + data.
+  const porEvento = [...new Map(lista.map((e) => [`${e.nome}|${e.data}`, e])).keys()].map((k) => {
+    const [nm, dt] = k.split("|");
+    const linhas = lista.filter((e) => e.nome === nm && e.data === dt);
+    return {
+      nome: nm,
+      data: dt,
+      escolas: linhas.length,
+      turmas: linhas.reduce((s, e) => s + (e.nTurmas || 0), 0),
+      comp: linhas.reduce((s, e) => s + (e.nComp || 0), 0),
+      reclam: linhas.reduce((s, e) => s + (e.reclamacoes || 0), 0),
+    };
+  });
+
+  const guardar = () => {
+    if (!nome.trim()) {
+      setErro("Dá um nome ao evento.");
+      return;
+    }
+    if (nTurmas === "" && nComp === "") {
+      setErro("Indica os inscritos de turmas e/ou de competição.");
+      return;
+    }
+    const sv = satisf === "" ? null : Math.max(0, Math.min(100, Math.round(Number(satisf))));
+    setErro("");
+    onSave({
+      id: `ev_${Date.now()}`,
+      nome: nome.trim(),
+      data,
+      escola,
+      nTurmas: Math.round(Number(nTurmas || 0)),
+      nComp: Math.round(Number(nComp || 0)),
+      satisfacao: sv,
+      reclamacoes: Math.round(Number(reclam || 0)),
+    });
+    setNTurmas("");
+    setNComp("");
+    setSatisf("");
+    setReclam("");
+  };
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={panelTitle}>Registar participação num evento</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Evento</label>
+            <input
+              type="text"
+              value={nome}
+              onChange={(e) => { setNome(e.target.value); setErro(""); }}
+              placeholder="Ex: Torneio de Natal"
+              list="lista-eventos"
+              style={{ ...inputStyle, width: 210 }}
+            />
+            <datalist id="lista-eventos">
+              {[...new Set(eventos.map((e) => e.nome))].map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data</label>
+            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={{ ...inputStyle, width: 155 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => setEscola(e.target.value)} style={{ ...inputStyle, width: 165 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos de turmas</label>
+            <input type="number" min="0" value={nTurmas} onChange={(e) => { setNTurmas(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 150 }} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos de competição</label>
+            <input type="number" min="0" value={nComp} onChange={(e) => { setNComp(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 165 }} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Satisfação (%)</label>
+            <input type="number" min="0" max="100" value={satisf} onChange={(e) => setSatisf(e.target.value)} style={{ ...inputStyle, width: 130 }} placeholder="—" />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Reclamações</label>
+            <input type="number" min="0" value={reclam} onChange={(e) => setReclam(e.target.value)} style={{ ...inputStyle, width: 120 }} placeholder="0" />
+          </div>
+          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
+        </div>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
+          Uma linha por escola. Repete o mesmo nome e data para juntar várias escolas no mesmo evento.
+        </div>
+      </div>
+
+      <Filtros>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={fMes} onChange={(e) => setFMes(e.target.value)} style={{ ...inputStyle, width: 160 }}>
+          <option value="todos">Todos os meses</option>
+          {meses.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </Filtros>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <StatCard label="Eventos" value={porEvento.length} />
+        <StatCard label="Participações" value={totalInscritos} subtitle="turmas + competição" />
+        <StatCard label="Satisfação média" value={satisfMedia === null ? "—" : `${satisfMedia}%`} color={COLORS.ok} />
+        <StatCard label="Reclamações" value={totalReclam} color={totalReclam ? COLORS.danger : COLORS.navy} />
+      </div>
+
+      {lista.length === 0 ? (
+        <SemDados texto="Sem eventos registados para os filtros selecionados." />
+      ) : (
+        <>
+          {porEvento.length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Participação por evento</div>
+              <ResponsiveContainer width="100%" height={Math.max(200, porEvento.length * 40)}>
+                <BarChart data={porEvento} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Bar dataKey="turmas" name="Turmas" stackId="e" fill={COLORS.purple} />
+                  <Bar dataKey="comp" name="Competição" stackId="e" fill={COLORS.progress} />
+                </BarChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.purple }} /> Turmas
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.progress }} /> Competição
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div style={panelStyle}>
+            <div style={panelTitle}>Registos ({lista.length})</div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Data", "Evento", "Escola", "Turmas", "Competição", "Total", "Satisfação", "Reclamações", ""].map((h) => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.map((e) => (
+                    <tr key={e.id}>
+                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{e.data}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{e.nome}</td>
+                      <td style={tdStyle}>{e.escola}</td>
+                      <td style={tdStyle}>{e.nTurmas || 0}</td>
+                      <td style={tdStyle}>{e.nComp || 0}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{(e.nTurmas || 0) + (e.nComp || 0)}</td>
+                      <td style={tdStyle}>
+                        {e.satisfacao === null || e.satisfacao === undefined ? (
+                          "—"
+                        ) : (
+                          <Tag
+                            label={`${e.satisfacao}%`}
+                            color={e.satisfacao >= 80 ? COLORS.ok : e.satisfacao >= 60 ? COLORS.warn : COLORS.danger}
+                            bg={e.satisfacao >= 80 ? COLORS.okBg : e.satisfacao >= 60 ? COLORS.warnBg : COLORS.dangerBg}
+                          />
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, color: e.reclamacoes ? COLORS.danger : COLORS.slate, fontWeight: e.reclamacoes ? 600 : 400 }}>
+                        {e.reclamacoes || 0}
+                      </td>
+                      <td style={tdStyle}>
+                        <button title="Remover" onClick={() => onRemove(e.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                          <X size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Satisfação ----------
+function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSave, onRemove, onManageOptions }) {
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [escalao, setEscalao] = useState("");
+  const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7));
+  const [respostas, setRespostas] = useState("");
+  const [valores, setValores] = useState({});
+  const [erro, setErro] = useState("");
+
+  const [fEsc, setFEsc] = useState("todas");
+  const [fEsca, setFEsca] = useState("todos");
+  const [fPer, setFPer] = useState("todos");
+
+  const escaloes = useMemo(() => {
+    const usados = [...new Set(turmas.map((t) => escalaoDaTurma(t.turma, niveis)))];
+    return usados.sort();
+  }, [turmas, niveis]);
+
+  const periodos = [...new Set(satisfacao.map((s) => s.periodo).filter(Boolean))].sort().reverse();
+
+  const lista = satisfacao
+    .filter((s) => (fEsc === "todas" ? true : s.escola === fEsc))
+    .filter((s) => (fEsca === "todos" ? true : s.escalao === fEsca))
+    .filter((s) => (fPer === "todos" ? true : s.periodo === fPer))
+    .sort((a, b) => String(b.periodo).localeCompare(String(a.periodo)));
+
+  // Média ponderada pelo número de respostas, que é o correto para inquéritos.
+  const mediaPonderada = (regs, cat) => {
+    let peso = 0;
+    let soma = 0;
+    regs.forEach((r) => {
+      const v = cat ? (r.valores || {})[cat] : mediaRegisto(r);
+      if (v === undefined || v === null || isNaN(v)) return;
+      const p = r.respostas || 1;
+      soma += v * p;
+      peso += p;
+    });
+    return peso ? Math.round(soma / peso) : null;
+  };
+  function mediaRegisto(r) {
+    const vs = Object.values(r.valores || {}).filter((v) => v !== null && v !== undefined && !isNaN(v));
+    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null;
+  }
+
+  const global = mediaPonderada(lista);
+  const totalRespostas = lista.reduce((s, r) => s + (r.respostas || 0), 0);
+
+  const porCategoria = categorias
+    .map((c) => ({ name: c, valor: mediaPonderada(lista, c) }))
+    .filter((x) => x.valor !== null)
+    .sort((a, b) => b.valor - a.valor);
+  const porEscola = escolas
+    .map((e) => ({ name: e, valor: mediaPonderada(lista.filter((s) => s.escola === e)) }))
+    .filter((x) => x.valor !== null);
+  const porEscalao = escaloes
+    .map((x) => ({ name: x, valor: mediaPonderada(lista.filter((s) => s.escalao === x)) }))
+    .filter((y) => y.valor !== null);
+  const porPeriodo = [...new Set(lista.map((s) => s.periodo))].sort().map((p) => ({
+    name: p,
+    valor: mediaPonderada(lista.filter((s) => s.periodo === p)),
+  }));
+
+  const corSat = (v) => (v >= 80 ? COLORS.ok : v >= 60 ? COLORS.warn : COLORS.danger);
+
+  const guardar = () => {
+    const preenchidos = Object.entries(valores).filter(([, v]) => v !== "" && v !== null);
+    if (preenchidos.length === 0) {
+      setErro("Preenche pelo menos uma categoria.");
+      return;
+    }
+    if (respostas === "" || Number(respostas) < 1) {
+      setErro("Indica quantas respostas recebeste (usado para ponderar as médias).");
+      return;
+    }
+    setErro("");
+    const vals = {};
+    preenchidos.forEach(([k, v]) => (vals[k] = Math.max(0, Math.min(100, Math.round(Number(v))))));
+    onSave({
+      id: `sat_${Date.now()}`,
+      escola,
+      escalao: escalao || "Todos",
+      periodo,
+      respostas: Math.round(Number(respostas)),
+      valores: vals,
+      data: new Date().toISOString().slice(0, 10),
+    });
+    setValores({});
+    setRespostas("");
+  };
+
+  const grafico = (dados, titulo, cor) => (
+    <div style={{ ...panelStyle, flex: "1 1 330px" }}>
+      <div style={panelTitle}>{titulo}</div>
+      {dados.length === 0 ? (
+        <div style={{ fontSize: 13, color: COLORS.slate }}>Sem dados.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={Math.max(180, dados.length * 34)}>
+          <BarChart data={dados} layout="vertical" margin={{ left: 8 }}>
+            <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+            <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v}%`} />
+            <Bar dataKey="valor" radius={[0, 3, 3, 0]} barSize={16}>
+              {dados.map((d, i) => (
+                <Cell key={i} fill={cor || corSat(d.valor)} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <div style={panelTitle}>Registar resultados de inquérito</div>
+          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir categorias</button>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+            <select value={escola} onChange={(e) => setEscola(e.target.value)} style={{ ...inputStyle, width: 165 }}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Escalão</label>
+            <select value={escalao} onChange={(e) => setEscalao(e.target.value)} style={{ ...inputStyle, width: 170 }}>
+              <option value="">Todos os escalões</option>
+              {escaloes.map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Período</label>
+            <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} style={{ ...inputStyle, width: 160 }} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Nº de respostas</label>
+            <input type="number" min="1" value={respostas} onChange={(e) => { setRespostas(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 140 }} placeholder="24" />
+          </div>
+        </div>
+
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          Satisfação por categoria (%)
+        </div>
+        {categorias.length === 0 ? (
+          <div style={{ fontSize: 13, color: COLORS.slate }}>Sem categorias. Usa "Gerir categorias" para as criar.</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+            {categorias.map((c) => (
+              <div key={c}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>{c}</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={valores[c] ?? ""}
+                  onChange={(e) => { setValores((v) => ({ ...v, [c]: e.target.value })); setErro(""); }}
+                  style={{ ...inputStyle, width: "100%" }}
+                  placeholder="—"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px", marginTop: 14 }}>Guardar</button>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
+      </div>
+
+      <Filtros>
+        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 175 }}>
+          <option value="todas">Todas as escolas</option>
+          {escolas.map((e) => (
+            <option key={e} value={e}>{e}</option>
+          ))}
+        </select>
+        <select value={fEsca} onChange={(e) => setFEsca(e.target.value)} style={{ ...inputStyle, width: 175 }}>
+          <option value="todos">Todos os escalões</option>
+          {[...new Set(satisfacao.map((s) => s.escalao))].sort().map((x) => (
+            <option key={x} value={x}>{x}</option>
+          ))}
+        </select>
+        <select value={fPer} onChange={(e) => setFPer(e.target.value)} style={{ ...inputStyle, width: 160 }}>
+          <option value="todos">Todos os períodos</option>
+          {periodos.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </Filtros>
+
+      {lista.length === 0 ? (
+        <SemDados texto="Sem resultados de satisfação para os filtros selecionados." />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+            <StatCard
+              label="Satisfação global"
+              value={global === null ? "—" : `${global}%`}
+              color={global === null ? COLORS.navy : corSat(global)}
+              subtitle={`ponderada por ${totalRespostas} respostas`}
+            />
+            <StatCard label="Inquéritos registados" value={lista.length} />
+            <StatCard
+              label="Melhor categoria"
+              value={porCategoria.length ? `${porCategoria[0].valor}%` : "—"}
+              color={COLORS.ok}
+              subtitle={porCategoria.length ? porCategoria[0].name : ""}
+            />
+            <StatCard
+              label="Categoria mais fraca"
+              value={porCategoria.length ? `${porCategoria[porCategoria.length - 1].valor}%` : "—"}
+              color={COLORS.danger}
+              subtitle={porCategoria.length ? porCategoria[porCategoria.length - 1].name : ""}
+            />
+          </div>
+
+          {porPeriodo.length > 1 && (
+            <div style={{ ...panelStyle, marginBottom: 16 }}>
+              <div style={panelTitle}>Evolução da satisfação global</div>
+              <ResponsiveContainer width="100%" height={230}>
+                <LineChart data={porPeriodo}>
+                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={38} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v}%`} />
+                  <Line type="monotone" dataKey="valor" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.navy }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+            {grafico(porCategoria, "Satisfação por categoria")}
+            {grafico(porEscola, "Satisfação por escola")}
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+            {grafico(porEscalao, "Satisfação por escalão")}
+            <div style={{ ...panelStyle, flex: "1 1 330px" }}>
+              <div style={panelTitle}>Registos ({lista.length})</div>
+              <div style={{ overflowX: "auto", maxHeight: 300, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Período", "Escola", "Escalão", "Respostas", "Média", ""].map((h) => (
+                        <th key={h} style={thStyle}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lista.map((s) => {
+                      const m = mediaRegisto(s);
+                      return (
+                        <tr key={s.id}>
+                          <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{s.periodo}</td>
+                          <td style={tdStyle}>{s.escola}</td>
+                          <td style={{ ...tdStyle, fontSize: 12.5 }}>{s.escalao}</td>
+                          <td style={tdStyle}>{s.respostas}</td>
+                          <td style={tdStyle}>
+                            {m === null ? "—" : <Tag label={`${Math.round(m)}%`} color={corSat(m)} bg={m >= 80 ? COLORS.okBg : m >= 60 ? COLORS.warnBg : COLORS.dangerBg} />}
+                          </td>
+                          <td style={tdStyle}>
+                            <button title="Remover" onClick={() => onRemove(s.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                              <X size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------- Inscritos: registo semanal, turmas e análise ----------
 
 function TurmaChip({ label, onDelete }) {
@@ -3584,11 +5010,28 @@ function agregaSerie(registos, periodo) {
   return [...porMes.values()];
 }
 
+const SECOES_GESTAO = [
+  ["registo", "Turmas e lotação"],
+  ["experiencias", "Experiências"],
+  ["desistencias", "Desistências"],
+  ["desvinc", "Desvinculações"],
+  ["espacos", "Espaços"],
+  ["eventos", "Eventos"],
+  ["satisfacao", "Satisfação"],
+  ["analise", "Análise"],
+];
+
 function InscritosPage({
   inscritos,
   turmasAlunos,
   epocaAnterior,
   options,
+  desistencias,
+  experiencias,
+  desvinculacoes,
+  espacos,
+  eventos,
+  satisfacao,
   onSaveSemana,
   onSaveTurma,
   onRemoveTurma,
@@ -3596,32 +5039,45 @@ function InscritosPage({
   onToggleTurmaEscola,
   onAddOption,
   onRemoveOption,
+  onSaveDesistencia,
+  onRemoveDesistencia,
+  onSaveExperiencia,
+  onUpdateExperiencia,
+  onRemoveExperiencia,
+  onSaveDesvinc,
+  onUpdateDesvinc,
+  onRemoveDesvinc,
+  onSaveEspaco,
+  onRemoveEspaco,
+  onSaveEvento,
+  onRemoveEvento,
+  onSaveSatisfacao,
+  onRemoveSatisfacao,
+  onManageOptions,
 }) {
   const [view, setView] = useState("registo");
   const escolas = options.schools || [];
+  const niveis = options.niveis || DEFAULT_NIVEIS;
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22 }}>
-        {[
-          { key: "registo", label: "Registo" },
-          { key: "analise", label: "Análise" },
-        ].map((t) => (
+      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22, flexWrap: "wrap" }}>
+        {SECOES_GESTAO.map(([key, label]) => (
           <button
-            key={t.key}
-            onClick={() => setView(t.key)}
+            key={key}
+            onClick={() => setView(key)}
             style={{
               background: "transparent",
               border: "none",
-              padding: "9px 15px",
+              padding: "9px 14px",
               fontSize: 13.5,
               fontWeight: 600,
-              color: view === t.key ? COLORS.navy : COLORS.slate,
+              color: view === key ? COLORS.navy : COLORS.slate,
               cursor: "pointer",
-              borderBottom: `2.5px solid ${view === t.key ? COLORS.navy : "transparent"}`,
+              borderBottom: `2.5px solid ${view === key ? COLORS.navy : "transparent"}`,
             }}
           >
-            {t.label}
+            {label}
           </button>
         ))}
       </div>
@@ -3630,6 +5086,59 @@ function InscritosPage({
         <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
           Ainda não há escolas na app. Adiciona-as em "Escolas e listas", no topo.
         </div>
+      ) : view === "experiencias" ? (
+        <SecaoExperiencias
+          escolas={escolas}
+          turmas={turmasAlunos}
+          niveis={niveis}
+          experiencias={experiencias}
+          onSave={onSaveExperiencia}
+          onUpdate={onUpdateExperiencia}
+          onRemove={onRemoveExperiencia}
+        />
+      ) : view === "desistencias" ? (
+        <SecaoDesistencias
+          escolas={escolas}
+          turmas={turmasAlunos}
+          niveis={niveis}
+          motivos={options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA}
+          desistencias={desistencias}
+          onSave={onSaveDesistencia}
+          onRemove={onRemoveDesistencia}
+          onManageOptions={onManageOptions}
+        />
+      ) : view === "desvinc" ? (
+        <SecaoDesvinculacoes
+          escolas={escolas}
+          desvinculacoes={desvinculacoes}
+          onSave={onSaveDesvinc}
+          onUpdate={onUpdateDesvinc}
+          onRemove={onRemoveDesvinc}
+        />
+      ) : view === "espacos" ? (
+        <SecaoEspacos
+          escolas={escolas}
+          turmas={turmasAlunos}
+          niveis={niveis}
+          espacos={espacos}
+          listaEspacos={options.espacosLista || DEFAULT_ESPACOS}
+          onSave={onSaveEspaco}
+          onRemove={onRemoveEspaco}
+          onManageOptions={onManageOptions}
+        />
+      ) : view === "eventos" ? (
+        <SecaoEventos escolas={escolas} eventos={eventos} onSave={onSaveEvento} onRemove={onRemoveEvento} />
+      ) : view === "satisfacao" ? (
+        <SecaoSatisfacao
+          escolas={escolas}
+          turmas={turmasAlunos}
+          niveis={niveis}
+          categorias={options.categoriasSatisfacao || DEFAULT_CATEGORIAS_SATISFACAO}
+          satisfacao={satisfacao}
+          onSave={onSaveSatisfacao}
+          onRemove={onRemoveSatisfacao}
+          onManageOptions={onManageOptions}
+        />
       ) : view === "registo" ? (
         <InscritosRegisto
           escolas={escolas}
@@ -4585,13 +6094,19 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {} });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
   const [inscritos, setInscritos] = useState({});
   const [turmasAlunos, setTurmasAlunos] = useState([]);
   const [epocaAnterior, setEpocaAnterior] = useState({});
+  const [desistencias, setDesistencias] = useState([]);
+  const [experiencias, setExperiencias] = useState([]);
+  const [desvinculacoes, setDesvinculacoes] = useState([]);
+  const [espacos, setEspacos] = useState([]);
+  const [eventos, setEventos] = useState([]);
+  const [satisfacao, setSatisfacao] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -4649,6 +6164,25 @@ export default function App() {
     }
   }, []);
 
+  // Gravação das listas simples da gestão. Função normal (não hook) para não
+  // violar as regras dos hooks ao ser usada várias vezes.
+  const fazPersist = (setter, chave, nome) => async (next) => {
+    setter(next);
+    try {
+      await dbStorage.set(chave, JSON.stringify(next));
+    } catch (e) {
+      console.error(`Erro ao guardar ${nome}:`, e);
+      setError(`Não foi possível guardar ${nome}: ${e?.message || e}`);
+    }
+  };
+
+  const persistDesistencias = fazPersist(setDesistencias, STORAGE_DESISTENCIAS_KEY, "as desistências");
+  const persistExperiencias = fazPersist(setExperiencias, STORAGE_EXPERIENCIAS_KEY, "as experiências");
+  const persistDesvinc = fazPersist(setDesvinculacoes, STORAGE_DESVINC_KEY, "as desvinculações");
+  const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
+  const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
+  const persistSatisfacao = fazPersist(setSatisfacao, STORAGE_SATISFACAO_KEY, "a satisfação");
+
   const persistInscritos = useCallback(async (next) => {
     setInscritos(next);
     try {
@@ -4698,7 +6232,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -4731,6 +6265,21 @@ export default function App() {
         if (res && res.value) setEpocaAnterior(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
+      }
+      for (const [chave, setter] of [
+        [STORAGE_DESISTENCIAS_KEY, setDesistencias],
+        [STORAGE_EXPERIENCIAS_KEY, setExperiencias],
+        [STORAGE_DESVINC_KEY, setDesvinculacoes],
+        [STORAGE_ESPACOS_KEY, setEspacos],
+        [STORAGE_EVENTOS_KEY, setEventos],
+        [STORAGE_SATISFACAO_KEY, setSatisfacao],
+      ]) {
+        try {
+          const r = await dbStorage.get(chave);
+          if (r && r.value) setter(JSON.parse(r.value));
+        } catch (e) {
+          // chave ainda não existe — arranque limpo
+        }
       }
       try {
         const res = await dbStorage.get(STORAGE_TRIAGEM_KEY);
@@ -4845,6 +6394,68 @@ export default function App() {
     const nova = atual.includes(turma) ? atual.filter((t) => t !== turma) : [...atual, turma];
     persistOptions({ ...options, turmasPorEscola: { ...mapa, [escola]: nova } });
   };
+
+  // Desistência desconta da turma: tira primeiro das femininas e o resto das
+  // masculinas, porque não guardamos o género de quem saiu.
+  const saveDesistencia = (reg) => {
+    persistDesistencias([...desistencias, reg]);
+    const t = turmasAlunos.find((x) => x.escola === reg.escola && x.turma === reg.turma);
+    if (t) {
+      let resta = Math.min(reg.n, t.m + t.f);
+      const tiraF = Math.min(t.f, resta);
+      resta -= tiraF;
+      saveTurmaAlunos({ ...t, f: t.f - tiraF, m: Math.max(0, t.m - resta) });
+    }
+  };
+  const removeDesistencia = (id) => persistDesistencias(desistencias.filter((d) => d.id !== id));
+
+  // Experiência convertida soma à turma, respeitando a capacidade.
+  const updateExperiencia = (id, resultado) => {
+    const x = experiencias.find((e) => e.id === id);
+    if (!x) return;
+    const t = turmasAlunos.find((y) => y.escola === x.escola && y.turma === x.turma);
+    let entraram = x.entraram || 0;
+    let aviso = null;
+
+    if (resultado === "sucesso" && x.resultado !== "sucesso" && t) {
+      const cap = t.cap || capacidadeSugerida(t.turma, options.niveis);
+      const vagas = Math.max(0, cap - (t.m + t.f));
+      entraram = Math.min(x.n, vagas);
+      if (entraram > 0) saveTurmaAlunos({ ...t, m: t.m + entraram });
+      if (entraram < x.n) {
+        aviso = `A turma ${t.turma} tinha ${vagas} vaga(s): entraram ${entraram} de ${x.n}. Ajusta a capacidade se for preciso.`;
+      }
+    }
+    if (x.resultado === "sucesso" && resultado !== "sucesso" && t && x.entraram) {
+      saveTurmaAlunos({ ...t, m: Math.max(0, t.m - x.entraram) });
+      entraram = 0;
+    }
+    persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, resultado, entraram } : e)));
+    return aviso;
+  };
+  const saveExperiencia = (reg) => persistExperiencias([...experiencias, reg]);
+  const removeExperiencia = (id) => persistExperiencias(experiencias.filter((e) => e.id !== id));
+
+  const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
+  const updateDesvinc = (id, patch) =>
+    persistDesvinc(
+      desvinculacoes.map((v) => {
+        if (v.id !== id) return v;
+        const nv = { ...v, ...patch };
+        if (nv.aceite !== true) nv.cedida = false;
+        return nv;
+      })
+    );
+  const removeDesvinc = (id) => persistDesvinc(desvinculacoes.filter((v) => v.id !== id));
+
+  const saveEspaco = (reg) => persistEspacos([...espacos, reg]);
+  const removeEspaco = (id) => persistEspacos(espacos.filter((s2) => s2.id !== id));
+
+  const saveEvento = (reg) => persistEventos([...eventos, reg]);
+  const removeEvento = (id) => persistEventos(eventos.filter((e) => e.id !== id));
+
+  const saveSatisfacao = (reg) => persistSatisfacao([...satisfacao, reg]);
+  const removeSatisfacao = (id) => persistSatisfacao(satisfacao.filter((x) => x.id !== id));
 
   const nextNumber = entries.length ? Math.max(...entries.map((e) => e.entryNumber)) + 1 : 1;
 
@@ -5063,6 +6674,27 @@ export default function App() {
             turmasAlunos={turmasAlunos}
             epocaAnterior={epocaAnterior}
             options={options}
+            desistencias={desistencias}
+            experiencias={experiencias}
+            desvinculacoes={desvinculacoes}
+            espacos={espacos}
+            eventos={eventos}
+            satisfacao={satisfacao}
+            onSaveDesistencia={saveDesistencia}
+            onRemoveDesistencia={removeDesistencia}
+            onSaveExperiencia={saveExperiencia}
+            onUpdateExperiencia={updateExperiencia}
+            onRemoveExperiencia={removeExperiencia}
+            onSaveDesvinc={saveDesvinc}
+            onUpdateDesvinc={updateDesvinc}
+            onRemoveDesvinc={removeDesvinc}
+            onSaveEspaco={saveEspaco}
+            onRemoveEspaco={removeEspaco}
+            onSaveEvento={saveEvento}
+            onRemoveEvento={removeEvento}
+            onSaveSatisfacao={saveSatisfacao}
+            onRemoveSatisfacao={removeSatisfacao}
+            onManageOptions={() => setShowManage(true)}
             onSaveSemana={saveSemanaInscritos}
             onSaveTurma={saveTurmaAlunos}
             onRemoveTurma={removeTurmaAlunos}
@@ -5316,6 +6948,9 @@ export default function App() {
           complaintCategories={options.complaintCategories}
           sanctionTypes={options.sanctionTypes}
           auditAreas={options.auditAreas}
+          motivosDesistencia={options.motivosDesistencia}
+          categoriasSatisfacao={options.categoriasSatisfacao}
+          espacosLista={options.espacosLista}
           onAdd={addOption}
           onRemove={removeOption}
           onClose={() => setShowManage(false)}
