@@ -27,9 +27,9 @@ import {
 const TEMA_CLARO = {
   ink: "#0E1420",
   ink2: "#48536B",
-  paper: "#FBFBFC",
+  paper: "#F2F2F7",
   paperRaised: "#FFFFFF",
-  paperSunken: "#F7F8FA",
+  paperSunken: "#F7F7FA",
   rule: "#E6E8EC",
   ruleSoft: "#F0F1F4",
   navy: "#0A52C7",
@@ -51,16 +51,19 @@ const TEMA_CLARO = {
   sideBg: "#FFFFFF",
   onAccent: "#FFFFFF",
   shadow: "0 1px 2px rgba(14,20,32,0.05)",
+  // Materiais translúcidos: fundo, bordo e brilho superior (reflexo especular).
+  segTrack: "#EFEFF4",
+  lift: "0 8px 24px -12px rgba(14,20,32,0.18)",
 };
 
 const TEMA_ESCURO = {
   ink: "#E7ECF3",
   ink2: "#A7B2C2",
-  paper: "#0B0F16",
-  paperRaised: "#12181F",
-  paperSunken: "#161D26",
-  rule: "#232C38",
-  ruleSoft: "#1B232D",
+  paper: "#000000",
+  paperRaised: "#1C1C1E",
+  paperSunken: "#2C2C2E",
+  rule: "#38383A",
+  ruleSoft: "#2C2C2E",
   navy: "#528CFF",
   navySoft: "#8AB4FF",
   navyWash: "#15243C",
@@ -77,9 +80,11 @@ const TEMA_ESCURO = {
   progressBg: "#15243C",
   purple: "#A98AD8",
   purpleBg: "#221B33",
-  sideBg: "#0D1219",
+  sideBg: "#1C1C1E",
   onAccent: "#08131F",
   shadow: "0 1px 2px rgba(0,0,0,0.5)",
+  segTrack: "#2C2C2E",
+  lift: "0 10px 28px -14px rgba(0,0,0,0.7)",
 };
 
 const COLORS = { ...TEMA_CLARO };
@@ -777,7 +782,7 @@ function TriageBox({ onApply, temas, categorias, learned, schools }) {
                 borderRadius: 4,
                 border: "none",
                 background: COLORS.navySoft,
-                color: "#fff",
+                color: COLORS.onAccent,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: !emailText.trim() ? "default" : "pointer",
@@ -938,7 +943,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
                 borderRadius: 4,
                 border: `1.5px solid ${form.canal === key ? COLORS.navy : COLORS.rule}`,
                 background: form.canal === key ? COLORS.navy : "transparent",
-                color: form.canal === key ? "#fff" : COLORS.ink,
+                color: form.canal === key ? COLORS.onAccent : COLORS.ink,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -1211,7 +1216,7 @@ function aplicarTema(tema) {
   panelStyle = {
     background: COLORS.paperRaised,
     border: `1px solid ${COLORS.rule}`,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: "16px 18px",
     boxShadow: COLORS.shadow,
   };
@@ -1232,10 +1237,11 @@ aplicarTema("light");
 function StatCard({ label, value, color, subtitle }) {
   return (
     <div
+      className="liftable"
       style={{
         background: COLORS.paperRaised,
         border: `1px solid ${COLORS.rule}`,
-        borderRadius: 10,
+        borderRadius: 14,
         padding: "14px 16px",
         flex: 1,
         minWidth: 140,
@@ -1981,7 +1987,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                   borderRadius: 20,
                   border: `1.5px solid ${active ? COLORS.navy : COLORS.rule}`,
                   background: active ? COLORS.navy : "transparent",
-                  color: active ? "#fff" : COLORS.slate,
+                  color: active ? COLORS.onAccent : COLORS.slate,
                   fontSize: 12,
                   fontWeight: 600,
                   cursor: "pointer",
@@ -2579,7 +2585,7 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
                   if (!payload || !payload.length) return null;
                   const d = payload[0].payload;
                   return (
-                    <div style={{ background: "#fff", border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "7px 10px", fontSize: 12 }}>
+                    <div style={{ background: COLORS.paperRaised, color: COLORS.ink, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "7px 10px", fontSize: 12, boxShadow: COLORS.lift }}>
                       <strong>{d.name}</strong>
                       <div>
                         {MX.label}: {MX.fmt(d.x)}
@@ -2637,7 +2643,7 @@ function ParamChips({ params, visible, onToggle }) {
                 borderRadius: 20,
                 border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
                 background: on ? COLORS.navy : "transparent",
-                color: on ? "#fff" : COLORS.slate,
+                color: on ? COLORS.onAccent : COLORS.slate,
                 fontSize: 12,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -2998,7 +3004,18 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "inline-flex",
+          gap: 3,
+          background: COLORS.segTrack,
+          border: "none",
+          borderRadius: 9,
+          padding: 2,
+          marginBottom: 20,
+          flexWrap: "wrap",
+        }}
+      >
         {[
           ["registo", "Registo"],
           ["analise", "Análise"],
@@ -3006,15 +3023,17 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
           <button
             key={key}
             onClick={() => setView(key)}
+            className="pill"
             style={{
-              background: "transparent",
+              background: view === key ? COLORS.paperRaised : "transparent",
               border: "none",
-              padding: "9px 14px",
+              borderRadius: 7,
+              padding: "7px 14px",
               fontSize: 13.5,
-              fontWeight: 600,
-              color: view === key ? COLORS.navy : COLORS.slate,
+              fontWeight: view === key ? 600 : 500,
+              color: view === key ? COLORS.ink : COLORS.ink2,
               cursor: "pointer",
-              borderBottom: `2.5px solid ${view === key ? COLORS.navy : "transparent"}`,
+              boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
             }}
           >
             {label}
@@ -3035,7 +3054,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
                 alignItems: "center",
                 gap: 8,
                 background: COLORS.navy,
-                color: "#fff",
+                color: COLORS.onAccent,
                 border: "none",
                 borderRadius: 4,
                 padding: "10px 16px",
@@ -3151,7 +3170,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
                 borderRadius: 4,
                 border: `1.5px solid ${form.personType === key ? COLORS.navy : COLORS.rule}`,
                 background: form.personType === key ? COLORS.navy : "transparent",
-                color: form.personType === key ? "#fff" : COLORS.ink,
+                color: form.personType === key ? COLORS.onAccent : COLORS.ink,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -3242,7 +3261,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
                     borderRadius: 4,
                     border: `1.5px solid ${form.sanctionApplied === opt.key ? COLORS.navy : COLORS.rule}`,
                     background: form.sanctionApplied === opt.key ? COLORS.navy : "transparent",
-                    color: form.sanctionApplied === opt.key ? "#fff" : COLORS.ink,
+                    color: form.sanctionApplied === opt.key ? COLORS.onAccent : COLORS.ink,
                     fontSize: 12.5,
                     fontWeight: 600,
                     cursor: "pointer",
@@ -3408,7 +3427,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
                     borderRadius: 4,
                     border: `1.5px solid ${sanction.sanctionApplied === opt.key ? COLORS.navy : COLORS.rule}`,
                     background: sanction.sanctionApplied === opt.key ? COLORS.navy : "transparent",
-                    color: sanction.sanctionApplied === opt.key ? "#fff" : COLORS.ink,
+                    color: sanction.sanctionApplied === opt.key ? COLORS.onAccent : COLORS.ink,
                     fontSize: 12.5,
                     fontWeight: 600,
                     cursor: "pointer",
@@ -3661,7 +3680,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
             alignItems: "center",
             gap: 8,
             background: COLORS.navy,
-            color: "#fff",
+            color: COLORS.onAccent,
             border: "none",
             borderRadius: 4,
             padding: "10px 16px",
@@ -5162,20 +5181,33 @@ function InscritosPage({
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "inline-flex",
+          gap: 3,
+          background: COLORS.segTrack,
+          border: "none",
+          borderRadius: 9,
+          padding: 2,
+          marginBottom: 20,
+          flexWrap: "wrap",
+        }}
+      >
         {SECOES_GESTAO.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setView(key)}
+            className="pill"
             style={{
-              background: "transparent",
+              background: view === key ? COLORS.paperRaised : "transparent",
               border: "none",
-              padding: "9px 14px",
+              borderRadius: 7,
+              padding: "7px 14px",
               fontSize: 13.5,
-              fontWeight: 600,
-              color: view === key ? COLORS.navy : COLORS.slate,
+              fontWeight: view === key ? 600 : 500,
+              color: view === key ? COLORS.ink : COLORS.ink2,
               cursor: "pointer",
-              borderBottom: `2.5px solid ${view === key ? COLORS.navy : "transparent"}`,
+              boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
             }}
           >
             {label}
@@ -5474,7 +5506,7 @@ function InscritosRegisto({
                     borderRadius: 20,
                     border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
                     background: on ? COLORS.navy : "transparent",
-                    color: on ? "#fff" : COLORS.slate,
+                    color: on ? COLORS.onAccent : COLORS.slate,
                     fontSize: 12,
                     fontWeight: 600,
                     cursor: "pointer",
@@ -6698,7 +6730,7 @@ export default function App() {
 
         /* Fundo escurecido dos modais. */
         @keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
-        .veil { animation: veilIn 200ms ease both; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+        .veil { animation: veilIn 200ms ease both; }
 
         /* Caixa centrada: sobe e cresce ligeiramente, como uma folha do iOS. */
         @keyframes sheetIn { from { opacity: 0; transform: translateY(14px) scale(0.975); } to { opacity: 1; transform: none; } }
@@ -6724,6 +6756,48 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: ${COLORS.rule}; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
         ::-webkit-scrollbar-thumb:hover { background: ${COLORS.slate}; background-clip: content-box; }
+
+        /* ================= molas e toques ================= */
+        /* iOS clássico: saída suave, sem ressalto. */
+        :root { --spring: cubic-bezier(0.25, 0.1, 0.25, 1); }
+
+        .press { transition: transform 180ms var(--spring), background 140ms ease, box-shadow 180ms ease; }
+        .press:active { opacity: 0.6; }
+
+        /* Cartões levantam-se ligeiramente ao passar o rato. */
+        .liftable { transition: background 180ms ease; }
+        .liftable:hover { background: ${COLORS.paperSunken}; }
+
+        /* Pastilha do separador ativo, com mola ao mudar. */
+        .pill { transition: background 200ms var(--ease), color 160ms ease, transform 220ms var(--spring); }
+        .pill:active { opacity: 0.75; }
+
+        /* ================= entrada escalonada ================= */
+        /* Os blocos de cada página entram em cascata, com poucos milissegundos
+           de diferença. Dá a sensação de fluidez sem atrasar a leitura. */
+        @keyframes riseIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+        .pageIn > * { animation: riseIn 300ms var(--ease) both; }
+        .pageIn > *:nth-child(1) { animation-delay: 0ms; }
+        .pageIn > *:nth-child(2) { animation-delay: 45ms; }
+        .pageIn > *:nth-child(3) { animation-delay: 90ms; }
+        .pageIn > *:nth-child(4) { animation-delay: 130ms; }
+        .pageIn > *:nth-child(5) { animation-delay: 165ms; }
+        .pageIn > *:nth-child(n+6) { animation-delay: 195ms; }
+
+        /* ================= foco acessível ================= */
+        :focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 2px ${COLORS.paper}, 0 0 0 4px ${COLORS.navy}55;
+          border-radius: 8px;
+        }
+
+        /* ================= respeito pelas preferências ================= */
+        @media (prefers-reduced-motion: reduce) {
+          .press, .liftable, .pill { transition: none; }
+          .press:active, .pill:active { opacity: 1; }
+          .pageIn > * { animation: none; }
+        }
+        /* Quem pede mais contraste não deve ficar com chrome translúcido. */
       `}</style>
 
       {/* ---------- barra lateral ---------- */}
@@ -6739,6 +6813,7 @@ export default function App() {
           top: 0,
           height: "100vh",
           padding: "14px 0",
+          zIndex: 6,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px 16px" }}>
@@ -6770,7 +6845,7 @@ export default function App() {
               return (
                 <button
                   key={key}
-                  className="navItem"
+                  className="navItem press"
                   onClick={() => setPage(key)}
                   style={{
                     display: "flex",
@@ -6802,7 +6877,7 @@ export default function App() {
 
         <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
         <button
-          className="navItem"
+          className="navItem press"
           onClick={() => setShowManage(true)}
           style={{
             display: "flex",
@@ -6827,25 +6902,26 @@ export default function App() {
 
         {/* alternador de tema */}
         <div style={{ marginTop: "auto", padding: "12px 16px 0", borderTop: `1px solid ${COLORS.rule}` }}>
-          <div style={{ display: "flex", background: COLORS.paperSunken, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: 2, gap: 2 }}>
+          <div style={{ display: "flex", background: COLORS.segTrack, borderRadius: 9, padding: 2, gap: 2 }}>
             {[
               ["light", "Claro"],
               ["dark", "Escuro"],
             ].map(([t, l]) => (
               <button
                 key={t}
+                className="press"
                 onClick={() => setTema(t)}
                 style={{
                   flex: 1,
                   background: tema === t ? COLORS.paperRaised : "transparent",
                   border: "none",
-                  borderRadius: 6,
-                  padding: 5,
+                  borderRadius: 7,
+                  padding: "5px 4px",
                   fontSize: 11.5,
-                  fontWeight: 600,
-                  color: tema === t ? COLORS.ink : COLORS.slate,
+                  fontWeight: tema === t ? 600 : 500,
+                  color: tema === t ? COLORS.ink : COLORS.ink2,
                   cursor: "pointer",
-                  boxShadow: tema === t ? COLORS.shadow : "none",
+                  boxShadow: tema === t ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
                 }}
               >
                 {l}
@@ -6860,8 +6936,8 @@ export default function App() {
         <div
           style={{
             height: 52,
-            borderBottom: `1px solid ${COLORS.rule}`,
             background: COLORS.paperRaised,
+            borderBottom: `1px solid ${COLORS.rule}`,
             display: "flex",
             alignItems: "center",
             gap: 14,
@@ -6877,6 +6953,7 @@ export default function App() {
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
             {page === "registo" && reclamacoesView === "registo" && (
               <button
+                className="press"
                 onClick={() => {
                   setEditing(null);
                   setShowForm(true);
@@ -6960,9 +7037,9 @@ export default function App() {
             gap: 3,
             padding: 3,
             marginBottom: 20,
-            background: "#EFEDE6",
-            border: `1px solid ${COLORS.rule}`,
-            borderRadius: 6,
+            background: COLORS.segTrack,
+            border: "none",
+            borderRadius: 9,
           }}
         >
           {[
@@ -6971,6 +7048,7 @@ export default function App() {
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
+              className="pill"
               onClick={() => setReclamacoesView(key)}
               style={{
                 display: "flex",
@@ -6978,12 +7056,13 @@ export default function App() {
                 gap: 7,
                 padding: "8px 14px",
                 border: "none",
-                borderRadius: 4,
-                background: reclamacoesView === key ? COLORS.navy : "transparent",
-                color: reclamacoesView === key ? "#fff" : COLORS.slate,
-                fontWeight: 600,
+                borderRadius: 7,
+                background: reclamacoesView === key ? COLORS.paperRaised : "transparent",
+                color: reclamacoesView === key ? COLORS.ink : COLORS.ink2,
+                fontWeight: reclamacoesView === key ? 600 : 500,
                 fontSize: 13,
                 cursor: "pointer",
+                boxShadow: reclamacoesView === key ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
               }}
             >
               <Icon size={14} />
@@ -7078,7 +7157,7 @@ export default function App() {
           <div style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 6, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 880 }}>
               <thead>
-                <tr style={{ background: "#EFEDE6", textAlign: "left" }}>
+                <tr style={{ background: COLORS.paperSunken, textAlign: "left" }}>
                   {["Nº", "Receção", "Época", "Canal", "Gravidade", "Categoria", "Escola", "Tema", "Reclamante", "Prazo", "Estado", ""].map((h) => (
                     <th
                       key={h}
