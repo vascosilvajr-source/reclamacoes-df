@@ -20,27 +20,69 @@ import {
 } from "recharts";
 
 // ---------- Tokens ----------
-const COLORS = {
-  ink: "#101826",
-  paper: "#F6F5F1",
+// ---------- Sistema de cores: tema claro e escuro ----------
+// COLORS mantém o mesmo nome e chaves de sempre, mas os valores passam a ser
+// substituídos conforme o tema. Como todos os componentes leem COLORS no
+// momento em que renderizam, trocar o tema basta para tudo acompanhar.
+const TEMA_CLARO = {
+  ink: "#0E1420",
+  ink2: "#48536B",
+  paper: "#FBFBFC",
   paperRaised: "#FFFFFF",
-  rule: "#D8D4C8",
-  navy: "#0F2A4A",
-  navySoft: "#1E3E63",
-  slate: "#5B6472",
-  ok: "#1F7A4D",
-  okBg: "#E6F2EA",
-  warn: "#9A6B0B",
-  warnBg: "#FBEFD9",
-  danger: "#A32E2E",
-  dangerBg: "#F7E5E5",
-  done: "#5B6472",
-  doneBg: "#E9E8E3",
-  progress: "#2B5C8A",
-  progressBg: "#E4EEF6",
+  paperSunken: "#F7F8FA",
+  rule: "#E6E8EC",
+  ruleSoft: "#F0F1F4",
+  navy: "#0A52C7",
+  navySoft: "#0A52C7",
+  navyWash: "#EAF1FD",
+  slate: "#8A93A5",
+  ok: "#0C7A52",
+  okBg: "#E6F4EE",
+  warn: "#9A6A00",
+  warnBg: "#FBF2DE",
+  danger: "#C0303F",
+  dangerBg: "#FCEAEC",
+  done: "#8A93A5",
+  doneBg: "#F0F1F4",
+  progress: "#0A52C7",
+  progressBg: "#EAF1FD",
   purple: "#6B4C9A",
-  purpleBg: "#EFE7F5",
+  purpleBg: "#F1EBF8",
+  sideBg: "#FFFFFF",
+  onAccent: "#FFFFFF",
+  shadow: "0 1px 2px rgba(14,20,32,0.05)",
 };
+
+const TEMA_ESCURO = {
+  ink: "#E7ECF3",
+  ink2: "#A7B2C2",
+  paper: "#0B0F16",
+  paperRaised: "#12181F",
+  paperSunken: "#161D26",
+  rule: "#232C38",
+  ruleSoft: "#1B232D",
+  navy: "#528CFF",
+  navySoft: "#8AB4FF",
+  navyWash: "#15243C",
+  slate: "#6F7C8E",
+  ok: "#2BBE87",
+  okBg: "#10281F",
+  warn: "#E0A63A",
+  warnBg: "#2A2113",
+  danger: "#F2697C",
+  dangerBg: "#2E1720",
+  done: "#6F7C8E",
+  doneBg: "#1B232D",
+  progress: "#528CFF",
+  progressBg: "#15243C",
+  purple: "#A98AD8",
+  purpleBg: "#221B33",
+  sideBg: "#0D1219",
+  onAccent: "#08131F",
+  shadow: "0 1px 2px rgba(0,0,0,0.5)",
+};
+
+const COLORS = { ...TEMA_CLARO };
 
 const APP_NAME = "Auditoria e Gestão de Qualidade DF";
 
@@ -367,7 +409,7 @@ function Stamp({ statusKey, onClick }) {
         border: `1.5px solid ${meta.color}`,
         color: meta.color,
         background: meta.bg,
-        fontFamily: "'IBM Plex Mono', monospace",
+        fontVariantNumeric: "tabular-nums",
         fontSize: 11,
         letterSpacing: "0.06em",
         textTransform: "uppercase",
@@ -866,10 +908,10 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
           <div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
+            <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
               ENTRADA Nº {String(initial ? initial.entryNumber : nextNumber).padStart(4, "0")}
             </div>
-            <h2 style={{ margin: "4px 0 0", fontFamily: "'Fraunces', serif", fontSize: 22, color: COLORS.navy }}>
+            <h2 style={{ margin: "4px 0 0", fontSize: 22, color: COLORS.navy }}>
               {initial ? "Editar reclamação" : "Nova reclamação"}
             </h2>
           </div>
@@ -926,7 +968,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
           Preenchida a partir da data de receção. Muda-a se estiveres a registar uma reclamação de outra época.
         </div>
         {preview && (
-          <div style={{ margin: "8px 0 4px", fontSize: 12.5, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+          <div style={{ margin: "8px 0 4px", fontSize: 12.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
             Prazo (10 dias úteis) → <strong style={{ color: COLORS.navy }}>{fmt(preview)}</strong>
           </div>
         )}
@@ -1075,87 +1117,113 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
 }
 
 
-const labelStyle = {
-  display: "block",
-  fontSize: 11.5,
-  fontWeight: 600,
-  color: COLORS.slate,
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-  marginBottom: 6,
-  marginTop: 14,
-};
+// ---------- Estilos partilhados ----------
+// São objetos vazios preenchidos por aplicarTema(), para que a troca de tema
+// atualize todos os componentes sem ter de passar cores por props.
+// Declarados com let porque aplicarTema() os substitui por objetos novos: o
+// React congela os objetos de estilo que recebe, por isso não podem ser mutados.
+let labelStyle = {};
+let inputStyle = {};
+let primaryBtnStyle = {};
+let secondaryBtnStyle = {};
+let iconBtnStyle = {};
+let linkBtnStyle = {};
+let panelStyle = {};
+let panelTitle = {};
 
-const inputStyle = {
-  width: "100%",
-  padding: "9px 11px",
-  border: `1.5px solid ${COLORS.rule}`,
-  borderRadius: 4,
-  fontSize: 14,
-  color: COLORS.ink,
-  background: "#fff",
-  boxSizing: "border-box",
-};
+function aplicarTema(tema) {
+  Object.assign(COLORS, tema === "dark" ? TEMA_ESCURO : TEMA_CLARO);
 
-const primaryBtnStyle = {
-  flex: 1,
-  padding: "11px",
-  borderRadius: 4,
-  border: "none",
-  background: COLORS.navy,
-  color: "#fff",
-  fontWeight: 600,
-  fontSize: 14,
-  cursor: "pointer",
-};
+  labelStyle = {
+    display: "block",
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: COLORS.ink2,
+    letterSpacing: 0,
+    textTransform: "none",
+    marginBottom: 5,
+    marginTop: 14,
+  };
 
-const secondaryBtnStyle = {
-  flex: 1,
-  padding: "11px",
-  borderRadius: 4,
-  border: `1.5px solid ${COLORS.rule}`,
-  background: "transparent",
-  color: COLORS.ink,
-  fontWeight: 600,
-  fontSize: 14,
-  cursor: "pointer",
-};
+  inputStyle = {
+    width: "100%",
+    padding: "8px 11px",
+    border: `1px solid ${COLORS.rule}`,
+    borderRadius: 8,
+    fontSize: 13.5,
+    color: COLORS.ink,
+    background: COLORS.paperRaised,
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+  };
 
-const iconBtnStyle = {
-  border: "none",
-  background: "transparent",
-  color: COLORS.slate,
-  cursor: "pointer",
-  padding: 4,
-};
+  primaryBtnStyle = {
+    flex: 1,
+    padding: "9px 14px",
+    borderRadius: 8,
+    border: "none",
+    background: COLORS.navy,
+    color: COLORS.onAccent,
+    fontWeight: 600,
+    fontSize: 13.5,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
 
-const linkBtnStyle = {
-  border: "none",
-  background: "transparent",
-  color: COLORS.navySoft,
-  cursor: "pointer",
-  padding: 0,
-  fontSize: 11.5,
-  fontWeight: 600,
-  textDecoration: "underline",
-  marginTop: 14,
-};
+  secondaryBtnStyle = {
+    flex: 1,
+    padding: "9px 14px",
+    borderRadius: 8,
+    border: `1px solid ${COLORS.rule}`,
+    background: COLORS.paperRaised,
+    color: COLORS.ink,
+    fontWeight: 600,
+    fontSize: 13.5,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
 
-const panelStyle = {
-  background: COLORS.paperRaised,
-  border: `1px solid ${COLORS.rule}`,
-  borderRadius: 5,
-  padding: "18px 20px",
-};
+  iconBtnStyle = {
+    border: "none",
+    background: "transparent",
+    color: COLORS.slate,
+    cursor: "pointer",
+    padding: 4,
+    fontFamily: "inherit",
+  };
 
-const panelTitle = {
-  fontSize: 11,
-  fontWeight: 600,
-  color: COLORS.slate,
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  marginBottom: 14,
-};
+  linkBtnStyle = {
+    border: "none",
+    background: "transparent",
+    color: COLORS.navySoft,
+    cursor: "pointer",
+    padding: 0,
+    fontSize: 12,
+    fontWeight: 600,
+    textDecoration: "none",
+    marginTop: 14,
+    fontFamily: "inherit",
+  };
+
+  panelStyle = {
+    background: COLORS.paperRaised,
+    border: `1px solid ${COLORS.rule}`,
+    borderRadius: 10,
+    padding: "16px 18px",
+    boxShadow: COLORS.shadow,
+  };
+
+  panelTitle = {
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: COLORS.ink,
+    textTransform: "none",
+    letterSpacing: "-0.01em",
+    marginBottom: 14,
+  };
+}
+
+aplicarTema("light");
 
 // ---------- Stat card ----------
 function StatCard({ label, value, color, subtitle }) {
@@ -1164,15 +1232,28 @@ function StatCard({ label, value, color, subtitle }) {
       style={{
         background: COLORS.paperRaised,
         border: `1px solid ${COLORS.rule}`,
-        borderRadius: 5,
-        padding: "16px 18px",
+        borderRadius: 10,
+        padding: "14px 16px",
         flex: 1,
-        minWidth: 130,
+        minWidth: 140,
+        boxShadow: COLORS.shadow,
       }}
     >
-      <div style={{ fontSize: 28, fontFamily: "'Fraunces', serif", color: color || COLORS.navy, lineHeight: 1 }}>{value}</div>
-      <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      {subtitle && <div style={{ fontSize: 10.5, color: COLORS.slate, marginTop: 3, textTransform: "none", letterSpacing: 0 }}>{subtitle}</div>}
+      <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500 }}>{label}</div>
+      <div
+        style={{
+          fontSize: 24,
+          fontWeight: 600,
+          letterSpacing: "-0.03em",
+          color: color || COLORS.ink,
+          lineHeight: 1,
+          marginTop: 7,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      {subtitle && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>{subtitle}</div>}
     </div>
   );
 }
@@ -1250,7 +1331,7 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>Escolas e categorias</h2>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Escolas e categorias</h2>
           <button onClick={onClose} style={iconBtnStyle}>
             <X size={18} />
           </button>
@@ -1491,14 +1572,14 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
+          <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
             ENTRADA Nº {String(entry.entryNumber).padStart(4, "0")}
           </div>
           <button onClick={onClose} style={iconBtnStyle}>
             <X size={18} />
           </button>
         </div>
-        <h2 style={{ margin: "0 0 12px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{entry.complainant}</h2>
+        <h2 style={{ margin: "0 0 12px", fontSize: 20, color: COLORS.navy }}>{entry.complainant}</h2>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <Stamp statusKey={entry.derivedStatus} />
@@ -1673,7 +1754,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {notes.map((n) => (
               <div key={n.id} style={{ borderLeft: `2.5px solid ${COLORS.navySoft}`, paddingLeft: 12 }}>
-                <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", color: COLORS.slate, marginBottom: 3 }}>
+                <div style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", color: COLORS.slate, marginBottom: 3 }}>
                   {new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(
                     new Date(n.date)
                   )}
@@ -2111,7 +2192,7 @@ function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>Nova auditoria</h2>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Nova auditoria</h2>
           <button onClick={onCancel} style={iconBtnStyle}>
             <X size={18} />
           </button>
@@ -2200,7 +2281,7 @@ function AuditDetail({
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
+          <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
             {fmt(new Date(audit.date + "T00:00:00"))}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
@@ -2212,7 +2293,7 @@ function AuditDetail({
             </button>
           </div>
         </div>
-        <h2 style={{ margin: "0 0 4px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{audit.school}</h2>
+        <h2 style={{ margin: "0 0 4px", fontSize: 20, color: COLORS.navy }}>{audit.school}</h2>
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 18 }}>
           {audit.findings.length} constatações · {resolvidas} resolvidas
         </div>
@@ -2907,7 +2988,10 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
   return (
     <div>
       <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${COLORS.rule}`, marginBottom: 22, flexWrap: "wrap" }}>
-        {SECOES_GESTAO.map(([key, label]) => (
+        {[
+          ["registo", "Registo"],
+          ["analise", "Análise"],
+        ].map(([key, label]) => (
           <button
             key={key}
             onClick={() => setView(key)}
@@ -2980,7 +3064,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
                   >
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{a.school}</div>
-                      <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+                      <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
                         {fmt(new Date(a.date + "T00:00:00"))} · {fs.length} constatações
                       </div>
                     </div>
@@ -3034,7 +3118,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>Nova ocorrência</h2>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Nova ocorrência</h2>
           <button onClick={onCancel} style={iconBtnStyle}>
             <X size={18} />
           </button>
@@ -3259,7 +3343,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
+          <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
             {fmt(new Date(sanction.date + "T00:00:00"))}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
@@ -3271,7 +3355,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
             </button>
           </div>
         </div>
-        <h2 style={{ margin: "6px 0 6px", fontFamily: "'Fraunces', serif", fontSize: 20, color: COLORS.navy }}>{sanction.personName}</h2>
+        <h2 style={{ margin: "6px 0 6px", fontSize: 20, color: COLORS.navy }}>{sanction.personName}</h2>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
           <Tag label={PERSON_TYPE_META[sanction.personType].label} color={COLORS.navy} bg={COLORS.rule} />
           <Tag label={motivoMeta.label} color={motivoMeta.color} bg={motivoMeta.bg} />
@@ -3431,7 +3515,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
             )}
 
             {sanction.decisaoDate && (
-              <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
+              <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 10, fontVariantNumeric: "tabular-nums" }}>
                 Decisão registada em {fmt(new Date(sanction.decisaoDate))}
               </div>
             )}
@@ -3459,7 +3543,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {notes.map((n) => (
               <div key={n.id} style={{ borderLeft: `2.5px solid ${COLORS.navySoft}`, paddingLeft: 12 }}>
-                <div style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", color: COLORS.slate, marginBottom: 3 }}>
+                <div style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", color: COLORS.slate, marginBottom: 3 }}>
                   {new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(
                     new Date(n.date)
                   )}
@@ -3517,7 +3601,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
     >
       <div>
         <div style={{ fontWeight: 600, fontSize: 14 }}>{s.personName}</div>
-        <div style={{ fontSize: 12, color: COLORS.slate, fontFamily: "'IBM Plex Mono', monospace" }}>
+        <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
           {fmt(new Date(s.date + "T00:00:00"))}
           {s.school ? ` · ${s.school}` : ""}
           {s.relatedComplaintId ? " · associada a reclamação" : ""}
@@ -3638,7 +3722,7 @@ function BarraLotacao({ pct, largura }) {
       <div style={{ height: 7, width: largura || 80, background: COLORS.doneBg, borderRadius: 4, overflow: "hidden" }}>
         <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: corLotacao(pct) }} />
       </div>
-      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: COLORS.slate }}>{pct}%</span>
+      <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate }}>{pct}%</span>
     </div>
   );
 }
@@ -3792,7 +3876,7 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
                 <div style={{ height: 7, width: 110, background: COLORS.doneBg, borderRadius: 4, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${(x.n / porMotivo[0].n) * 100}%`, background: COLORS.danger }} />
                 </div>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, width: 24, textAlign: "right" }}>{x.n}</div>
+                <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, width: 24, textAlign: "right" }}>{x.n}</div>
               </div>
             ))}
           </div>
@@ -3810,7 +3894,7 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
                 <tbody>
                   {lista.map((d) => (
                     <tr key={d.id}>
-                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{d.data}</td>
+                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{d.data}</td>
                       <td style={tdStyle}>{d.escola}</td>
                       <td style={tdStyle}>{d.turma}</td>
                       <td style={tdStyle}>{escalaoDaTurma(d.turma, niveis)}</td>
@@ -4021,7 +4105,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
                   const meta = XP_RESULTADO_META[x.resultado] || XP_RESULTADO_META.pendente;
                   return (
                     <tr key={x.id}>
-                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{x.data}</td>
+                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{x.data}</td>
                       <td style={tdStyle}>{x.escola}</td>
                       <td style={tdStyle}>{x.turma}</td>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{x.n}</td>
@@ -4222,7 +4306,7 @@ function SecaoDesvinculacoes({ escolas, desvinculacoes, onSave, onUpdate, onRemo
               <tbody>
                 {lista.map((v) => (
                   <tr key={v.id}>
-                    <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{v.data}</td>
+                    <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{v.data}</td>
                     <td style={tdStyle}>{v.escola}</td>
                     <td style={{ ...tdStyle, fontSize: 12.5 }}>{v.quemPediu}</td>
                     <td style={tdStyle}>{v.clubeDestino || "—"}</td>
@@ -4407,7 +4491,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, onSave, 
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: COLORS.navy }}>{b.hora}</span>
+                                  <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 11.5, color: COLORS.navy }}>{b.hora}</span>
                                   <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>
                                     <X size={11} />
                                   </button>
@@ -4630,7 +4714,7 @@ function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
                 <tbody>
                   {lista.map((e) => (
                     <tr key={e.id}>
-                      <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{e.data}</td>
+                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{e.data}</td>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{e.nome}</td>
                       <td style={tdStyle}>{e.escola}</td>
                       <td style={tdStyle}>{e.nTurmas || 0}</td>
@@ -4926,7 +5010,7 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
                       const m = mediaRegisto(s);
                       return (
                         <tr key={s.id}>
-                          <td style={{ ...tdStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{s.periodo}</td>
+                          <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{s.periodo}</td>
                           <td style={tdStyle}>{s.escola}</td>
                           <td style={{ ...tdStyle, fontSize: 12.5 }}>{s.escalao}</td>
                           <td style={tdStyle}>{s.respostas}</td>
@@ -5436,7 +5520,7 @@ function InscritosRegisto({
             <tbody>
               {registosSemana.map((r) => (
                 <tr key={r.escola + r.semana}>
-                  <td style={{ ...td, fontFamily: "'IBM Plex Mono', monospace" }}>{semanaLabel(r.semana)}</td>
+                  <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{semanaLabel(r.semana)}</td>
                   <td style={td}>{r.escola}</td>
                   <td style={{ ...td, fontWeight: 600 }}>{r.total}</td>
                   <td style={td}>{r.novas || 0}</td>
@@ -5523,7 +5607,7 @@ function InscritosRegisto({
                   <tr key={r.escola + r.turma + r.ano}>
                     <td style={td}>{r.escola}</td>
                     <td style={td}>{r.turma}</td>
-                    <td style={{ ...td, fontFamily: "'IBM Plex Mono', monospace" }}>{r.ano}</td>
+                    <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{r.ano}</td>
                     <td style={td}>{r.m}</td>
                     <td style={td}>{r.f}</td>
                     <td style={{ ...td, fontWeight: 600 }}>{r.m + r.f}</td>
@@ -5861,7 +5945,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                   }}
                 >
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{e}</div>
-                  <div style={{ fontSize: 20, fontFamily: "'Fraunces', serif", color: cls ? cls.color : COLORS.slate, margin: "3px 0" }}>
+                  <div style={{ fontSize: 20, color: cls ? cls.color : COLORS.slate, margin: "3px 0" }}>
                     {v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`}
                   </div>
                   <div style={{ fontSize: 11.5, color: cls ? cls.color : COLORS.slate, fontWeight: 600 }}>
@@ -6117,6 +6201,24 @@ export default function App() {
   const [showSanctionForm, setShowSanctionForm] = useState(false);
   const [viewingSanction, setViewingSanction] = useState(null);
   const [page, setPage] = useState("registo");
+  // Tema claro/escuro. Fica guardado no browser para não se perder ao recarregar.
+  const [tema, setTemaState] = useState(() => {
+    try {
+      return window.localStorage.getItem("df-tema") === "dark" ? "dark" : "light";
+    } catch (e) {
+      return "light";
+    }
+  });
+  const setTema = (t) => {
+    setTemaState(t);
+    try {
+      window.localStorage.setItem("df-tema", t);
+    } catch (e) {
+      // sem localStorage disponível: o tema só vale nesta sessão
+    }
+  };
+  // Aplica as cores antes de qualquer componente renderizar neste ciclo.
+  aplicarTema(tema);
   const [reclamacoesView, setReclamacoesView] = useState("registo");
   const [editing, setEditing] = useState(null);
   const [filterCanal, setFilterCanal] = useState("todos");
@@ -6522,143 +6624,225 @@ export default function App() {
     persist(entries.filter((e) => e.id !== id));
   };
 
+  const titulo =
+    page === "auditorias"
+      ? "Auditorias"
+      : page === "sancoes"
+      ? "Sanções"
+      : page === "inscritos"
+      ? "Gestão de inscritos"
+      : "Reclamações";
+
+  const secoes = [
+    {
+      grupo: "Gestão",
+      itens: [
+        { key: "registo", label: "Reclamações", icon: LayoutGrid, contador: withStatus.filter((e) => e.derivedStatus !== "concluido").length },
+        { key: "auditorias", label: "Auditorias", icon: ClipboardList, contador: audits.length || null },
+        { key: "sancoes", label: "Sanções", icon: Scale, contador: sanctions.length || null },
+        { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
+      ],
+    },
+  ];
+
   return (
     <div
       style={{
-        fontFamily: "'Source Sans 3', sans-serif",
+        fontFamily: "'Inter', system-ui, sans-serif",
         background: COLORS.paper,
         minHeight: "100vh",
         color: COLORS.ink,
-        padding: "0",
+        display: "flex",
+        WebkitFontSmoothing: "antialiased",
       }}
     >
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
         .spin { animation: spin 0.9s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .navItem:hover { background: ${COLORS.paperSunken}; }
+        .rowHover:hover { background: ${COLORS.paperSunken}; }
+        select, input, textarea, button { font-family: inherit; }
+        ::placeholder { color: ${COLORS.slate}; }
       `}</style>
 
-      <header
-        style={{
-          borderBottom: `2px solid ${COLORS.navy}`,
-          background: COLORS.navy,
-          color: "#fff",
-          padding: "22px 28px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.12em", opacity: 0.7 }}>
-            {APP_NAME.toUpperCase()}
-          </div>
-          <h1 style={{ margin: "2px 0 0", fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 26 }}>
-            {page === "auditorias"
-              ? "Auditorias"
-              : page === "sancoes"
-              ? "Sanções"
-              : page === "inscritos"
-              ? "Inscritos"
-              : reclamacoesView === "analise"
-              ? "Reclamações — Análise"
-              : "Reclamações — Registo"}
-          </h1>
-        </div>
-        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-          <button
-            onClick={() => setShowManage(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "transparent",
-              color: "#fff",
-              border: "1.5px solid rgba(255,255,255,0.5)",
-              borderRadius: 4,
-              padding: "10px 14px",
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: "pointer",
-            }}
-          >
-            Escolas e categorias
-          </button>
-          {page === "registo" && reclamacoesView === "registo" && (
-            <button
-              onClick={() => {
-                setEditing(null);
-                setShowForm(true);
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "#fff",
-                color: COLORS.navy,
-                border: "none",
-                borderRadius: 4,
-                padding: "10px 16px",
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: "pointer",
-              }}
-            >
-              <Plus size={16} /> Nova reclamação
-            </button>
-          )}
-          <img
-            src={LOGO_BRANCO}
-            alt="Dragon Force"
-            style={{ height: 46, width: "auto", opacity: 0.95, marginLeft: 4 }}
-          />
-        </div>
-      </header>
-
+      {/* ---------- barra lateral ---------- */}
       <div
         style={{
+          width: 248,
+          flex: "none",
+          background: COLORS.sideBg,
+          borderRight: `1px solid ${COLORS.rule}`,
           display: "flex",
-          gap: 4,
-          padding: "14px 28px 0",
-          maxWidth: 1100,
-          margin: "0 auto",
-          borderBottom: `1px solid ${COLORS.rule}`,
+          flexDirection: "column",
+          position: "sticky",
+          top: 0,
+          height: "100vh",
+          padding: "14px 0",
         }}
       >
-        {[
-          { key: "registo", label: "Reclamações", icon: LayoutGrid },
-          { key: "auditorias", label: "Auditorias", icon: ClipboardList },
-          { key: "sancoes", label: "Sanções", icon: Scale },
-          { key: "inscritos", label: "Inscritos", icon: Users },
-        ].map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            onClick={() => setPage(key)}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px 16px" }}>
+          <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "10px 16px",
-              border: "none",
-              borderBottom: `2.5px solid ${page === key ? COLORS.navy : "transparent"}`,
-              background: "transparent",
-              color: page === key ? COLORS.navy : COLORS.slate,
-              fontWeight: 600,
-              fontSize: 13.5,
-              cursor: "pointer",
-              marginBottom: -1,
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: COLORS.navy,
+              display: "grid",
+              placeItems: "center",
+              flex: "none",
+              overflow: "hidden",
             }}
           >
-            <Icon size={15} />
-            {label}
-          </button>
+            <img src={LOGO_BRANCO} alt="Dragon Force" style={{ height: 24, width: "auto" }} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: 1.25 }}>Qualidade</div>
+            <div style={{ fontSize: 11.5, color: COLORS.slate }}>Dragon Force</div>
+          </div>
+        </div>
+
+        {secoes.map((sec) => (
+          <div key={sec.grupo}>
+            <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>{sec.grupo}</div>
+            {sec.itens.map(({ key, label, icon: Icon, contador }) => {
+              const ativo = page === key;
+              return (
+                <button
+                  key={key}
+                  className="navItem"
+                  onClick={() => setPage(key)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 9,
+                    width: "calc(100% - 16px)",
+                    margin: "1px 8px",
+                    padding: "8px 9px",
+                    borderRadius: 7,
+                    border: "none",
+                    background: ativo ? COLORS.navyWash : "transparent",
+                    color: ativo ? COLORS.navySoft : COLORS.ink2,
+                    fontWeight: ativo ? 600 : 450,
+                    fontSize: 13.5,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <Icon size={15} />
+                  <span style={{ flex: 1 }}>{label}</span>
+                  {contador ? (
+                    <span style={{ fontSize: 11.5, fontWeight: 500, color: ativo ? COLORS.navySoft : COLORS.slate }}>{contador}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         ))}
+
+        <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
+        <button
+          className="navItem"
+          onClick={() => setShowManage(true)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            width: "calc(100% - 16px)",
+            margin: "1px 8px",
+            padding: "8px 9px",
+            borderRadius: 7,
+            border: "none",
+            background: "transparent",
+            color: COLORS.ink2,
+            fontWeight: 450,
+            fontSize: 13.5,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <ShieldAlert size={15} />
+          <span>Escolas e listas</span>
+        </button>
+
+        {/* alternador de tema */}
+        <div style={{ marginTop: "auto", padding: "12px 16px 0", borderTop: `1px solid ${COLORS.rule}` }}>
+          <div style={{ display: "flex", background: COLORS.paperSunken, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: 2, gap: 2 }}>
+            {[
+              ["light", "Claro"],
+              ["dark", "Escuro"],
+            ].map(([t, l]) => (
+              <button
+                key={t}
+                onClick={() => setTema(t)}
+                style={{
+                  flex: 1,
+                  background: tema === t ? COLORS.paperRaised : "transparent",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: 5,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: tema === t ? COLORS.ink : COLORS.slate,
+                  cursor: "pointer",
+                  boxShadow: tema === t ? COLORS.shadow : "none",
+                }}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div style={{ padding: "22px 28px 60px", maxWidth: 1100, margin: "0 auto" }}>
+      {/* ---------- conteúdo ---------- */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <div
+          style={{
+            height: 52,
+            borderBottom: `1px solid ${COLORS.rule}`,
+            background: COLORS.paperRaised,
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            padding: "0 22px",
+            position: "sticky",
+            top: 0,
+            zIndex: 5,
+          }}
+        >
+          <div style={{ fontSize: 13.5, color: COLORS.slate }}>
+            Gestão · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {page === "registo" && reclamacoesView === "registo" && (
+              <button
+                onClick={() => {
+                  setEditing(null);
+                  setShowForm(true);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: COLORS.navy,
+                  color: COLORS.onAccent,
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                <Plus size={15} /> Nova reclamação
+              </button>
+            )}
+          </div>
+        </div>
+
+      <div style={{ padding: "20px 22px 56px", maxWidth: 1360 }}>
         {page === "auditorias" ? (
           <AuditsPage
             audits={audits}
@@ -6857,11 +7041,11 @@ export default function App() {
               <tbody>
                 {filtered.map((e) => (
                   <tr key={e.id} style={{ borderBottom: `1px solid ${COLORS.rule}` }}>
-                    <td style={{ padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", color: COLORS.slate }}>
+                    <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: COLORS.slate }}>
                       {String(e.entryNumber).padStart(4, "0")}
                     </td>
                     <td style={{ padding: "10px 14px" }}>{fmt(new Date(e.receivedDate + "T00:00:00"))}</td>
-                    <td style={{ padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", color: COLORS.slate }}>{e.epoca || "—"}</td>
+                    <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: COLORS.slate }}>{e.epoca || "—"}</td>
                     <td style={{ padding: "10px 14px" }}>
                       {e.canal && CANAL_META[e.canal] && <Tag label={CANAL_META[e.canal].label} color={CANAL_META[e.canal].color} bg={CANAL_META[e.canal].bg} />}
                     </td>
@@ -6874,7 +7058,7 @@ export default function App() {
                     <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.school || "—"}</td>
                     <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.tema || "—"}</td>
                     <td style={{ padding: "10px 14px", fontWeight: 600 }}>{e.complainant}</td>
-                    <td style={{ padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace" }}>{fmt(new Date(e.deadline))}</td>
+                    <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums" }}>{fmt(new Date(e.deadline))}</td>
                     <td style={{ padding: "10px 14px" }}>
                       <Stamp statusKey={e.derivedStatus} onClick={() => setViewingDetail(e)} />
                     </td>
@@ -6921,6 +7105,7 @@ export default function App() {
         )}
         </>
         )}
+        </div>
       </div>
 
       {showForm && (
