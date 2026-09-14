@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage } from "./supabaseClient";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users } from "lucide-react";
 import {
@@ -17,6 +17,8 @@ import {
   ScatterChart,
   Scatter,
   ReferenceLine,
+  AreaChart,
+  Area,
 } from "recharts";
 
 // ---------- Tokens ----------
@@ -1233,8 +1235,277 @@ function aplicarTema(tema) {
 
 aplicarTema("light");
 
+// ---------- Primitivas de interface ----------
+
+// Conta de 0 até ao valor final. Respeita quem desativou animações e trata
+// valores com sufixo ("91%", "6,2 d") preservando o formato.
+function Contador({ valor, duracao = 700 }) {
+  const texto = String(valor ?? "");
+  const match = texto.match(/^(-?[\d.,]+)(.*)$/);
+  const alvo = match ? parseFloat(match[1].replace(",", ".")) : null;
+  const sufixo = match ? match[2] : "";
+  const decimais = match && match[1].includes(",") ? (match[1].split(",")[1] || "").length : 0;
+
+  const [mostrado, setMostrado] = useState(alvo === null ? null : 0);
+
+  useEffect(() => {
+    if (alvo === null || isNaN(alvo)) return;
+    let reduzido = false;
+    try {
+      reduzido = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (e) {
+      // sem matchMedia: segue com animação
+    }
+    if (reduzido || duracao === 0) {
+      setMostrado(alvo);
+      return;
+    }
+    // Alguns ambientes (testes, renderização no servidor) não têm
+    // requestAnimationFrame: nesses casos mostra-se o valor final de imediato.
+    const raf = typeof window !== "undefined" && window.requestAnimationFrame;
+    const cancel = typeof window !== "undefined" && window.cancelAnimationFrame;
+    if (!raf) {
+      setMostrado(alvo);
+      return;
+    }
+    let handle;
+    const agoraFn = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const inicio = agoraFn();
+    const passo = () => {
+      const t = Math.min(1, (agoraFn() - inicio) / duracao);
+      // Saída suave: rápido no início, assenta no fim.
+      const eased = 1 - Math.pow(1 - t, 3);
+      setMostrado(alvo * eased);
+      if (t < 1) handle = raf(passo);
+    };
+    handle = raf(passo);
+    return () => cancel && cancel(handle);
+  }, [alvo, duracao]);
+
+  if (alvo === null || isNaN(alvo)) return <>{texto}</>;
+  const fmt = decimais
+    ? mostrado.toFixed(decimais).replace(".", ",")
+    : Math.round(mostrado).toLocaleString("pt-PT");
+  return (
+    <>
+      {fmt}
+      {sufixo}
+    </>
+  );
+}
+
+// Anel de progresso com o traço a desenhar-se à entrada.
+function AnelProgresso({ pct, tamanho = 64, espessura = 6, cor, rotulo }) {
+  const valor = Math.max(0, Math.min(100, Number(pct) || 0));
+  const raio = (tamanho - espessura) / 2;
+  const perimetro = 2 * Math.PI * raio;
+  const [desenhado, setDesenhado] = useState(0);
+
+  useEffect(() => {
+    let reduzido = false;
+    try {
+      reduzido = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (e) {
+      // segue com animação
+    }
+    if (reduzido) {
+      setDesenhado(valor);
+      return;
+    }
+    const raf = typeof window !== "undefined" && window.requestAnimationFrame;
+    if (!raf) {
+      setDesenhado(valor);
+      return;
+    }
+    const id = raf(() => setDesenhado(valor));
+    return () => window.cancelAnimationFrame && window.cancelAnimationFrame(id);
+  }, [valor]);
+
+  const corFinal = cor || COLORS.navy;
+  return (
+    <div style={{ position: "relative", width: tamanho, height: tamanho, flex: "none" }}>
+      <svg width={tamanho} height={tamanho} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={tamanho / 2} cy={tamanho / 2} r={raio} fill="none" stroke={COLORS.ruleSoft} strokeWidth={espessura} />
+        <circle
+          cx={tamanho / 2}
+          cy={tamanho / 2}
+          r={raio}
+          fill="none"
+          stroke={corFinal}
+          strokeWidth={espessura}
+          strokeLinecap="round"
+          strokeDasharray={perimetro}
+          strokeDashoffset={perimetro - (perimetro * desenhado) / 100}
+          style={{ transition: "stroke-dashoffset 900ms cubic-bezier(0.25,0.1,0.25,1)" }}
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "grid",
+          placeItems: "center",
+          fontSize: tamanho > 56 ? 13 : 11,
+          fontWeight: 700,
+          color: COLORS.ink,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {rotulo !== undefined ? rotulo : `${Math.round(valor)}%`}
+      </div>
+    </div>
+  );
+}
+
+// Blocos cinzentos com brilho a passar, na forma do conteúdo que vai chegar.
+function Esqueleto({ altura = 14, largura = "100%", radius = 6, style }) {
+  return <div className="shimmer" style={{ height: altura, width: largura, borderRadius: radius, ...style }} />;
+}
+
+function EsqueletoPagina() {
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} style={{ ...panelStyle, flex: 1, minWidth: 140 }}>
+            <Esqueleto altura={11} largura="60%" />
+            <Esqueleto altura={24} largura="45%" style={{ marginTop: 10 }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ ...panelStyle, marginBottom: 16 }}>
+        <Esqueleto altura={12} largura={160} />
+        <Esqueleto altura={190} radius={10} style={{ marginTop: 14 }} />
+      </div>
+      <div style={panelStyle}>
+        <Esqueleto altura={12} largura={120} />
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Esqueleto key={i} altura={16} style={{ marginTop: 12 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Estado vazio com ícone, explicação e, quando faz sentido, uma ação.
+function Vazio({ icon: Icon, titulo, texto, acao, onAcao }) {
+  return (
+    <div
+      style={{
+        textAlign: "center",
+        padding: "48px 24px",
+        background: COLORS.paperRaised,
+        border: `1px solid ${COLORS.rule}`,
+        borderRadius: 14,
+      }}
+    >
+      {Icon && (
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 14,
+            background: COLORS.navyWash,
+            display: "grid",
+            placeItems: "center",
+            margin: "0 auto 14px",
+          }}
+        >
+          <Icon size={22} color={COLORS.navySoft} />
+        </div>
+      )}
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 5 }}>{titulo}</div>
+      {texto && <div style={{ fontSize: 13, color: COLORS.ink2, maxWidth: 360, margin: "0 auto", lineHeight: 1.55 }}>{texto}</div>}
+      {acao && onAcao && (
+        <button className="press" onClick={onAcao} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px", marginTop: 16 }}>
+          {acao}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Tooltip dos gráficos, com o desenho da app em vez do padrão do Recharts.
+function DicaGrafico({ active, payload, label, sufixo }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div
+      style={{
+        background: COLORS.paperRaised,
+        border: `1px solid ${COLORS.rule}`,
+        borderRadius: 10,
+        padding: "9px 12px",
+        boxShadow: COLORS.lift,
+        fontSize: 12.5,
+      }}
+    >
+      {label !== undefined && <div style={{ fontWeight: 600, marginBottom: 6, color: COLORS.ink }}>{label}</div>}
+      {payload
+        .filter((p) => p.value !== null && p.value !== undefined)
+        .map((p, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, marginTop: i ? 3 : 0 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color || p.fill, flex: "none" }} />
+            <span style={{ color: COLORS.ink2 }}>{p.name}</span>
+            <strong style={{ marginLeft: "auto", color: COLORS.ink, fontVariantNumeric: "tabular-nums" }}>
+              {typeof p.value === "number" ? Math.abs(p.value).toLocaleString("pt-PT") : p.value}
+              {sufixo || ""}
+            </strong>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ---------- Notificações flutuantes ----------
+function Notificacoes({ lista, onFechar }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 20,
+        right: 20,
+        zIndex: 90,
+        display: "flex",
+        flexDirection: "column",
+        gap: 9,
+        maxWidth: "min(380px, calc(100vw - 40px))",
+      }}
+    >
+      {lista.map((n) => {
+        const cor = n.tipo === "erro" ? COLORS.danger : n.tipo === "aviso" ? COLORS.warn : COLORS.ok;
+        const fundo = n.tipo === "erro" ? COLORS.dangerBg : n.tipo === "aviso" ? COLORS.warnBg : COLORS.okBg;
+        const Icone = n.tipo === "erro" ? AlertTriangle : n.tipo === "aviso" ? AlertTriangle : Check;
+        return (
+          <div
+            key={n.id}
+            className="toastIn"
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              background: COLORS.paperRaised,
+              border: `1px solid ${COLORS.rule}`,
+              borderRadius: 12,
+              padding: "11px 13px",
+              boxShadow: COLORS.lift,
+            }}
+          >
+            <div style={{ width: 22, height: 22, borderRadius: 7, background: fundo, display: "grid", placeItems: "center", flex: "none", marginTop: 1 }}>
+              <Icone size={13} color={cor} />
+            </div>
+            <div style={{ flex: 1, fontSize: 13, lineHeight: 1.45 }}>{n.texto}</div>
+            <button onClick={() => onFechar(n.id)} style={{ ...iconBtnStyle, padding: 0, marginTop: 2 }} aria-label="Fechar">
+              <X size={13} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------- Stat card ----------
-function StatCard({ label, value, color, subtitle }) {
+function StatCard({ label, value, color, subtitle, anel }) {
   return (
     <div
       className="liftable"
@@ -1248,21 +1519,28 @@ function StatCard({ label, value, color, subtitle }) {
         boxShadow: COLORS.shadow,
       }}
     >
-      <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500 }}>{label}</div>
-      <div
-        style={{
-          fontSize: 24,
-          fontWeight: 600,
-          letterSpacing: "-0.03em",
-          color: color || COLORS.ink,
-          lineHeight: 1,
-          marginTop: 7,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500 }}>{label}</div>
+          <div
+            style={{
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: "-0.03em",
+              color: color || COLORS.ink,
+              lineHeight: 1,
+              marginTop: 7,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            <Contador valor={value} />
+          </div>
+          {subtitle && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>{subtitle}</div>}
+        </div>
+        {anel !== null && anel !== undefined && (
+          <AnelProgresso pct={anel} tamanho={52} espessura={5} cor={color} rotulo="" />
+        )}
       </div>
-      {subtitle && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>{subtitle}</div>}
     </div>
   );
 }
@@ -2002,9 +2280,11 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
       </div>
 
       {total === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Sem reclamações para os filtros selecionados.
-        </div>
+        <Vazio
+          icon={Search}
+          titulo="Nenhuma reclamação corresponde aos filtros"
+          texto="Experimenta alargar o período ou limpar algum dos filtros acima."
+        />
       ) : (
         <>
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
@@ -2020,20 +2300,41 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
               value={avgResolutionDays !== null ? `${avgResolutionDays} d` : "—"}
               subtitle="receção → conclusão"
             />
-            <StatCard label="Resolvidas dentro do prazo" value={onTimeRate !== null ? `${onTimeRate}%` : "—"} color={COLORS.ok} />
+            <StatCard
+              label="Resolvidas dentro do prazo"
+              value={onTimeRate !== null ? `${onTimeRate}%` : "—"}
+              color={COLORS.ok}
+              anel={onTimeRate}
+            />
           </div>
 
           {visibleParams.has("monthly") && (
             <div style={{ ...panelStyle, marginBottom: 16 }}>
               <div style={panelTitle}>Reclamações por mês (últimos 12 meses)</div>
               <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={monthly}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <AreaChart data={monthly}>
+                  <defs>
+                    <linearGradient id="gradAcento" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={COLORS.navy} stopOpacity="0.28" />
+                      <stop offset="100%" stopColor={COLORS.navy} stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Line type="monotone" dataKey="total" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 3, fill: COLORS.navy }} />
-                </LineChart>
+                  <Tooltip content={<DicaGrafico />} cursor={{ stroke: COLORS.rule }} />
+                  <Area
+                    type="monotone"
+                    dataKey="total"
+                    name="Reclamações"
+                    stroke={COLORS.navy}
+                    strokeWidth={2.5}
+                    fill="url(#gradAcento)"
+                    dot={{ r: 3, fill: COLORS.navy, strokeWidth: 0 }}
+                    activeDot={{ r: 5, strokeWidth: 2, stroke: COLORS.paperRaised }}
+                    animationDuration={900}
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -2049,7 +2350,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                         <Cell key={i} fill={d.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
@@ -2073,7 +2374,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                         <Cell key={i} fill={d.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
@@ -2101,7 +2402,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                             <Cell key={i} fill={d.color} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                        <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                       </PieChart>
                     </ResponsiveContainer>
                     <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11, marginTop: 4, flexWrap: "wrap" }}>
@@ -2127,7 +2428,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                         <Cell key={i} fill={d.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div style={{ display: "flex", justifyContent: "center", gap: 12, fontSize: 11.5, marginTop: 4, flexWrap: "wrap" }}>
@@ -2151,11 +2452,11 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                 ) : (
                   <ResponsiveContainer width="100%" height={Math.max(160, temaData.length * 32)}>
                     <BarChart data={temaData} layout="vertical" margin={{ left: 8 }}>
-                      <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                      <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                      <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} />
+                      <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                      <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -2170,11 +2471,11 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
                 ) : (
                   <ResponsiveContainer width="100%" height={Math.max(160, schoolData.length * 32)}>
                     <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
-                      <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                      <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                      <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
+                      <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                      <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -2562,7 +2863,7 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
         <>
           <ResponsiveContainer width="100%" height={320}>
             <ScatterChart margin={{ top: 14, right: 22, bottom: 30, left: 6 }}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" />
               <XAxis
                 type="number"
                 dataKey="x"
@@ -2807,10 +3108,10 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
   const stackedBars = (data, keys, colors, height) => (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data}>
-        <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+        <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
         <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-        <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+        <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
         {keys.map((k, i) => (
           <Bar key={k} dataKey={k} stackId="a" fill={colors[i]} />
         ))}
@@ -2863,9 +3164,11 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
       <ParamChips params={AUDIT_PARAMS} visible={visible} onToggle={toggle} />
 
       {F.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Sem constatações para os filtros selecionados.
-        </div>
+        <Vazio
+          icon={Search}
+          titulo="Nenhuma constatação corresponde aos filtros"
+          texto="Limpa os filtros de escola, área ou classificação para ver tudo."
+        />
       ) : (
         <>
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
@@ -2881,6 +3184,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
               label="Eficácia das resoluções"
               value={resolvidas.length ? `${Math.round((eficazes.length / resolvidas.length) * 100)}%` : "—"}
               subtitle="verificadas como eficazes"
+              anel={resolvidas.length ? Math.round((eficazes.length / resolvidas.length) * 100) : null}
             />
           </div>
 
@@ -2924,11 +3228,11 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
                 <div style={panelTitle}>Ranking de escolas por constatações</div>
                 <ResponsiveContainer width="100%" height={Math.max(180, rankData.length * 34)}>
                   <BarChart data={rankData} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                     <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                    <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                    <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -2948,12 +3252,12 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
               <div style={panelTitle}>Constatações por resolver, por área</div>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={pendData}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="pendentes" name="Por resolver" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="graves" name="NCM + NC" fill={COLORS.danger} radius={[3, 3, 0, 0]} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                  <Bar dataKey="pendentes" name="Por resolver" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
+                  <Bar dataKey="graves" name="NCM + NC" fill={COLORS.danger} radius={[3, 3, 0, 0]} animationDuration={800} />
                 </BarChart>
               </ResponsiveContainer>
               {legend([
@@ -2981,10 +3285,10 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
               <div style={panelTitle}>Total de constatações por área</div>
               <ResponsiveContainer width="100%" height={230}>
                 <BarChart data={totAreaData}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} barSize={34} />
                 </BarChart>
               </ResponsiveContainer>
@@ -3068,9 +3372,13 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
           </div>
 
           {sorted.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-              Ainda sem auditorias registadas.
-            </div>
+            <Vazio
+              icon={ClipboardList}
+              titulo="Ainda sem auditorias"
+              texto="Registas a auditoria e depois vais acrescentando as constatações, com classificação, área e ação corretiva."
+              acao="Nova auditoria"
+              onAcao={onNewAudit}
+            />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               {sorted.map((a) => {
@@ -3699,10 +4007,10 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
           <div style={panelTitle}>Ocorrências por motivo (má conduta, ameaças, insultos, agressões)</div>
           <ResponsiveContainer width="100%" height={Math.max(160, motivoData.length * 34)}>
             <BarChart data={motivoData} layout="vertical" margin={{ left: 8 }}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
           </ResponsiveContainer>
@@ -3714,10 +4022,10 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
           <div style={panelTitle}>Sanções aplicadas por tipo (Pais / EE)</div>
           <ResponsiveContainer width="100%" height={Math.max(160, tipoSancaoData.length * 34)}>
             <BarChart data={tipoSancaoData} layout="vertical" margin={{ left: 8 }}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
               <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.danger} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
           </ResponsiveContainer>
@@ -3726,8 +4034,8 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 
       <div style={panelTitle}>Sanções a Pais / Encarregados de Educação</div>
       {familia.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "30px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6, marginBottom: 26 }}>
-          Sem ocorrências registadas.
+        <div style={{ marginBottom: 26 }}>
+          <Vazio icon={Scale} titulo="Sem ocorrências com pais ou encarregados" texto="As que registares aparecem aqui, com o motivo e a sanção aplicada." />
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 26 }}>
@@ -3737,9 +4045,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 
       <div style={panelTitle}>Elementos Dragon Force (processo disciplinar)</div>
       {elementosDF.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "30px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Sem ocorrências registadas.
-        </div>
+        <Vazio icon={ShieldAlert} titulo="Sem ocorrências com elementos Dragon Force" texto="Aqui acompanhas o processo disciplinar: inquérito, proposta e decisão." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {[...elementosDF].sort((a, b) => new Date(b.date) - new Date(a.date)).map((s) => <Row key={s.id} s={s} />)}
@@ -3779,12 +4085,8 @@ function Filtros({ children }) {
   return <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>{children}</div>;
 }
 
-function SemDados({ texto }) {
-  return (
-    <div style={{ textAlign: "center", padding: "40px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-      {texto}
-    </div>
-  );
+function SemDados({ texto, icon, titulo, acao, onAcao }) {
+  return <Vazio icon={icon || Inbox} titulo={titulo || "Sem dados para mostrar"} texto={texto} acao={acao} onAcao={onAcao} />;
 }
 
 // ---------- Desistências ----------
@@ -4073,6 +4375,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
           value={fidelizacao === null ? "—" : `${fidelizacao}%`}
           color={COLORS.ok}
           subtitle={`${sucesso} de ${fechadas} avaliadas`}
+          anel={fidelizacao}
         />
       </div>
 
@@ -4103,12 +4406,12 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
           <div style={panelTitle}>Experiências e conversão por mês</div>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={porMes}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={30} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-              <Bar dataKey="realizadas" name="Realizadas" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="convertidas" name="Convertidas" fill={COLORS.ok} radius={[3, 3, 0, 0]} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+              <Bar dataKey="realizadas" name="Realizadas" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
+              <Bar dataKey="convertidas" name="Convertidas" fill={COLORS.ok} radius={[3, 3, 0, 0]} animationDuration={800} />
             </BarChart>
           </ResponsiveContainer>
           <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6 }}>
@@ -4717,10 +5020,10 @@ function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
               <div style={panelTitle}>Participação por evento</div>
               <ResponsiveContainer width="100%" height={Math.max(200, porEvento.length * 40)}>
                 <BarChart data={porEvento} layout="vertical" margin={{ left: 8 }}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                   <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                   <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="turmas" name="Turmas" stackId="e" fill={COLORS.purple} />
                   <Bar dataKey="comp" name="Competição" stackId="e" fill={COLORS.progress} />
                 </BarChart>
@@ -4885,10 +5188,10 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
       ) : (
         <ResponsiveContainer width="100%" height={Math.max(180, dados.length * 34)}>
           <BarChart data={dados} layout="vertical" margin={{ left: 8 }}>
-            <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+            <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
             <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v}%`} />
+            <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
             <Bar dataKey="valor" radius={[0, 3, 3, 0]} barSize={16}>
               {dados.map((d, i) => (
                 <Cell key={i} fill={cor || corSat(d.valor)} />
@@ -4993,6 +5296,7 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
               value={global === null ? "—" : `${global}%`}
               color={global === null ? COLORS.navy : corSat(global)}
               subtitle={`ponderada por ${totalRespostas} respostas`}
+              anel={global}
             />
             <StatCard label="Inquéritos registados" value={lista.length} />
             <StatCard
@@ -5014,10 +5318,10 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
               <div style={panelTitle}>Evolução da satisfação global</div>
               <ResponsiveContainer width="100%" height={230}>
                 <LineChart data={porPeriodo}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={38} tickFormatter={(v) => `${v}%`} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v}%`} />
+                  <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Line type="monotone" dataKey="valor" stroke={COLORS.navy} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.navy }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -5217,9 +5521,13 @@ function InscritosPage({
 
       <div key={view} className="pageIn">
       {escolas.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-          Ainda não há escolas na app. Adiciona-as em "Escolas e listas", no topo.
-        </div>
+        <Vazio
+          icon={Users}
+          titulo="Ainda não há escolas"
+          texto="As escolas são partilhadas por toda a app. Cria-as primeiro e depois atribuis turmas a cada uma."
+          acao="Escolas e listas"
+          onAcao={onManageOptions}
+        />
       ) : view === "experiencias" ? (
         <SecaoExperiencias
           escolas={escolas}
@@ -5908,9 +6216,11 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
 
   if (semDados) {
     return (
-      <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
-        Ainda sem dados de inscritos. Regista pelo menos uma semana no separador Registo.
-      </div>
+      <Vazio
+        icon={BarChart3}
+        titulo="Ainda sem dados para analisar"
+        texto="Regista pelo menos uma semana de inscritos, ou alunos por turma, no separador Registo."
+      />
     );
   }
 
@@ -6026,10 +6336,10 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
           <div style={panelTitle}>Evolução de inscritos — vista {periodo === "semana" ? "semanal" : "mensal"}</div>
           <ResponsiveContainer width="100%" height={270}>
             <LineChart data={evolucaoData}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               {series.map((s, i) => (
                 <Line
                   key={s.escola}
@@ -6052,10 +6362,10 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
           <div style={panelTitle}>Crescimento {periodo === "semana" ? "semanal" : "mensal"} (%) — positivo e negativo</div>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={crescData}>
-              <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={40} tickFormatter={(v) => `${v}%`} />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`} />
+              <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
               <ReferenceLine y={0} stroke={COLORS.slate} />
               <Bar dataKey="valor" radius={[3, 3, 0, 0]}>
                 {crescData.map((d, i) => (
@@ -6077,12 +6387,12 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
               <>
                 <ResponsiveContainer width="100%" height={Math.max(200, escalaoData.length * 26)}>
                   <BarChart data={escalaoData} layout="vertical" margin={{ left: 8 }}>
-                    <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" horizontal={false} />
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                     <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                    <Bar dataKey="M" stackId="g" fill={COLORS.progress} />
-                    <Bar dataKey="F" stackId="g" fill={COLORS.purple} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                    <Bar dataKey="M" name="Masculino" stackId="g" fill={COLORS.progress} />
+                    <Bar dataKey="F" name="Feminino" stackId="g" fill={COLORS.purple} radius={[3, 3, 0, 0]} animationDuration={800} />
                   </BarChart>
                 </ResponsiveContainer>
                 {legend([
@@ -6099,12 +6409,12 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             <div style={panelTitle}>Escolinha, por nível</div>
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={escolinhaData}>
-                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                <Bar dataKey="M" stackId="g" fill={COLORS.progress} />
-                <Bar dataKey="F" stackId="g" fill={COLORS.purple} />
+                <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                <Bar dataKey="M" name="Masculino" stackId="g" fill={COLORS.progress} />
+                <Bar dataKey="F" name="Feminino" stackId="g" fill={COLORS.purple} radius={[3, 3, 0, 0]} animationDuration={800} />
               </BarChart>
             </ResponsiveContainer>
             <div style={{ textAlign: "center", fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>
@@ -6129,7 +6439,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                         <Cell key={i} fill={d.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
+                    <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   </PieChart>
                 </ResponsiveContainer>
                 {legend([
@@ -6149,11 +6459,11 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             ) : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={anoData}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                  <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} animationDuration={800} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -6168,12 +6478,12 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
               <div style={panelTitle}>Inscritos: atual vs época passada</div>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={homologoData}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="atual" name="Época atual" fill={COLORS.progress} radius={[3, 3, 0, 0]} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
+                  <Bar dataKey="atual" name="Época atual" fill={COLORS.progress} radius={[3, 3, 0, 0]} animationDuration={800} />
                 </BarChart>
               </ResponsiveContainer>
               {legend([
@@ -6185,12 +6495,12 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
               <div style={panelTitle}>Desistências: atual vs época passada</div>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={desistHomData}>
-                  <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
-                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} />
-                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="atual" name="Época atual" fill={COLORS.danger} radius={[3, 3, 0, 0]} />
+                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                  <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
+                  <Bar dataKey="atual" name="Época atual" fill={COLORS.danger} radius={[3, 3, 0, 0]} animationDuration={800} />
                 </BarChart>
               </ResponsiveContainer>
               {legend([
@@ -6206,12 +6516,12 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             <div style={panelTitle}>Novas inscrições vs desistências</div>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={fluxoData} stackOffset="sign">
-                <CartesianGrid stroke={COLORS.rule} strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
-                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, borderColor: COLORS.rule }} formatter={(v) => Math.abs(v)} />
+                <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} formatter={(v) => Math.abs(v)} />
                 <ReferenceLine y={0} stroke={COLORS.slate} />
-                <Bar dataKey="novas" name="Novas" stackId="f" fill={COLORS.ok} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="novas" name="Novas" stackId="f" fill={COLORS.ok} radius={[3, 3, 0, 0]} animationDuration={800} />
                 <Bar dataKey="desist" name="Desistências" stackId="f" fill={COLORS.danger} radius={[0, 0, 3, 3]} />
               </BarChart>
             </ResponsiveContainer>
@@ -6221,6 +6531,206 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             ])}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Paleta de comandos (⌘K) ----------
+// Salta entre secções e procura reclamações sem tocar no rato.
+// Navega-se com as setas, confirma-se com Enter e sai-se com Escape.
+function PaletaComandos({ aberta, onFechar, comandos }) {
+  const [busca, setBusca] = useState("");
+  const [indice, setIndice] = useState(0);
+  const campoRef = useRef(null);
+
+  useEffect(() => {
+    if (aberta) {
+      setBusca("");
+      setIndice(0);
+      // Espera o painel montar antes de focar o campo.
+      const id = setTimeout(() => campoRef.current && campoRef.current.focus(), 30);
+      return () => clearTimeout(id);
+    }
+  }, [aberta]);
+
+  const norm = (t) =>
+    String(t || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+  const filtrados = useMemo(() => {
+    const q = norm(busca).trim();
+    if (!q) return comandos.slice(0, 12);
+    const termos = q.split(/\s+/);
+    return comandos
+      .filter((c) => termos.every((t) => norm(`${c.titulo} ${c.grupo} ${c.detalhe || ""}`).includes(t)))
+      .slice(0, 12);
+  }, [busca, comandos]);
+
+  useEffect(() => {
+    setIndice(0);
+  }, [busca]);
+
+  if (!aberta) return null;
+
+  const executar = (c) => {
+    if (!c) return;
+    onFechar();
+    c.acao();
+  };
+
+  const teclas = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setIndice((i) => Math.min(i + 1, filtrados.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setIndice((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      executar(filtrados[indice]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onFechar();
+    }
+  };
+
+  // Agrupa mantendo a ordem em que os grupos aparecem nos resultados.
+  const grupos = [];
+  filtrados.forEach((c) => {
+    const g = grupos.find((x) => x.nome === c.grupo);
+    if (g) g.itens.push(c);
+    else grupos.push({ nome: c.grupo, itens: [c] });
+  });
+
+  return (
+    <div
+      className="veil"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(8,14,24,0.4)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        zIndex: 80,
+        padding: "14vh 16px 16px",
+      }}
+      onClick={onFechar}
+    >
+      <div
+        className="sheet"
+        style={{
+          width: "min(560px, 100%)",
+          maxHeight: "calc(100vh - 20vh)",
+          display: "flex",
+          flexDirection: "column",
+          background: COLORS.paperRaised,
+          border: `1px solid ${COLORS.rule}`,
+          borderRadius: 14,
+          overflow: "hidden",
+          boxShadow: "0 24px 60px -16px rgba(8,14,24,0.4)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderBottom: `1px solid ${COLORS.rule}` }}>
+          <Search size={16} color={COLORS.slate} />
+          <input
+            ref={campoRef}
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            onKeyDown={teclas}
+            placeholder="Ir para uma secção ou procurar uma reclamação..."
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              fontSize: 14.5,
+              color: COLORS.ink,
+              padding: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: COLORS.slate,
+              border: `1px solid ${COLORS.rule}`,
+              borderRadius: 5,
+              padding: "2px 6px",
+            }}
+          >
+            esc
+          </span>
+        </div>
+
+        <div style={{ overflowY: "auto", padding: 6 }}>
+          {filtrados.length === 0 ? (
+            <div style={{ padding: "28px 16px", textAlign: "center", fontSize: 13, color: COLORS.slate }}>
+              Nada encontrado para "{busca}".
+            </div>
+          ) : (
+            grupos.map((g) => (
+              <div key={g.nome}>
+                <div style={{ padding: "8px 10px 4px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>{g.nome}</div>
+                {g.itens.map((c) => {
+                  const i = filtrados.indexOf(c);
+                  const activo = i === indice;
+                  const Icone = c.icon;
+                  return (
+                    <button
+                      key={c.id}
+                      onMouseEnter={() => setIndice(i)}
+                      onClick={() => executar(c)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "9px 10px",
+                        background: activo ? COLORS.navyWash : "transparent",
+                        color: activo ? COLORS.navySoft : COLORS.ink,
+                        cursor: "pointer",
+                        fontSize: 13.5,
+                        fontWeight: 500,
+                      }}
+                    >
+                      {Icone && <Icone size={15} />}
+                      <span style={{ flex: 1 }}>{c.titulo}</span>
+                      {c.detalhe && (
+                        <span style={{ fontSize: 11.5, color: activo ? COLORS.navySoft : COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
+                          {c.detalhe}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            padding: "9px 16px",
+            borderTop: `1px solid ${COLORS.rule}`,
+            fontSize: 11.5,
+            color: COLORS.slate,
+            background: COLORS.paperSunken,
+          }}
+        >
+          <span>↑↓ navegar</span>
+          <span>↵ abrir</span>
+          <span style={{ marginLeft: "auto" }}>{filtrados.length} resultado(s)</span>
+        </div>
       </div>
     </div>
   );
@@ -6243,7 +6753,6 @@ export default function App() {
   const [eventos, setEventos] = useState([]);
   const [satisfacao, setSatisfacao] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showManage, setShowManage] = useState(false);
   const [showAuditForm, setShowAuditForm] = useState(false);
@@ -6253,6 +6762,17 @@ export default function App() {
   const [viewingSanction, setViewingSanction] = useState(null);
   const [page, setPage] = useState("registo");
   // Tema claro/escuro. Fica guardado no browser para não se perder ao recarregar.
+  // Notificações flutuantes: substituem o banner de erro, que só aparecia
+  // numa das páginas e passava despercebido nas outras.
+  const [paletaAberta, setPaletaAberta] = useState(false);
+  const [notificacoes, setNotificacoes] = useState([]);
+  const notificar = useCallback((texto, tipo = "ok", duracao = 4200) => {
+    const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setNotificacoes((l) => [...l, { id, texto, tipo }]);
+    if (duracao) setTimeout(() => setNotificacoes((l) => l.filter((n) => n.id !== id)), duracao);
+  }, []);
+  const fecharNotificacao = (id) => setNotificacoes((l) => l.filter((n) => n.id !== id));
+
   const [tema, setTemaState] = useState(() => {
     try {
       return window.localStorage.getItem("df-tema") === "dark" ? "dark" : "light";
@@ -6270,6 +6790,18 @@ export default function App() {
   };
   // Aplica as cores antes de qualquer componente renderizar neste ciclo.
   aplicarTema(tema);
+
+  // ⌘K (ou Ctrl+K) abre a paleta de comandos em qualquer página.
+  useEffect(() => {
+    const aoTeclar = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletaAberta((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, []);
   const [reclamacoesView, setReclamacoesView] = useState("registo");
   const [editing, setEditing] = useState(null);
   const [filterCanal, setFilterCanal] = useState("todos");
@@ -6283,7 +6815,7 @@ export default function App() {
       await dbStorage.set(STORAGE_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar reclamações:", e);
-      setError(`Não foi possível guardar as reclamações: ${e?.message || e}`);
+      notificar(`Não foi possível guardar as reclamações: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6293,7 +6825,7 @@ export default function App() {
       await dbStorage.set(STORAGE_OPTIONS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar listas:", e);
-      setError(`Não foi possível guardar as listas: ${e?.message || e}`);
+      notificar(`Não foi possível guardar as listas: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6303,7 +6835,7 @@ export default function App() {
       await dbStorage.set(STORAGE_AUDITS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar auditorias:", e);
-      setError(`Não foi possível guardar as auditorias: ${e?.message || e}`);
+      notificar(`Não foi possível guardar as auditorias: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6313,7 +6845,7 @@ export default function App() {
       await dbStorage.set(STORAGE_SANCOES_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar sanções:", e);
-      setError(`Não foi possível guardar as sanções: ${e?.message || e}`);
+      notificar(`Não foi possível guardar as sanções: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6325,7 +6857,7 @@ export default function App() {
       await dbStorage.set(chave, JSON.stringify(next));
     } catch (e) {
       console.error(`Erro ao guardar ${nome}:`, e);
-      setError(`Não foi possível guardar ${nome}: ${e?.message || e}`);
+      notificar(`Não foi possível guardar ${nome}: ${e?.message || e}`, "erro", 0);
     }
   };
 
@@ -6342,7 +6874,7 @@ export default function App() {
       await dbStorage.set(STORAGE_INSCRITOS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar inscritos:", e);
-      setError(`Não foi possível guardar os inscritos: ${e?.message || e}`);
+      notificar(`Não foi possível guardar os inscritos: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6352,7 +6884,7 @@ export default function App() {
       await dbStorage.set(STORAGE_TURMAS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar turmas:", e);
-      setError(`Não foi possível guardar as turmas: ${e?.message || e}`);
+      notificar(`Não foi possível guardar as turmas: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6362,7 +6894,7 @@ export default function App() {
       await dbStorage.set(STORAGE_EPOCA_ANT_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar época anterior:", e);
-      setError(`Não foi possível guardar a época anterior: ${e?.message || e}`);
+      notificar(`Não foi possível guardar a época anterior: ${e?.message || e}`, "erro", 0);
     }
   }, []);
 
@@ -6635,6 +7167,7 @@ export default function App() {
     persistLearned(learnFromEntry(learned, item));
     setShowForm(false);
     setEditing(null);
+    notificar(exists ? "Reclamação atualizada." : `Reclamação nº ${String(item.entryNumber).padStart(4, "0")} registada.`);
   };
 
   const startWork = (id) => {
@@ -6683,6 +7216,52 @@ export default function App() {
       : page === "inscritos"
       ? "Gestão de inscritos"
       : "Reclamações";
+
+  // Comandos da paleta: secções, ações e as reclamações abertas.
+  const comandosPaleta = [
+    { id: "p-registo", grupo: "Ir para", titulo: "Reclamações", icon: LayoutGrid, acao: () => setPage("registo") },
+    { id: "p-auditorias", grupo: "Ir para", titulo: "Auditorias", icon: ClipboardList, acao: () => setPage("auditorias") },
+    { id: "p-sancoes", grupo: "Ir para", titulo: "Sanções", icon: Scale, acao: () => setPage("sancoes") },
+    { id: "p-inscritos", grupo: "Ir para", titulo: "Inscritos", icon: Users, acao: () => setPage("inscritos") },
+    {
+      id: "a-nova",
+      grupo: "Ações",
+      titulo: "Nova reclamação",
+      icon: Plus,
+      acao: () => {
+        setPage("registo");
+        setReclamacoesView("registo");
+        setEditing(null);
+        setShowForm(true);
+      },
+    },
+    { id: "a-auditoria", grupo: "Ações", titulo: "Nova auditoria", icon: Plus, acao: () => { setPage("auditorias"); setShowAuditForm(true); } },
+    { id: "a-ocorrencia", grupo: "Ações", titulo: "Nova ocorrência disciplinar", icon: Plus, acao: () => { setPage("sancoes"); setShowSanctionForm(true); } },
+    { id: "a-listas", grupo: "Ações", titulo: "Escolas e listas", icon: ShieldAlert, acao: () => setShowManage(true) },
+    { id: "a-analise", grupo: "Ações", titulo: "Análise de reclamações", icon: BarChart3, acao: () => { setPage("registo"); setReclamacoesView("analise"); } },
+    {
+      id: "a-tema",
+      grupo: "Ações",
+      titulo: tema === "dark" ? "Mudar para tema claro" : "Mudar para tema escuro",
+      icon: Sparkles,
+      acao: () => setTema(tema === "dark" ? "light" : "dark"),
+    },
+    ...withStatus
+      .filter((e) => e.derivedStatus !== "concluido")
+      .slice(0, 30)
+      .map((e) => ({
+        id: `r-${e.id}`,
+        grupo: "Reclamações abertas",
+        titulo: `Nº ${String(e.entryNumber).padStart(4, "0")} · ${e.complainant}`,
+        detalhe: [e.school, e.tema].filter(Boolean).join(" · "),
+        icon: Inbox,
+        acao: () => {
+          setPage("registo");
+          setReclamacoesView("registo");
+          setViewingDetail(e);
+        },
+      })),
+  ];
 
   const secoes = [
     {
@@ -6784,6 +7363,16 @@ export default function App() {
         .pageIn > *:nth-child(5) { animation-delay: 165ms; }
         .pageIn > *:nth-child(n+6) { animation-delay: 195ms; }
 
+        /* ================= esqueletos e notificações ================= */
+        @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+        .shimmer {
+          background: linear-gradient(90deg, ${COLORS.ruleSoft} 25%, ${COLORS.rule} 37%, ${COLORS.ruleSoft} 63%);
+          background-size: 200% 100%;
+          animation: shimmer 1.4s ease-in-out infinite;
+        }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(14px) scale(0.97); } to { opacity: 1; transform: none; } }
+        .toastIn { animation: toastIn 300ms var(--ease) both; }
+
         /* ================= foco acessível ================= */
         :focus-visible {
           outline: none;
@@ -6796,6 +7385,8 @@ export default function App() {
           .press, .liftable, .pill { transition: none; }
           .press:active, .pill:active { opacity: 1; }
           .pageIn > * { animation: none; }
+          .shimmer { animation: none; }
+          .toastIn { animation: none; }
         }
         /* Quem pede mais contraste não deve ficar com chrome translúcido. */
       `}</style>
@@ -6951,6 +7542,30 @@ export default function App() {
             Gestão · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              className="press"
+              onClick={() => setPaletaAberta(true)}
+              title="Procurar (⌘K)"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: COLORS.paperSunken,
+                border: `1px solid ${COLORS.rule}`,
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: 12.5,
+                color: COLORS.slate,
+                cursor: "pointer",
+              }}
+            >
+              <Search size={14} />
+              <span>Procurar</span>
+              <span style={{ display: "flex", gap: 3 }}>
+                <kbd style={{ fontFamily: "inherit", fontSize: 11, fontWeight: 600, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "1px 5px" }}>⌘</kbd>
+                <kbd style={{ fontFamily: "inherit", fontSize: 11, fontWeight: 600, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "1px 5px" }}>K</kbd>
+              </span>
+            </button>
             {page === "registo" && reclamacoesView === "registo" && (
               <button
                 className="press"
@@ -7140,7 +7755,7 @@ export default function App() {
         </div>
 
         {loading ? (
-          <div style={{ color: COLORS.slate, padding: 30, textAlign: "center" }}>A carregar registo...</div>
+          <EsqueletoPagina />
         ) : filtered.length === 0 ? (
           <div
             style={{
@@ -7238,7 +7853,6 @@ export default function App() {
           </div>
         )}
 
-        {error && <div style={{ color: COLORS.danger, marginTop: 14, fontSize: 13 }}>{error}</div>}
         </>
         )}
         </>
@@ -7322,6 +7936,10 @@ export default function App() {
           onManageOptions={() => setShowManage(true)}
         />
       )}
+
+      <PaletaComandos aberta={paletaAberta} onFechar={() => setPaletaAberta(false)} comandos={comandosPaleta} />
+
+      <Notificacoes lista={notificacoes} onFechar={fecharNotificacao} />
 
       {showSanctionForm && (
         <SanctionForm
