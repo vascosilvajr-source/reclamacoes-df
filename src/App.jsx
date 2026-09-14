@@ -885,10 +885,11 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
 
   return (
     <div
+      className="veil"
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(16,24,38,0.45)",
+        background: "rgba(8,14,24,0.5)",
         display: "flex",
         justifyContent: "flex-end",
         zIndex: 50,
@@ -896,13 +897,15 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
       onClick={onCancel}
     >
       <div
+        className="drawer"
         style={{
-          width: "min(460px, 100%)",
+          width: "min(470px, 100%)",
           background: COLORS.paperRaised,
           height: "100%",
-          padding: "28px 26px",
+          padding: "24px 24px 32px",
           overflowY: "auto",
-          boxShadow: "-8px 0 24px rgba(16,24,38,0.15)",
+          borderLeft: `1px solid ${COLORS.rule}`,
+          boxShadow: "-14px 0 40px -10px rgba(8,14,24,0.3)",
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1323,11 +1326,13 @@ function ManageOptionsModal({ schools, categories, auditCategories, complaintCat
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }}
       onClick={onClose}
     >
       <div
-        style={{ width: "min(480px, 92vw)", maxHeight: "84vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(480px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
@@ -1564,11 +1569,13 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }}
       onClick={onClose}
     >
       <div
-        style={{ width: "min(560px, 92vw)", maxHeight: "86vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(560px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -2184,11 +2191,13 @@ function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }}
       onClick={onCancel}
     >
       <div
-        style={{ width: "min(420px, 92vw)", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(420px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
@@ -2273,11 +2282,13 @@ function AuditDetail({
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }}
       onClick={onClose}
     >
       <div
-        style={{ width: "min(600px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(600px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -3011,6 +3022,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
         ))}
       </div>
 
+      <div key={view} className="pageIn">
       {view === "analise" ? (
         <AuditsAnalysis audits={audits} schoolOptions={schoolOptions} areaOptions={areaOptions} auditCategoryOptions={auditCategoryOptions} />
       ) : (
@@ -3088,6 +3100,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
           )}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -3110,11 +3123,13 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }}
       onClick={onCancel}
     >
       <div
-        style={{ width: "min(460px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(460px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
@@ -3335,11 +3350,13 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(16,24,38,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55 }}
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }}
       onClick={onClose}
     >
       <div
-        style={{ width: "min(540px, 92vw)", maxHeight: "88vh", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 6, padding: "24px 24px 26px" }}
+        className="sheet"
+        style={{ width: "min(540px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
@@ -5166,6 +5183,7 @@ function InscritosPage({
         ))}
       </div>
 
+      <div key={view} className="pageIn">
       {escolas.length === 0 ? (
         <div style={{ textAlign: "center", padding: "50px 20px", color: COLORS.slate, border: `1.5px dashed ${COLORS.rule}`, borderRadius: 6 }}>
           Ainda não há escolas na app. Adiciona-as em "Escolas e listas", no topo.
@@ -5247,6 +5265,7 @@ function InscritosPage({
           niveis={options.niveis || DEFAULT_NIVEIS}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -6665,6 +6684,46 @@ export default function App() {
         .rowHover:hover { background: ${COLORS.paperSunken}; }
         select, input, textarea, button { font-family: inherit; }
         ::placeholder { color: ${COLORS.slate}; }
+
+        /* ---- transições suaves, ao estilo iOS ---- */
+        /* Curva de saída do iOS: arranca depressa e assenta devagar. */
+        :root { --ease: cubic-bezier(0.32, 0.72, 0, 1); }
+
+        .navItem, button, select, input, textarea { transition: background 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease; }
+        .navItem:active, .btnPress:active { transform: scale(0.975); }
+
+        /* Conteúdo da página: entra com um fade curto e um deslize mínimo. */
+        @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+        .pageIn { animation: pageIn 260ms var(--ease) both; }
+
+        /* Fundo escurecido dos modais. */
+        @keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
+        .veil { animation: veilIn 200ms ease both; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+
+        /* Caixa centrada: sobe e cresce ligeiramente, como uma folha do iOS. */
+        @keyframes sheetIn { from { opacity: 0; transform: translateY(14px) scale(0.975); } to { opacity: 1; transform: none; } }
+        .sheet { animation: sheetIn 300ms var(--ease) both; }
+
+        /* Painel lateral: desliza da direita. */
+        @keyframes drawerIn { from { transform: translateX(100%); } to { transform: none; } }
+        .drawer { animation: drawerIn 320ms var(--ease) both; }
+
+        /* Linhas de tabela e cartões que aparecem depois de filtrar. */
+        @keyframes softIn { from { opacity: 0; } to { opacity: 1; } }
+        .softIn { animation: softIn 200ms ease both; }
+
+        /* Respeita quem desativou animações no sistema. */
+        @media (prefers-reduced-motion: reduce) {
+          .pageIn, .veil, .sheet, .drawer, .softIn { animation: none; }
+          .navItem, button, select, input, textarea { transition: none; }
+          .navItem:active, .btnPress:active { transform: none; }
+        }
+
+        /* Nada deve sair do ecrã: barras de deslocamento discretas dentro dos painéis. */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${COLORS.rule}; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+        ::-webkit-scrollbar-thumb:hover { background: ${COLORS.slate}; background-clip: content-box; }
       `}</style>
 
       {/* ---------- barra lateral ---------- */}
@@ -6797,7 +6856,7 @@ export default function App() {
       </div>
 
       {/* ---------- conteúdo ---------- */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: 0, maxWidth: "100%", overflowX: "hidden", display: "flex", flexDirection: "column" }}>
         <div
           style={{
             height: 52,
@@ -6842,7 +6901,7 @@ export default function App() {
           </div>
         </div>
 
-      <div style={{ padding: "20px 22px 56px", maxWidth: 1360 }}>
+      <div key={page} className="pageIn" style={{ padding: "20px 22px 56px", maxWidth: 1360, minWidth: 0 }}>
         {page === "auditorias" ? (
           <AuditsPage
             audits={audits}
