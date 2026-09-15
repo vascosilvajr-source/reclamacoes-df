@@ -2140,6 +2140,8 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
         />
       ) : (
         <>
+          <Observacoes itens={observacoesReclamacoes(filtered)} />
+
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Total de reclamações" value={total} />
             <StatCard
@@ -2659,6 +2661,408 @@ function AuditDetail({
   );
 }
 
+// ---------- Observações automáticas ----------
+// Olha para os dados e escreve em linguagem normal o que é digno de nota.
+// Só diz coisas que passam um limiar, para não encher o ecrã de ruído; e
+// distingue alarme (exige ação), atenção (vale vigiar) e bom (confirma).
+const NIVEL_OBS = {
+  alarme: { cor: () => COLORS.danger, fundo: () => COLORS.dangerBg, rotulo: "Alarme" },
+  atencao: { cor: () => COLORS.warn, fundo: () => COLORS.warnBg, rotulo: "Atenção" },
+  bom: { cor: () => COLORS.ok, fundo: () => COLORS.okBg, rotulo: "Positivo" },
+};
+
+function Observacoes({ itens }) {
+  const [expandido, setExpandido] = useState(false);
+  if (!itens || itens.length === 0) return null;
+
+  const ordem = { alarme: 0, atencao: 1, bom: 2 };
+  const ordenados = [...itens].sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
+  const visiveis = expandido ? ordenados : ordenados.slice(0, 4);
+  const alarmes = ordenados.filter((o) => o.nivel === "alarme").length;
+
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+        <div style={panelTitle}>
+          O que salta à vista
+          {alarmes > 0 && (
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: COLORS.danger }}>
+              {alarmes} a exigir ação
+            </span>
+          )}
+        </div>
+        {ordenados.length > 4 && (
+          <button onClick={() => setExpandido((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0 }}>
+            {expandido ? "Mostrar menos" : `Ver todas (${ordenados.length})`}
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {visiveis.map((o, i) => {
+          const meta = NIVEL_OBS[o.nivel] || NIVEL_OBS.atencao;
+          const cor = meta.cor();
+          return (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                padding: "10px 12px",
+                background: COLORS.paperSunken,
+                borderLeft: `3px solid ${cor}`,
+                borderRadius: 8,
+              }}
+            >
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 6,
+                  background: meta.fundo(),
+                  display: "grid",
+                  placeItems: "center",
+                  flex: "none",
+                  marginTop: 1,
+                }}
+              >
+                {o.nivel === "bom" ? <Check size={12} color={cor} /> : <AlertTriangle size={12} color={cor} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 2 }}>{o.titulo}</div>
+                <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5 }}>{o.texto}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Observações sobre reclamações.
+function observacoesReclamacoes(lista) {
+  const obs = [];
+  if (lista.length === 0) return obs;
+
+  const atrasadas = lista.filter((e) => e.derivedStatus === "atrasado");
+  if (atrasadas.length > 0) {
+    const maisAntiga = [...atrasadas].sort((a, b) => new Date(a.deadline) - new Date(b.deadline))[0];
+    const dias = Math.round((Date.now() - new Date(maisAntiga.deadline)) / 86400000);
+    obs.push({
+      nivel: "alarme",
+      titulo: `${atrasadas.length} reclamação(ões) fora do prazo legal`,
+      texto: `A mais antiga é a nº ${String(maisAntiga.entryNumber).padStart(4, "0")} (${maisAntiga.school || "sem escola"}), com ${dias} dia(s) de atraso.`,
+    });
+  }
+
+  // Escola com peso desproporcionado face à média.
+  const porEscola = {};
+  lista.forEach((e) => {
+    if (e.school) porEscola[e.school] = (porEscola[e.school] || 0) + 1;
+  });
+  const escolas = Object.entries(porEscola).sort((a, b) => b[1] - a[1]);
+  if (escolas.length >= 3) {
+    const media = lista.length / escolas.length;
+    const [nome, n] = escolas[0];
+    if (n >= media * 1.8 && n >= 3) {
+      obs.push({
+        nivel: "atencao",
+        titulo: `${nome} concentra ${Math.round((n / lista.length) * 100)}% das reclamações`,
+        texto: `São ${n} registos, contra uma média de ${media.toFixed(1)} por escola. Vale a pena ver se há uma causa comum.`,
+      });
+    }
+  }
+
+  // Tema recorrente.
+  const porTema = {};
+  lista.forEach((e) => {
+    if (e.tema) porTema[e.tema] = (porTema[e.tema] || 0) + 1;
+  });
+  const temas = Object.entries(porTema).sort((a, b) => b[1] - a[1]);
+  if (temas.length && temas[0][1] >= 3) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `"${temas[0][0]}" repete-se ${temas[0][1]} vezes`,
+      texto: "Um tema que reaparece costuma indicar uma causa de fundo, não casos isolados.",
+    });
+  }
+
+  // Gravidade alta em aberto.
+  const altasAbertas = lista.filter((e) => e.severity === "alta" && e.derivedStatus !== "concluido");
+  if (altasAbertas.length > 0) {
+    obs.push({
+      nivel: "alarme",
+      titulo: `${altasAbertas.length} reclamação(ões) de gravidade alta ainda em aberto`,
+      texto: `Em ${[...new Set(altasAbertas.map((e) => e.school).filter(Boolean))].join(", ") || "escola não indicada"}.`,
+    });
+  }
+
+  // Eficácia das respostas.
+  const comEficacia = lista.filter((e) => e.eficacia);
+  const ineficazes = comEficacia.filter((e) => e.eficacia === "ineficaz");
+  if (comEficacia.length >= 4 && ineficazes.length / comEficacia.length > 0.25) {
+    obs.push({
+      nivel: "alarme",
+      titulo: `${Math.round((ineficazes.length / comEficacia.length) * 100)}% das respostas foram classificadas como ineficazes`,
+      texto: "Fechar dentro do prazo não basta se a resposta não resolve. Vale revisitar estes casos.",
+    });
+  }
+
+  // Cumprimento do prazo.
+  const resolvidas = lista.filter((e) => e.status === "concluido" && e.resolvedDate);
+  if (resolvidas.length >= 5) {
+    const dentro = resolvidas.filter((e) => new Date(e.resolvedDate) <= new Date(e.deadline)).length;
+    const taxa = Math.round((dentro / resolvidas.length) * 100);
+    if (taxa >= 95) {
+      obs.push({
+        nivel: "bom",
+        titulo: `${taxa}% resolvidas dentro do prazo`,
+        texto: `${dentro} de ${resolvidas.length} fechadas nos 10 dias úteis.`,
+      });
+    } else if (taxa < 80) {
+      obs.push({
+        nivel: "alarme",
+        titulo: `Só ${taxa}% foram resolvidas dentro do prazo`,
+        texto: `${resolvidas.length - dentro} de ${resolvidas.length} passaram os 10 dias úteis. É um risco legal, não só de serviço.`,
+      });
+    }
+  }
+
+  // Canal predominante.
+  const livro = lista.filter((e) => e.canal === "livro").length;
+  if (livro >= 2 && livro / lista.length > 0.3) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `${livro} reclamações entraram pelo Livro de Reclamações`,
+      texto: "Uma proporção alta pelo livro sugere que os canais internos não estão a resolver antes de escalar.",
+    });
+  }
+
+  return obs;
+}
+
+// Observações sobre auditorias.
+function observacoesAuditorias(constatacoes) {
+  const obs = [];
+  if (constatacoes.length === 0) return obs;
+
+  const ncm = constatacoes.filter((f) => f.classification === "NCM");
+  const ncmAbertas = ncm.filter((f) => !f.resolvida);
+  if (ncmAbertas.length > 0) {
+    obs.push({
+      nivel: "alarme",
+      titulo: `${ncmAbertas.length} não conformidade(s) maior(es) sem resolução`,
+      texto: `Em ${[...new Set(ncmAbertas.map((f) => f.escola))].join(", ")}. São as que pesam mais na certificação.`,
+    });
+  }
+
+  const resolvidas = constatacoes.filter((f) => f.resolvida);
+  const ineficazes = resolvidas.filter((f) => f.eficacia === "ineficaz");
+  if (ineficazes.length > 0) {
+    obs.push({
+      nivel: "alarme",
+      titulo: `${ineficazes.length} ação(ões) corretiva(s) classificada(s) como ineficaz(es)`,
+      texto: "Foram dadas como resolvidas mas não produziram efeito. Reabrir é mais barato que repetir na próxima auditoria.",
+    });
+  }
+
+  // Área com mais problemas.
+  const porArea = {};
+  constatacoes.forEach((f) => {
+    if (f.area) porArea[f.area] = (porArea[f.area] || 0) + 1;
+  });
+  const areas = Object.entries(porArea).sort((a, b) => b[1] - a[1]);
+  if (areas.length >= 2 && areas[0][1] >= 3) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `A área "${areas[0][0]}" acumula ${areas[0][1]} constatações`,
+      texto: `É ${Math.round((areas[0][1] / constatacoes.length) * 100)}% do total registado.`,
+    });
+  }
+
+  // Taxa de resolução.
+  if (constatacoes.length >= 5) {
+    const taxa = Math.round((resolvidas.length / constatacoes.length) * 100);
+    if (taxa < 50) {
+      obs.push({
+        nivel: "atencao",
+        titulo: `Apenas ${taxa}% das constatações estão resolvidas`,
+        texto: `${constatacoes.length - resolvidas.length} continuam em aberto.`,
+      });
+    } else if (taxa >= 90) {
+      obs.push({
+        nivel: "bom",
+        titulo: `${taxa}% das constatações já estão resolvidas`,
+        texto: "Ritmo de fecho saudável.",
+      });
+    }
+  }
+
+  // Escola com mais constatações graves.
+  const porEscolaGrave = {};
+  constatacoes
+    .filter((f) => f.classification === "NCM" || f.classification === "NC")
+    .forEach((f) => {
+      porEscolaGrave[f.escola] = (porEscolaGrave[f.escola] || 0) + 1;
+    });
+  const graves = Object.entries(porEscolaGrave).sort((a, b) => b[1] - a[1]);
+  if (graves.length && graves[0][1] >= 3) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `${graves[0][0]} tem ${graves[0][1]} constatações graves`,
+      texto: "Não conformidades maiores e menores somadas. Candidata a auditoria de seguimento.",
+    });
+  }
+
+  return obs;
+}
+
+// Observações sobre inscritos, turmas e satisfação.
+function observacoesInscritos({ escolas, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, satisfacao, niveis, limites }) {
+  const obs = [];
+  const ultimo = (e) => {
+    const s = inscritos[e] || [];
+    if (!s.length) return 0;
+    return [...s].sort((a, b) => a.semana.localeCompare(b.semana))[s.length - 1].total;
+  };
+
+  // Crescimento homólogo por escola.
+  escolas.forEach((e) => {
+    const ant = (epocaAnterior[e] || {}).inscritos;
+    const at = ultimo(e);
+    if (!ant || !at) return;
+    const v = ((at - ant) / ant) * 100;
+    const cls = classificarCrescimento(v, limites);
+    if (cls.key === "critico") {
+      obs.push({
+        nivel: "alarme",
+        titulo: `${e} está ${v.toFixed(1)}% abaixo da época passada`,
+        texto: `${at} inscritos contra ${ant}. Classificação: ${cls.label.toLowerCase()}.`,
+      });
+    } else if (cls.key === "positiva" && v >= 15) {
+      obs.push({
+        nivel: "bom",
+        titulo: `${e} cresceu ${v.toFixed(1)}% face à época passada`,
+        texto: `Passou de ${ant} para ${at} inscritos.`,
+      });
+    }
+  });
+
+  // Turmas quase cheias ou acima da capacidade.
+  const cheias = turmasAlunos.filter((t) => {
+    const cap = t.cap || capacidadeSugerida(t.turma, niveis);
+    return cap && t.m + t.f >= cap;
+  });
+  if (cheias.length > 0) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `${cheias.length} turma(s) na capacidade máxima`,
+      texto: `${cheias.slice(0, 4).map((t) => `${t.turma} (${t.escola})`).join(", ")}${cheias.length > 4 ? "…" : ""}. Experiências novas não vão caber.`,
+    });
+  }
+
+  // Taxa de desistência por escola.
+  escolas.forEach((e) => {
+    const d = desistencias.filter((x) => x.escola === e).reduce((n, x) => n + x.n, 0);
+    const at = ultimo(e);
+    if (!d || !at) return;
+    const taxa = (d / (at + d)) * 100;
+    if (taxa >= 15) {
+      obs.push({
+        nivel: "alarme",
+        titulo: `${e} tem ${taxa.toFixed(1)}% de desistência`,
+        texto: `${d} saídas para ${at} inscritos atuais. Acima de 15% merece explicação.`,
+      });
+    }
+  });
+
+  // Motivo de desistência dominante.
+  const porMotivo = {};
+  desistencias.forEach((d) => (porMotivo[d.motivo] = (porMotivo[d.motivo] || 0) + d.n));
+  const motivos = Object.entries(porMotivo).sort((a, b) => b[1] - a[1]);
+  const totalDesist = motivos.reduce((n, [, v]) => n + v, 0);
+  if (motivos.length >= 2 && totalDesist >= 5 && motivos[0][1] / totalDesist > 0.4) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `"${motivos[0][0]}" explica ${Math.round((motivos[0][1] / totalDesist) * 100)}% das desistências`,
+      texto: `${motivos[0][1]} de ${totalDesist} saídas. Se for acionável, é aqui que se ganha mais.`,
+    });
+  }
+
+  // Conversão de experiências.
+  const fechadas = experiencias.filter((x) => x.resultado !== "pendente").reduce((n, x) => n + x.n, 0);
+  const suc = experiencias.filter((x) => x.resultado === "sucesso").reduce((n, x) => n + x.n, 0);
+  if (fechadas >= 5) {
+    const taxa = Math.round((suc / fechadas) * 100);
+    if (taxa < 50) {
+      obs.push({
+        nivel: "alarme",
+        titulo: `Só ${taxa}% das experiências converteram em inscrição`,
+        texto: `${suc} de ${fechadas} avaliadas. Perder metade de quem já experimentou é caro.`,
+      });
+    } else if (taxa >= 80) {
+      obs.push({
+        nivel: "bom",
+        titulo: `${taxa}% das experiências converteram`,
+        texto: `${suc} de ${fechadas}. A experiência está a funcionar como porta de entrada.`,
+      });
+    }
+  }
+  const pendentes = experiencias.filter((x) => x.resultado === "pendente").reduce((n, x) => n + x.n, 0);
+  if (pendentes >= 5) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `${pendentes} experiência(s) por avaliar`,
+      texto: "Enquanto ficam pendentes, não entram na taxa de fidelização nem nos inscritos.",
+    });
+  }
+
+  // Satisfação: categoria mais fraca.
+  if (satisfacao.length > 0) {
+    const cats = {};
+    satisfacao.forEach((s) => {
+      Object.entries(s.valores || {}).forEach(([c, v]) => {
+        if (v === null || v === undefined || isNaN(v)) return;
+        cats[c] = cats[c] || { soma: 0, peso: 0 };
+        cats[c].soma += v * (s.respostas || 1);
+        cats[c].peso += s.respostas || 1;
+      });
+    });
+    const medias = Object.entries(cats)
+      .map(([c, x]) => [c, Math.round(x.soma / x.peso)])
+      .sort((a, b) => a[1] - b[1]);
+    if (medias.length && medias[0][1] < 70) {
+      obs.push({
+        nivel: "alarme",
+        titulo: `"${medias[0][0]}" é a categoria mais fraca do inquérito, com ${medias[0][1]}%`,
+        texto: "Abaixo de 70% costuma aparecer depois como reclamação.",
+      });
+    }
+    if (medias.length && medias[medias.length - 1][1] >= 90) {
+      obs.push({
+        nivel: "bom",
+        titulo: `"${medias[medias.length - 1][0]}" está nos ${medias[medias.length - 1][1]}%`,
+        texto: "Vale a pena perceber o que se faz bem aqui e replicar.",
+      });
+    }
+  }
+
+  // Desequilíbrio de género, só quando há dados suficientes.
+  const m = turmasAlunos.reduce((n, t) => n + t.m, 0);
+  const f = turmasAlunos.reduce((n, t) => n + t.f, 0);
+  if (m + f >= 50 && f / (m + f) < 0.08) {
+    obs.push({
+      nivel: "atencao",
+      titulo: `Atletas femininas são ${((f / (m + f)) * 100).toFixed(1)}% do total`,
+      texto: `${f} de ${m + f}. Se houver objetivo de crescimento no feminino, o ponto de partida é este.`,
+    });
+  }
+
+  return obs;
+}
+
 // ---------- Quadrant matrix (shared by audits and enrolment analysis) ----------
 function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
   const keys = Object.keys(metrics);
@@ -3024,6 +3428,8 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
         />
       ) : (
         <>
+          <Observacoes itens={observacoesAuditorias(F)} />
+
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Total de constatações" value={F.length} />
             <StatCard label="Escolas auditadas" value={new Set(F.map((f) => f.escola)).size} />
@@ -5739,6 +6145,9 @@ function InscritosPage({
           turmasAlunos={turmasAlunos}
           epocaAnterior={epocaAnterior}
           niveis={options.niveis || DEFAULT_NIVEIS}
+          desistencias={desistencias}
+          experiencias={experiencias}
+          satisfacao={satisfacao}
         />
       )}
       </div>
@@ -6174,7 +6583,7 @@ function InscritosRegisto({
   );
 }
 
-function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niveis }) {
+function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niveis, desistencias, experiencias, satisfacao }) {
   const [fEsc, setFEsc] = useState("todas");
   const [periodo, setPeriodo] = useState("semana");
   const [limites, setLimites] = useState(LIMITES_CRESC_PADRAO);
@@ -6359,6 +6768,20 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
       </div>
 
       <ParamChips params={INSC_PARAMS} visible={visible} onToggle={toggle} />
+
+      <Observacoes
+        itens={observacoesInscritos({
+          escolas,
+          inscritos,
+          turmasAlunos,
+          epocaAnterior,
+          desistencias,
+          experiencias,
+          satisfacao,
+          niveis,
+          limites,
+        })}
+      />
 
       <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
         <StatCard label="Inscritos" value={totalAtual} />
@@ -7380,6 +7803,13 @@ export default function App() {
     persist(entries.filter((e) => e.id !== id));
   };
 
+  const areaDaPagina = {
+    registo: "Reclamações",
+    auditorias: "Auditorias",
+    sancoes: "Sanções",
+    inscritos: "Inscritos",
+  }[page];
+
   const titulo =
     page === "auditorias"
       ? "Auditorias"
@@ -7392,6 +7822,7 @@ export default function App() {
   // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
   const LISTAS = {
     schools: {
+      area: "Geral",
       titulo: "Escolas",
       nota: "As escolas são partilhadas por toda a app: reclamações, auditorias, sanções e inscritos.",
       placeholder: "Ex: Dragon Force Gondomar",
@@ -7401,54 +7832,63 @@ export default function App() {
         turmasAlunos.filter((t) => t.escola === x).length,
     },
     categories: {
+      area: "Reclamações",
       titulo: "Temas de reclamação",
       nota: "Mais específicos que a categoria. Ex: comportamento de treinador, mensalidades, balneários.",
       placeholder: "Ex: Convocatórias",
       emUso: (x) => entries.filter((e) => e.tema === x).length,
     },
     complaintCategories: {
+      area: "Reclamações",
       titulo: "Categorias de reclamação",
       nota: "O agrupamento geral: disciplinar, técnico, infraestrutura e o que mais precisares.",
       placeholder: "Ex: Administrativo",
       emUso: (x) => entries.filter((e) => e.categoria === x).length,
     },
     auditAreas: {
+      area: "Auditorias",
       titulo: "Áreas e departamentos",
       nota: "Usadas nas constatações das auditorias, para saber onde se concentram os problemas.",
       placeholder: "Ex: Técnica",
       emUso: (x) => audits.reduce((n, a) => n + (a.findings || []).filter((f) => f.area === x).length, 0),
     },
     auditCategories: {
+      area: "Auditorias",
       titulo: "Categorias de constatação",
       nota: "O tipo de constatação encontrada em auditoria. Ex: documentação, equipamento, registos.",
       placeholder: "Ex: Documentação",
       emUso: (x) => audits.reduce((n, a) => n + (a.findings || []).filter((f) => f.category === x).length, 0),
     },
     sanctionTypes: {
+      area: "Sanções",
       titulo: "Tipos de sanção",
       nota: "Aplicáveis a pais e encarregados de educação.",
       placeholder: "Ex: Suspensão por 3 jogos",
       emUso: (x) => sanctions.filter((v) => v.sanctionType === x).length,
     },
     motivosDesistencia: {
+      area: "Inscritos",
       titulo: "Motivos de desistência",
       nota: "Lista fechada, para as estatísticas serem comparáveis. Não escrevas nomes de atletas.",
       placeholder: "Ex: Mudança de escola",
       emUso: (x) => desistencias.filter((d) => d.motivo === x).length,
     },
     categoriasSatisfacao: {
+      area: "Inscritos",
       titulo: "Categorias do inquérito de satisfação",
       nota: "As dimensões que perguntas no inquérito. Cada uma recebe uma percentagem.",
       placeholder: "Ex: Comunicação",
       emUso: (x) => satisfacao.filter((sa) => (sa.valores || {})[x] !== undefined).length,
     },
     espacosLista: {
+      area: "Inscritos",
       titulo: "Espaços de treino",
       nota: "Campos, meios-campos e pavilhões usados no mapa de ocupação.",
       placeholder: "Ex: Campo 3",
       emUso: (x) => espacos.filter((sp) => sp.espaco === x).length,
     },
     turmas: {
+      area: "Inscritos",
       titulo: "Turmas e equipas",
       nota: 'As que começam por "Sub" contam como competição; as restantes como escolinha.',
       placeholder: "Ex: Sub-20",
@@ -7727,7 +8167,7 @@ export default function App() {
           }}
         >
           <ShieldAlert size={15} />
-          <span>Listas</span>
+          <span>Todas as listas</span>
         </button>
 
         {/* alternador de tema */}
@@ -7781,6 +8221,29 @@ export default function App() {
             Gestão · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {areaDaPagina && (
+              <button
+                className="press"
+                onClick={() => setListaAberta(`__indice:${areaDaPagina}`)}
+                title={`Listas de ${areaDaPagina}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: COLORS.paperSunken,
+                  border: `1px solid ${COLORS.rule}`,
+                  borderRadius: 8,
+                  padding: "6px 11px",
+                  fontSize: 12.5,
+                  color: COLORS.ink2,
+                  cursor: "pointer",
+                  fontWeight: 500,
+                }}
+              >
+                <ShieldAlert size={14} />
+                <span>Listas</span>
+              </button>
+            )}
             <button
               className="press"
               onClick={() => setPaletaAberta(true)}
@@ -8163,7 +8626,7 @@ export default function App() {
         />
       )}
 
-      {listaAberta === "__indice" && (
+      {String(listaAberta || "").startsWith("__indice") && (
         <div
           className="veil"
           style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }}
@@ -8184,7 +8647,9 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>Listas da app</div>
+              <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>
+                {listaAberta === "__indice" ? "Listas da app" : `Listas de ${listaAberta.split(":")[1]}`}
+              </div>
               <button onClick={() => setListaAberta(null)} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Fechar">
                 <X size={17} />
               </button>
@@ -8192,11 +8657,22 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 16, lineHeight: 1.5 }}>
               Também podes gerir cada lista onde ela é usada, no link "Gerir" junto ao campo.
             </div>
-            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
-              {Object.entries(LISTAS).map(([chave, meta], i) => (
-                <button
-                  key={chave}
-                  onClick={() => setListaAberta(chave)}
+            {(listaAberta === "__indice"
+              ? ["Geral", "Reclamações", "Auditorias", "Sanções", "Inscritos"]
+              : [listaAberta.split(":")[1]]
+            ).map((areaNome) => {
+              const doGrupo = Object.entries(LISTAS).filter(([, m]) => m.area === areaNome);
+              if (doGrupo.length === 0) return null;
+              return (
+                <div key={areaNome} style={{ marginBottom: 16 }}>
+                  {listaAberta === "__indice" && (
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, marginBottom: 7 }}>{areaNome}</div>
+                  )}
+                  <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+                    {doGrupo.map(([chave, meta], i) => (
+                      <button
+                        key={chave}
+                        onClick={() => setListaAberta(chave)}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -8211,15 +8687,18 @@ export default function App() {
                     color: COLORS.ink,
                     fontSize: 13.5,
                   }}
-                  className="liftable"
-                >
-                  <span style={{ flex: 1, fontWeight: 500 }}>{meta.titulo}</span>
-                  <span style={{ fontSize: 11.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
-                    {(options[chave] || []).length} item(s)
-                  </span>
-                </button>
-              ))}
-            </div>
+                        className="liftable"
+                      >
+                        <span style={{ flex: 1, fontWeight: 500 }}>{meta.titulo}</span>
+                        <span style={{ fontSize: 11.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
+                          {(options[chave] || []).length} item(s)
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
