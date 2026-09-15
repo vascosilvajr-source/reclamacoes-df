@@ -805,7 +805,7 @@ function TriageBox({ onApply, temas, categorias, learned, schools }) {
   );
 }
 
-function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, categoriaOptions, onManageOptions, learned }) {
+function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categoryOptions, categoriaOptions, onGerirLista, learned }) {
   const [form, setForm] = useState(
     initial || {
       receivedDate: new Date().toISOString().slice(0, 10),
@@ -1009,7 +1009,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle }}>Categoria{fieldHint("categoria")}</label>
-          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+          <button type="button" onClick={() => onGerirLista("complaintCategories")} style={linkBtnStyle}>
             Gerir lista
           </button>
         </div>
@@ -1045,7 +1045,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 14 }}>Escola{fieldHint("school")}</label>
-          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+          <button type="button" onClick={() => onGerirLista("schools")} style={linkBtnStyle}>
             Gerir lista
           </button>
         </div>
@@ -1060,7 +1060,7 @@ function EntryForm({ initial, nextNumber, onCancel, onSave, schoolOptions, categ
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 14 }}>Tema (mais específico que a categoria){fieldHint("tema")}</label>
-          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+          <button type="button" onClick={() => onGerirLista("categories")} style={linkBtnStyle}>
             Gerir lista
           </button>
         </div>
@@ -1545,276 +1545,129 @@ function StatCard({ label, value, color, subtitle, anel }) {
   );
 }
 
-// ---------- Manage schools/categories modal ----------
-function ManageOptionsModal({ schools, categories, auditCategories, complaintCategories, sanctionTypes, auditAreas, motivosDesistencia, categoriasSatisfacao, espacosLista, onAdd, onRemove, onClose }) {
-  const [newSchool, setNewSchool] = useState("");
-  const [newCategory, setNewCategory] = useState("");
-  const [newAuditCategory, setNewAuditCategory] = useState("");
-  const [newComplaintCategory, setNewComplaintCategory] = useState("");
-  const [newSanctionType, setNewSanctionType] = useState("");
-  const [newArea, setNewArea] = useState("");
-  const [novoMotivo, setNovoMotivo] = useState("");
-  const [novaCatSat, setNovaCatSat] = useState("");
-  const [novoEspaco, setNovoEspaco] = useState("");
+// ---------- Gestor de uma lista ----------
+// Abre a partir de cada "Gerir lista", mostrando apenas a lista daquele campo.
+// Evita o menu único gigante com todas as listas da app lá dentro.
+function GestorLista({ titulo, nota, itens, placeholder, emUso, onAdd, onRemove, onClose }) {
+  const [novo, setNovo] = useState("");
+  const [erro, setErro] = useState("");
+  const lista = itens || [];
 
-  const submitSchool = () => {
-    const v = newSchool.trim();
-    if (v) onAdd("schools", v);
-    setNewSchool("");
-  };
-  const submitCategory = () => {
-    const v = newCategory.trim();
-    if (v) onAdd("categories", v);
-    setNewCategory("");
-  };
-  const submitAuditCategory = () => {
-    const v = newAuditCategory.trim();
-    if (v) onAdd("auditCategories", v);
-    setNewAuditCategory("");
-  };
-  const submitComplaintCategory = () => {
-    const v = newComplaintCategory.trim();
-    if (v) onAdd("complaintCategories", v);
-    setNewComplaintCategory("");
-  };
-  const submitArea = () => {
-    const v = newArea.trim();
-    if (v) onAdd("auditAreas", v);
-    setNewArea("");
-  };
-  const submitSanctionType = () => {
-    const v = newSanctionType.trim();
-    if (v) onAdd("sanctionTypes", v);
-    setNewSanctionType("");
+  const adicionar = () => {
+    const v = novo.trim();
+    if (!v) {
+      setErro("Escreve o nome antes de adicionar.");
+      return;
+    }
+    if (lista.some((x) => x.toLowerCase() === v.toLowerCase())) {
+      setErro("Esse item já existe na lista.");
+      return;
+    }
+    setErro("");
+    onAdd(v);
+    setNovo("");
   };
 
-  const Chip = ({ label, onDelete }) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        border: `1px solid ${COLORS.rule}`,
-        borderRadius: 3,
-        padding: "5px 8px 5px 10px",
-        fontSize: 12.5,
-        background: COLORS.paper,
-      }}
-    >
-      {label}
-      <button onClick={onDelete} style={{ ...iconBtnStyle, padding: 0 }} title="Remover">
-        <X size={12} />
-      </button>
-    </div>
-  );
+  const remover = (x) => {
+    const usos = emUso ? emUso(x) : 0;
+    if (usos > 0) {
+      setErro(`"${x}" está a ser usado em ${usos} registo(s) e não pode ser removido.`);
+      return;
+    }
+    setErro("");
+    onRemove(x);
+  };
 
   return (
     <div
       className="veil"
-      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(8,14,24,0.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 70,
+        padding: 16,
+      }}
       onClick={onClose}
     >
       <div
         className="sheet"
-        style={{ width: "min(480px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
+        style={{
+          width: "min(460px, 100%)",
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+          background: COLORS.paperRaised,
+          border: `1px solid ${COLORS.rule}`,
+          borderRadius: 14,
+          padding: "20px 22px 22px",
+          boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Escolas e categorias</h2>
-          <button onClick={onClose} style={iconBtnStyle}>
-            <X size={18} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>{titulo}</div>
+          <button onClick={onClose} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Fechar">
+            <X size={17} />
           </button>
         </div>
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 20 }}>
-          Estas listas ficam disponíveis para toda a equipa em Reclamações, Auditorias e Análise. As escolas são
-          transversais a todas as áreas da app.
-        </div>
+        {nota && <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginBottom: 16 }}>{nota}</div>}
 
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Escolas
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {schools.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem escolas.</div>}
-          {schools.map((s) => (
-            <Chip key={s} label={s} onDelete={() => onRemove("schools", s)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
           <input
             type="text"
-            placeholder="Nome da nova escola"
-            value={newSchool}
-            onChange={(e) => setNewSchool(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitSchool()}
+            autoFocus
+            placeholder={placeholder || "Novo item"}
+            value={novo}
+            onChange={(e) => {
+              setNovo(e.target.value);
+              setErro("");
+            }}
+            onKeyDown={(e) => e.key === "Enter" && adicionar()}
             style={inputStyle}
           />
-          <button onClick={submitSchool} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
+          <button className="press" onClick={adicionar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 15px" }}>
             Adicionar
           </button>
         </div>
 
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Categorias
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {complaintCategories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem categorias.</div>}
-          {complaintCategories.map((c) => (
-            <Chip key={c} label={c} onDelete={() => onRemove("complaintCategories", c)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-          <input
-            type="text"
-            placeholder="Nome da nova categoria"
-            value={newComplaintCategory}
-            onChange={(e) => setNewComplaintCategory(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitComplaintCategory()}
-            style={inputStyle}
-          />
-          <button onClick={submitComplaintCategory} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
-            Adicionar
-          </button>
-        </div>
-
-        {[
-          ["Motivos de desistência", motivosDesistencia, "motivosDesistencia", novoMotivo, setNovoMotivo, "Ex: Mudança de escola"],
-          ["Categorias do inquérito de satisfação", categoriasSatisfacao, "categoriasSatisfacao", novaCatSat, setNovaCatSat, "Ex: Comunicação"],
-          ["Espaços de treino", espacosLista, "espacosLista", novoEspaco, setNovoEspaco, "Ex: Campo 3"],
-        ].map(([titulo, lista, chave, valor, setValor, ph]) => (
-          <div key={chave}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-              {titulo}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-              {(lista || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem itens.</div>}
-              {(lista || []).map((x) => (
-                <Chip key={x} label={x} onDelete={() => onRemove(chave, x)} />
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-              <input
-                type="text"
-                placeholder={ph}
-                value={valor}
-                onChange={(e) => setValor(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && valor.trim()) {
-                    onAdd(chave, valor.trim());
-                    setValor("");
-                  }
+        {lista.length === 0 ? (
+          <div style={{ fontSize: 13, color: COLORS.slate, padding: "14px 0" }}>Lista vazia. Acrescenta o primeiro item acima.</div>
+        ) : (
+          <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+            {lista.map((x, i) => (
+              <div
+                key={x}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "9px 12px",
+                  borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none",
+                  fontSize: 13.5,
                 }}
-                style={inputStyle}
-              />
-              <button
-                onClick={() => {
-                  if (valor.trim()) {
-                    onAdd(chave, valor.trim());
-                    setValor("");
-                  }
-                }}
-                style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}
               >
-                Adicionar
-              </button>
-            </div>
+                <span style={{ flex: 1 }}>{x}</span>
+                {emUso && emUso(x) > 0 && (
+                  <span style={{ fontSize: 11, color: COLORS.slate }}>{emUso(x)} em uso</span>
+                )}
+                <button onClick={() => remover(x)} style={{ ...iconBtnStyle, padding: 0 }} title="Remover">
+                  <Trash2 size={14} color={COLORS.danger} />
+                </button>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
 
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Áreas / Departamentos (auditorias)
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {(auditAreas || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem áreas.</div>}
-          {(auditAreas || []).map((a) => (
-            <Chip key={a} label={a} onDelete={() => onRemove("auditAreas", a)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-          <input
-            type="text"
-            placeholder="Ex: Técnica"
-            value={newArea}
-            onChange={(e) => setNewArea(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitArea()}
-            style={inputStyle}
-          />
-          <button onClick={submitArea} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
-            Adicionar
-          </button>
-        </div>
-
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Tipos de sanção (Pais / EE)
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {(sanctionTypes || []).length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem tipos de sanção.</div>}
-          {(sanctionTypes || []).map((t) => (
-            <Chip key={t} label={t} onDelete={() => onRemove("sanctionTypes", t)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-          <input
-            type="text"
-            placeholder="Ex: Suspensão por 3 jogos"
-            value={newSanctionType}
-            onChange={(e) => setNewSanctionType(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitSanctionType()}
-            style={inputStyle}
-          />
-          <button onClick={submitSanctionType} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
-            Adicionar
-          </button>
-        </div>
-
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Temas (mais específicos que a categoria)
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {categories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem temas.</div>}
-          {categories.map((c) => (
-            <Chip key={c} label={c} onDelete={() => onRemove("categories", c)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-          <input
-            type="text"
-            placeholder="Nome do novo tema"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitCategory()}
-            style={inputStyle}
-          />
-          <button onClick={submitCategory} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
-            Adicionar
-          </button>
-        </div>
-
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-          Categorias de constatações de auditoria
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-          {auditCategories.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda sem categorias.</div>}
-          {auditCategories.map((c) => (
-            <Chip key={c} label={c} onDelete={() => onRemove("auditCategories", c)} />
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            type="text"
-            placeholder="Ex: Instalações, Documentação, Segurança..."
-            value={newAuditCategory}
-            onChange={(e) => setNewAuditCategory(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submitAuditCategory()}
-            style={inputStyle}
-          />
-          <button onClick={submitAuditCategory} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}>
-            Adicionar
-          </button>
-        </div>
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 12 }}>{erro}</div>}
       </div>
     </div>
   );
 }
+
+// ---------- Manage schools/categories modal ----------
 
 // ---------- Complaint detail / notes timeline ----------
 function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen }) {
@@ -2492,7 +2345,7 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
 
 
 // ---------- New audit form ----------
-function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
+function AuditForm({ schoolOptions, onCancel, onSave, onGerirLista }) {
   const [school, setSchool] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
 
@@ -2516,7 +2369,7 @@ function AuditForm({ schoolOptions, onCancel, onSave, onManageOptions }) {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>
+          <button type="button" onClick={() => onGerirLista("schools")} style={{ ...linkBtnStyle, marginTop: 0 }}>
             Gerir lista
           </button>
         </div>
@@ -2561,7 +2414,7 @@ function AuditDetail({
   onRemoveFinding,
   onUpdateFinding,
   onRemoveAudit,
-  onManageOptions,
+  onGerirLista,
 }) {
   const [classification, setClassification] = useState("NC");
   const [category, setCategory] = useState("");
@@ -2644,7 +2497,7 @@ function AuditDetail({
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 0 }}>Área / Departamento</label>
-          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>
+          <button type="button" onClick={() => onGerirLista("auditAreas")} style={{ ...linkBtnStyle, marginTop: 0 }}>
             Gerir lista
           </button>
         </div>
@@ -2659,7 +2512,7 @@ function AuditDetail({
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle, marginTop: 0 }}>Categoria</label>
-          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>
+          <button type="button" onClick={() => onGerirLista("auditCategories")} style={{ ...linkBtnStyle, marginTop: 0 }}>
             Gerir lista
           </button>
         </div>
@@ -3433,7 +3286,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onManageOptions }) {
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista }) {
   const [form, setForm] = useState({
     personType: "familia",
     personName: "",
@@ -3494,7 +3347,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle }}>Escola (opcional)</label>
-          <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+          <button type="button" onClick={() => onGerirLista("schools")} style={linkBtnStyle}>
             Gerir lista
           </button>
         </div>
@@ -3583,7 +3436,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <label style={{ ...labelStyle }}>Tipo de sanção</label>
-                  <button type="button" onClick={onManageOptions} style={linkBtnStyle}>
+                  <button type="button" onClick={() => onGerirLista("sanctionTypes")} style={linkBtnStyle}>
                     Gerir lista
                   </button>
                 </div>
@@ -4090,7 +3943,7 @@ function SemDados({ texto, icon, titulo, acao, onAcao }) {
 }
 
 // ---------- Desistências ----------
-function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onManageOptions }) {
+function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onGerirLista }) {
   const [escola, setEscola] = useState(escolas[0] || "");
   const [turma, setTurma] = useState("");
   const [motivo, setMotivo] = useState(motivos[0] || "");
@@ -4155,7 +4008,7 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <label style={{ ...labelStyle, marginTop: 0 }}>Motivo</label>
-              <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
+              <button type="button" onClick={() => onGerirLista("motivosDesistencia")} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
             </div>
             <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ ...inputStyle, width: 230 }}>
               {motivos.map((m) => (
@@ -4702,7 +4555,7 @@ function SecaoDesvinculacoes({ escolas, desvinculacoes, onSave, onUpdate, onRemo
 }
 
 // ---------- Espaços: mapa de ocupação com lotação automática ----------
-function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, onSave, onRemove, onManageOptions }) {
+function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, onSave, onRemove, onGerirLista }) {
   const [escola, setEscola] = useState(escolas[0] || "");
   const [espaco, setEspaco] = useState(listaEspacos[0] || "");
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
@@ -4753,7 +4606,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, onSave, 
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
               <label style={{ ...labelStyle, marginTop: 0 }}>Espaço</label>
-              <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
+              <button type="button" onClick={() => onGerirLista("espacosLista")} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir</button>
             </div>
             <select value={espaco} onChange={(e) => setEspaco(e.target.value)} style={{ ...inputStyle, width: 160 }}>
               {listaEspacos.map((s) => (
@@ -5091,7 +4944,7 @@ function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
 }
 
 // ---------- Satisfação ----------
-function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSave, onRemove, onManageOptions }) {
+function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSave, onRemove, onGerirLista }) {
   const [escola, setEscola] = useState(escolas[0] || "");
   const [escalao, setEscalao] = useState("");
   const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7));
@@ -5208,7 +5061,7 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
       <div style={{ ...panelStyle, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <div style={panelTitle}>Registar resultados de inquérito</div>
-          <button type="button" onClick={onManageOptions} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir categorias</button>
+          <button type="button" onClick={() => onGerirLista("categoriasSatisfacao")} style={{ ...linkBtnStyle, marginTop: 0 }}>Gerir categorias</button>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
           <div>
@@ -5376,6 +5229,282 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
   );
 }
 
+// ---------- Importar alunos por turma ----------
+// Aceita colar diretamente do Excel (colunas separadas por tabulação) ou um
+// ficheiro CSV. Não usa bibliotecas: o Excel copia em texto tabulado e o
+// "Guardar como CSV" produz texto simples, por isso basta partir linhas.
+function lerTabela(texto) {
+  const linhas = String(texto)
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((l) => l.trim() !== "");
+  if (linhas.length === 0) return [];
+  // Separador: tabulação (colado do Excel), ponto e vírgula (CSV português) ou vírgula.
+  const primeira = linhas[0];
+  const sep = primeira.includes("\t") ? "\t" : primeira.includes(";") ? ";" : ",";
+  return linhas.map((l) =>
+    l.split(sep).map((c) => c.trim().replace(/^"(.*)"$/, "$1"))
+  );
+}
+
+const COLUNAS_IMPORT = [
+  { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "polo/escola", "school"] },
+  { chave: "turma", rotulo: "Turma / equipa", sinonimos: ["turma", "equipa", "escalao", "escalão", "classe"] },
+  { chave: "ano", rotulo: "Ano de nascimento", sinonimos: ["ano", "ano de nascimento", "nascimento", "anonascimento"] },
+  { chave: "m", rotulo: "Masculinos", sinonimos: ["m", "masculinos", "masculino", "rapazes", "h"] },
+  { chave: "f", rotulo: "Femininos", sinonimos: ["f", "femininos", "feminino", "raparigas"] },
+];
+
+function normCab(t) {
+  return String(t || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
+  const [texto, setTexto] = useState("");
+  const [mapa, setMapa] = useState({});
+  const [temCabecalho, setTemCabecalho] = useState(true);
+  const [erro, setErro] = useState("");
+
+  const tabela = useMemo(() => lerTabela(texto), [texto]);
+  const nCols = tabela.length ? Math.max(...tabela.map((l) => l.length)) : 0;
+
+  // Tenta adivinhar as colunas a partir dos títulos.
+  useEffect(() => {
+    if (!tabela.length || !temCabecalho) return;
+    const cab = tabela[0].map(normCab);
+    const novo = {};
+    COLUNAS_IMPORT.forEach((c) => {
+      const i = cab.findIndex((h) => c.sinonimos.includes(h));
+      if (i >= 0) novo[c.chave] = String(i);
+    });
+    setMapa(novo);
+  }, [texto, temCabecalho]);
+
+  const linhasDados = temCabecalho ? tabela.slice(1) : tabela;
+
+  const processadas = useMemo(() => {
+    if (!linhasDados.length) return [];
+    return linhasDados.map((linha, idx) => {
+      const val = (chave) => {
+        const i = mapa[chave];
+        return i === undefined || i === "" ? "" : (linha[Number(i)] || "").trim();
+      };
+      const escola = val("escola");
+      const turma = val("turma");
+      const anoTxt = val("ano");
+      const m = val("m");
+      const f = val("f");
+      const ano = parseInt(String(anoTxt).replace(/\D/g, ""), 10);
+      const problemas = [];
+      if (!escola) problemas.push("sem escola");
+      else if (!escolas.includes(escola)) problemas.push(`escola "${escola}" não existe`);
+      if (!turma) problemas.push("sem turma");
+      else if (!turmas.includes(turma)) problemas.push(`turma "${turma}" não existe`);
+      if (!anoTxt || isNaN(ano) || ano < 1990 || ano > new Date().getFullYear()) problemas.push("ano inválido");
+      const mn = m === "" ? 0 : Number(String(m).replace(",", "."));
+      const fn = f === "" ? 0 : Number(String(f).replace(",", "."));
+      if (isNaN(mn) || mn < 0) problemas.push("masculinos inválido");
+      if (isNaN(fn) || fn < 0) problemas.push("femininos inválido");
+      if (!problemas.length && mn + fn === 0) problemas.push("sem atletas");
+      return {
+        linha: idx + (temCabecalho ? 2 : 1),
+        escola,
+        turma,
+        ano,
+        m: Math.round(mn) || 0,
+        f: Math.round(fn) || 0,
+        problemas,
+      };
+    });
+  }, [linhasDados, mapa, escolas, turmas, temCabecalho]);
+
+  const validas = processadas.filter((p) => p.problemas.length === 0);
+  const invalidas = processadas.filter((p) => p.problemas.length > 0);
+  const totalAtletas = validas.reduce((t, p) => t + p.m + p.f, 0);
+
+  const carregarFicheiro = (ev) => {
+    const ficheiro = ev.target.files && ev.target.files[0];
+    if (!ficheiro) return;
+    if (/\.xlsx?$/i.test(ficheiro.name)) {
+      setErro('Ficheiros .xls e .xlsx não são lidos diretamente. No Excel usa "Guardar como" → CSV, ou copia as células e cola na caixa abaixo.');
+      ev.target.value = "";
+      return;
+    }
+    setErro("");
+    const leitor = new FileReader();
+    leitor.onload = () => setTexto(String(leitor.result || ""));
+    leitor.onerror = () => setErro("Não foi possível ler o ficheiro.");
+    leitor.readAsText(ficheiro, "UTF-8");
+    ev.target.value = "";
+  };
+
+  const confirmar = () => {
+    if (!validas.length) {
+      setErro("Não há linhas válidas para importar.");
+      return;
+    }
+    onImportar(validas.map(({ escola, turma, ano, m, f }) => ({ escola, turma, ano, m, f })));
+    notificar(`${validas.length} linha(s) importada(s), ${totalAtletas} atletas.`);
+    onFechar();
+  };
+
+  const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "7px 9px", borderBottom: `1px solid ${COLORS.rule}` };
+  const td = { padding: "7px 9px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5 };
+
+  return (
+    <div
+      className="veil"
+      style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }}
+      onClick={onFechar}
+    >
+      <div
+        className="sheet"
+        style={{
+          width: "min(760px, 100%)",
+          maxHeight: "calc(100vh - 32px)",
+          overflowY: "auto",
+          background: COLORS.paperRaised,
+          border: `1px solid ${COLORS.rule}`,
+          borderRadius: 14,
+          padding: "20px 22px 22px",
+          boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>Importar alunos por turma</div>
+          <button onClick={onFechar} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Fechar">
+            <X size={17} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginBottom: 16 }}>
+          Copia as células no Excel e cola aqui, ou carrega um ficheiro CSV. Precisas das colunas escola, turma, ano de
+          nascimento, masculinos e femininos — apenas números, sem nomes de atletas.
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          <label
+            className="press"
+            style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" }}
+          >
+            <input type="file" accept=".csv,.tsv,.txt,text/csv" onChange={carregarFicheiro} style={{ display: "none" }} />
+            Carregar CSV
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: COLORS.ink2 }}>
+            <input type="checkbox" checked={temCabecalho} onChange={(e) => setTemCabecalho(e.target.checked)} />
+            A primeira linha são os títulos das colunas
+          </label>
+          {texto && (
+            <button onClick={() => { setTexto(""); setMapa({}); setErro(""); }} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto" }}>
+              Limpar
+            </button>
+          )}
+        </div>
+
+        <textarea
+          rows={6}
+          value={texto}
+          onChange={(e) => { setTexto(e.target.value); setErro(""); }}
+          placeholder={"Escola\tTurma\tAno\tM\tF\nDragon Force Gondomar\tSub-10\t2016\t14\t2\nDragon Force Gondomar\tRaíz\t2020\t9\t3"}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 12.5, lineHeight: 1.6 }}
+        />
+
+        {nCols > 0 && (
+          <>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "16px 0 8px" }}>
+              Que coluna corresponde a quê
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+              {COLUNAS_IMPORT.map((c) => (
+                <div key={c.chave}>
+                  <label style={{ ...labelStyle, marginTop: 0 }}>{c.rotulo}</label>
+                  <select
+                    value={mapa[c.chave] ?? ""}
+                    onChange={(e) => setMapa((mp) => ({ ...mp, [c.chave]: e.target.value }))}
+                    style={inputStyle}
+                  >
+                    <option value="">—</option>
+                    {Array.from({ length: nCols }).map((_, i) => (
+                      <option key={i} value={String(i)}>
+                        {temCabecalho && tabela[0][i] ? tabela[0][i] : `Coluna ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {processadas.length > 0 && (
+          <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <Tag label={`${validas.length} linha(s) pronta(s)`} color={COLORS.ok} bg={COLORS.okBg} />
+              {invalidas.length > 0 && <Tag label={`${invalidas.length} com problemas`} color={COLORS.danger} bg={COLORS.dangerBg} />}
+              <Tag label={`${totalAtletas} atletas`} color={COLORS.navySoft} bg={COLORS.navyWash} />
+            </div>
+
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Linha", "Escola", "Turma", "Ano", "M", "F", "Estado"].map((h) => (
+                      <th key={h} style={th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {processadas.slice(0, 60).map((p) => (
+                    <tr key={p.linha} style={{ background: p.problemas.length ? COLORS.dangerBg : "transparent" }}>
+                      <td style={{ ...td, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{p.linha}</td>
+                      <td style={td}>{p.escola || "—"}</td>
+                      <td style={td}>{p.turma || "—"}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{isNaN(p.ano) ? "—" : p.ano}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{p.m}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{p.f}</td>
+                      <td style={{ ...td, fontSize: 11.5, color: p.problemas.length ? COLORS.danger : COLORS.ok }}>
+                        {p.problemas.length ? p.problemas.join("; ") : "pronta"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {processadas.length > 60 && (
+              <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 8 }}>
+                A mostrar as primeiras 60 de {processadas.length} linhas.
+              </div>
+            )}
+          </>
+        )}
+
+        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 12 }}>{erro}</div>}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onFechar} style={secondaryBtnStyle}>
+            Cancelar
+          </button>
+          <button
+            className="press"
+            onClick={confirmar}
+            disabled={!validas.length}
+            style={{ ...primaryBtnStyle, opacity: validas.length ? 1 : 0.5, cursor: validas.length ? "pointer" : "default" }}
+          >
+            Importar {validas.length || ""} linha(s)
+          </button>
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10, lineHeight: 1.5 }}>
+          Linhas com a mesma escola, turma e ano substituem o registo existente. As que têm problemas são ignoradas.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Inscritos: registo semanal, turmas e análise ----------
 
 function TurmaChip({ label, onDelete }) {
@@ -5457,6 +5586,9 @@ function InscritosPage({
   eventos,
   satisfacao,
   onSaveSemana,
+  onRetrato,
+  onImportarTurmas,
+  notificar,
   onSaveTurma,
   onRemoveTurma,
   onSaveEpocaAnterior,
@@ -5477,7 +5609,7 @@ function InscritosPage({
   onRemoveEvento,
   onSaveSatisfacao,
   onRemoveSatisfacao,
-  onManageOptions,
+  onGerirLista,
 }) {
   const [view, setView] = useState("registo");
   const escolas = options.schools || [];
@@ -5526,7 +5658,7 @@ function InscritosPage({
           titulo="Ainda não há escolas"
           texto="As escolas são partilhadas por toda a app. Cria-as primeiro e depois atribuis turmas a cada uma."
           acao="Escolas e listas"
-          onAcao={onManageOptions}
+          onAcao={() => onGerirLista("schools")}
         />
       ) : view === "experiencias" ? (
         <SecaoExperiencias
@@ -5547,7 +5679,7 @@ function InscritosPage({
           desistencias={desistencias}
           onSave={onSaveDesistencia}
           onRemove={onRemoveDesistencia}
-          onManageOptions={onManageOptions}
+          onGerirLista={onGerirLista}
         />
       ) : view === "desvinc" ? (
         <SecaoDesvinculacoes
@@ -5566,7 +5698,7 @@ function InscritosPage({
           listaEspacos={options.espacosLista || DEFAULT_ESPACOS}
           onSave={onSaveEspaco}
           onRemove={onRemoveEspaco}
-          onManageOptions={onManageOptions}
+          onGerirLista={onGerirLista}
         />
       ) : view === "eventos" ? (
         <SecaoEventos escolas={escolas} eventos={eventos} onSave={onSaveEvento} onRemove={onRemoveEvento} />
@@ -5579,7 +5711,7 @@ function InscritosPage({
           satisfacao={satisfacao}
           onSave={onSaveSatisfacao}
           onRemove={onRemoveSatisfacao}
-          onManageOptions={onManageOptions}
+          onGerirLista={onGerirLista}
         />
       ) : view === "registo" ? (
         <InscritosRegisto
@@ -5589,12 +5721,16 @@ function InscritosPage({
           epocaAnterior={epocaAnterior}
           options={options}
           onSaveSemana={onSaveSemana}
+          onRetrato={onRetrato}
+          onImportarTurmas={onImportarTurmas}
+          notificar={notificar}
           onSaveTurma={onSaveTurma}
           onRemoveTurma={onRemoveTurma}
           onSaveEpocaAnterior={onSaveEpocaAnterior}
           onToggleTurmaEscola={onToggleTurmaEscola}
           onAddOption={onAddOption}
           onRemoveOption={onRemoveOption}
+          onGerirLista={onGerirLista}
         />
       ) : (
         <InscritosAnalise
@@ -5616,6 +5752,9 @@ function InscritosRegisto({
   turmasAlunos,
   epocaAnterior,
   options,
+  onImportarTurmas,
+  onRetrato,
+  notificar,
   onSaveSemana,
   onSaveTurma,
   onRemoveTurma,
@@ -5637,13 +5776,6 @@ function InscritosRegisto({
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const porEscola = options.turmasPorEscola || {};
 
-  const [sEsc, setSEsc] = useState(escolas[0] || "");
-  const [sSem, setSSem] = useState(semanaAtual);
-  const [sTot, setSTot] = useState("");
-  const [sNov, setSNov] = useState("");
-  const [sDes, setSDes] = useState("");
-  const [erroSemana, setErroSemana] = useState("");
-
   const [tEsc, setTEsc] = useState(escolas[0] || "");
   const [tTurma, setTTurma] = useState("");
   const [tAno, setTAno] = useState(String(hoje.getFullYear() - 10));
@@ -5656,6 +5788,7 @@ function InscritosRegisto({
   const [hDes, setHDes] = useState("");
   const [erroH, setErroH] = useState("");
 
+  const [importarAberto, setImportarAberto] = useState(false);
   const [gEsc, setGEsc] = useState(escolas[0] || "");
   const [novaTurma, setNovaTurma] = useState("");
   const [novoTipo, setNovoTipo] = useState("escolinha");
@@ -5664,18 +5797,6 @@ function InscritosRegisto({
   const turmasDaEscola = porEscola[tEsc] || [];
   const anos = [];
   for (let a = hoje.getFullYear(); a >= hoje.getFullYear() - 20; a--) anos.push(String(a));
-
-  const guardarSemana = () => {
-    if (sTot === "" || isNaN(sTot) || Number(sTot) < 0) {
-      setErroSemana("Introduz um número de inscritos válido.");
-      return;
-    }
-    setErroSemana("");
-    onSaveSemana(sEsc, sSem, { total: Math.round(Number(sTot)), novas: Math.round(Number(sNov || 0)), desist: Math.round(Number(sDes || 0)) });
-    setSTot("");
-    setSNov("");
-    setSDes("");
-  };
 
   const guardarTurma = () => {
     if ((tM === "" && tF === "") || Number(tM || 0) < 0 || Number(tF || 0) < 0) {
@@ -5831,39 +5952,20 @@ function InscritosRegisto({
       </div>
 
       <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Registar semana</div>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-            <select value={sEsc} onChange={(e) => setSEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
-              {escolas.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Semana</label>
-            <input type="week" value={sSem} onChange={(e) => setSSem(e.target.value)} style={{ ...inputStyle, width: 170 }} />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos</label>
-            <input type="number" min="0" value={sTot} onChange={(e) => { setSTot(e.target.value); setErroSemana(""); }} style={{ ...inputStyle, width: 110 }} placeholder="120" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Novas inscrições</label>
-            <input type="number" min="0" value={sNov} onChange={(e) => setSNov(e.target.value)} style={{ ...inputStyle, width: 130 }} placeholder="4" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Desistências</label>
-            <input type="number" min="0" value={sDes} onChange={(e) => setSDes(e.target.value)} style={{ ...inputStyle, width: 120 }} placeholder="2" />
-          </div>
-          <button onClick={guardarSemana} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
-            Registar
-          </button>
+        <div style={panelTitle}>Retrato semanal</div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 14, lineHeight: 1.55 }}>
+          O total de inscritos não se escreve à mão: é somado das turmas. Este botão guarda o retrato desta semana em
+          todas as escolas, para depois haver histórico e curvas de crescimento na Análise.
         </div>
-        {erroSemana && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroSemana}</div>}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="press" onClick={() => onRetrato(semanaAtual)} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
+            Guardar retrato de {semanaLabel(semanaAtual)}
+          </button>
+          <span style={{ fontSize: 12, color: COLORS.slate }}>
+            {escolas.filter((e) => (inscritos[e] || []).some((r) => r.semana === semanaAtual)).length} de {escolas.length} escolas já
+            com retrato desta semana
+          </span>
+        </div>
 
         {registosSemana.length > 0 && (
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
@@ -5892,7 +5994,12 @@ function InscritosRegisto({
       </div>
 
       <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Alunos por turma / escalão</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+          <div style={panelTitle}>Alunos por turma / escalão</div>
+          <button className="press" onClick={() => setImportarAberto(true)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 13px", fontSize: 12.5 }}>
+            Importar de Excel / CSV
+          </button>
+        </div>
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>Apenas números absolutos — nenhum dado pessoal de atletas.</div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
@@ -6018,6 +6125,16 @@ function InscritosRegisto({
           </button>
         </div>
         {erroH && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroH}</div>}
+
+        {importarAberto && (
+          <ImportarAlunos
+            escolas={escolas}
+            turmas={turmas}
+            onImportar={onImportarTurmas}
+            onFechar={() => setImportarAberto(false)}
+            notificar={notificar}
+          />
+        )}
 
         <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
           <thead>
@@ -6754,7 +6871,6 @@ export default function App() {
   const [satisfacao, setSatisfacao] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [showManage, setShowManage] = useState(false);
   const [showAuditForm, setShowAuditForm] = useState(false);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
@@ -6765,6 +6881,9 @@ export default function App() {
   // Notificações flutuantes: substituem o banner de erro, que só aparecia
   // numa das páginas e passava despercebido nas outras.
   const [paletaAberta, setPaletaAberta] = useState(false);
+  // Qual lista está a ser gerida: cada campo abre só a sua, em vez de um
+  // único menu com todas as listas da app.
+  const [listaAberta, setListaAberta] = useState(null);
   const [notificacoes, setNotificacoes] = useState([]);
   const notificar = useCallback((texto, tipo = "ok", duracao = 4200) => {
     const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -7059,6 +7178,59 @@ export default function App() {
     persistInscritos({ ...inscritos, [escola]: nova });
   };
 
+  // Retrato semanal: os totais vêm das turmas, as desistências dos registos
+  // dessa semana e as novas inscrições das experiências convertidas. Nada é
+  // escrito à mão, para não haver dois sítios a dizer coisas diferentes.
+  const guardarRetrato = (semana) => {
+    const [ano, sem] = String(semana).split("-W");
+    const inicio = new Date(Date.UTC(+ano, 0, 4));
+    inicio.setUTCDate(inicio.getUTCDate() - ((inicio.getUTCDay() + 6) % 7) + (+sem - 1) * 7);
+    const fim = new Date(inicio);
+    fim.setUTCDate(fim.getUTCDate() + 6);
+    const naSemana = (d) => {
+      if (!d) return false;
+      const x = new Date(d + "T00:00:00Z");
+      return x >= inicio && x <= fim;
+    };
+
+    // Constrói o estado completo e grava uma única vez: gravar escola a escola
+    // partiria sempre do estado antigo e só a última sobreviveria.
+    const proximo = { ...inscritos };
+    let guardadas = 0;
+    (options.schools || []).forEach((escola) => {
+      const doEscola = turmasAlunos.filter((t) => t.escola === escola);
+      if (doEscola.length === 0) return;
+      const total = doEscola.reduce((n, t) => n + t.m + t.f, 0);
+      const desist = desistencias.filter((d) => d.escola === escola && naSemana(d.data)).reduce((n, d) => n + d.n, 0);
+      const novas = experiencias
+        .filter((x) => x.escola === escola && x.resultado === "sucesso" && naSemana(x.data))
+        .reduce((n, x) => n + (x.entraram || x.n), 0);
+      const lista = proximo[escola] || [];
+      const existe = lista.some((r) => r.semana === semana);
+      proximo[escola] = existe
+        ? lista.map((r) => (r.semana === semana ? { ...r, semana, total, novas, desist } : r))
+        : [...lista, { semana, total, novas, desist }];
+      guardadas += 1;
+    });
+
+    if (guardadas === 0) {
+      notificar("Não há turmas com alunos registados para fazer o retrato.", "aviso");
+      return;
+    }
+    persistInscritos(proximo);
+    notificar(`Retrato guardado para ${guardadas} escola(s).`);
+  };
+
+  const importarTurmas = (linhas) => {
+    let atual = [...turmasAlunos];
+    linhas.forEach((reg) => {
+      const i = atual.findIndex((r) => r.escola === reg.escola && r.turma === reg.turma && r.ano === reg.ano);
+      if (i >= 0) atual[i] = reg;
+      else atual.push(reg);
+    });
+    persistTurmas(atual);
+  };
+
   const saveTurmaAlunos = (registo) => {
     const i = turmasAlunos.findIndex((r) => r.escola === registo.escola && r.turma === registo.turma && r.ano === registo.ano);
     const next = i >= 0 ? turmasAlunos.map((r, k) => (k === i ? registo : r)) : [...turmasAlunos, registo];
@@ -7216,6 +7388,73 @@ export default function App() {
       : page === "inscritos"
       ? "Gestão de inscritos"
       : "Reclamações";
+
+  // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
+  const LISTAS = {
+    schools: {
+      titulo: "Escolas",
+      nota: "As escolas são partilhadas por toda a app: reclamações, auditorias, sanções e inscritos.",
+      placeholder: "Ex: Dragon Force Gondomar",
+      emUso: (x) =>
+        entries.filter((e) => e.school === x).length +
+        audits.filter((a) => a.school === x).length +
+        turmasAlunos.filter((t) => t.escola === x).length,
+    },
+    categories: {
+      titulo: "Temas de reclamação",
+      nota: "Mais específicos que a categoria. Ex: comportamento de treinador, mensalidades, balneários.",
+      placeholder: "Ex: Convocatórias",
+      emUso: (x) => entries.filter((e) => e.tema === x).length,
+    },
+    complaintCategories: {
+      titulo: "Categorias de reclamação",
+      nota: "O agrupamento geral: disciplinar, técnico, infraestrutura e o que mais precisares.",
+      placeholder: "Ex: Administrativo",
+      emUso: (x) => entries.filter((e) => e.categoria === x).length,
+    },
+    auditAreas: {
+      titulo: "Áreas e departamentos",
+      nota: "Usadas nas constatações das auditorias, para saber onde se concentram os problemas.",
+      placeholder: "Ex: Técnica",
+      emUso: (x) => audits.reduce((n, a) => n + (a.findings || []).filter((f) => f.area === x).length, 0),
+    },
+    auditCategories: {
+      titulo: "Categorias de constatação",
+      nota: "O tipo de constatação encontrada em auditoria. Ex: documentação, equipamento, registos.",
+      placeholder: "Ex: Documentação",
+      emUso: (x) => audits.reduce((n, a) => n + (a.findings || []).filter((f) => f.category === x).length, 0),
+    },
+    sanctionTypes: {
+      titulo: "Tipos de sanção",
+      nota: "Aplicáveis a pais e encarregados de educação.",
+      placeholder: "Ex: Suspensão por 3 jogos",
+      emUso: (x) => sanctions.filter((v) => v.sanctionType === x).length,
+    },
+    motivosDesistencia: {
+      titulo: "Motivos de desistência",
+      nota: "Lista fechada, para as estatísticas serem comparáveis. Não escrevas nomes de atletas.",
+      placeholder: "Ex: Mudança de escola",
+      emUso: (x) => desistencias.filter((d) => d.motivo === x).length,
+    },
+    categoriasSatisfacao: {
+      titulo: "Categorias do inquérito de satisfação",
+      nota: "As dimensões que perguntas no inquérito. Cada uma recebe uma percentagem.",
+      placeholder: "Ex: Comunicação",
+      emUso: (x) => satisfacao.filter((sa) => (sa.valores || {})[x] !== undefined).length,
+    },
+    espacosLista: {
+      titulo: "Espaços de treino",
+      nota: "Campos, meios-campos e pavilhões usados no mapa de ocupação.",
+      placeholder: "Ex: Campo 3",
+      emUso: (x) => espacos.filter((sp) => sp.espaco === x).length,
+    },
+    turmas: {
+      titulo: "Turmas e equipas",
+      nota: 'As que começam por "Sub" contam como competição; as restantes como escolinha.',
+      placeholder: "Ex: Sub-20",
+      emUso: (x) => turmasAlunos.filter((t) => t.turma === x).length,
+    },
+  };
 
   // Comandos da paleta: secções, ações e as reclamações abertas.
   const comandosPaleta = [
@@ -7469,7 +7708,7 @@ export default function App() {
         <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
         <button
           className="navItem press"
-          onClick={() => setShowManage(true)}
+          onClick={() => setListaAberta("__indice")}
           style={{
             display: "flex",
             alignItems: "center",
@@ -7488,7 +7727,7 @@ export default function App() {
           }}
         >
           <ShieldAlert size={15} />
-          <span>Escolas e listas</span>
+          <span>Listas</span>
         </button>
 
         {/* alternador de tema */}
@@ -7629,8 +7868,11 @@ export default function App() {
             onRemoveEvento={removeEvento}
             onSaveSatisfacao={saveSatisfacao}
             onRemoveSatisfacao={removeSatisfacao}
-            onManageOptions={() => setShowManage(true)}
+            onGerirLista={setListaAberta}
             onSaveSemana={saveSemanaInscritos}
+            onRetrato={guardarRetrato}
+            onImportarTurmas={importarTurmas}
+            notificar={notificar}
             onSaveTurma={saveTurmaAlunos}
             onRemoveTurma={removeTurmaAlunos}
             onSaveEpocaAnterior={saveEpocaAnterior}
@@ -7867,7 +8109,7 @@ export default function App() {
           schoolOptions={options.schools}
           categoryOptions={options.categories}
           categoriaOptions={options.complaintCategories}
-          onManageOptions={() => setShowManage(true)}
+          onGerirLista={setListaAberta}
           learned={learned}
           onCancel={() => {
             setShowForm(false);
@@ -7877,22 +8119,6 @@ export default function App() {
         />
       )}
 
-      {showManage && (
-        <ManageOptionsModal
-          schools={options.schools}
-          categories={options.categories}
-          auditCategories={options.auditCategories}
-          complaintCategories={options.complaintCategories}
-          sanctionTypes={options.sanctionTypes}
-          auditAreas={options.auditAreas}
-          motivosDesistencia={options.motivosDesistencia}
-          categoriasSatisfacao={options.categoriasSatisfacao}
-          espacosLista={options.espacosLista}
-          onAdd={addOption}
-          onRemove={removeOption}
-          onClose={() => setShowManage(false)}
-        />
-      )}
 
       {viewingDetail && (
         <ComplaintDetail
@@ -7919,7 +8145,7 @@ export default function App() {
           schoolOptions={options.schools}
           onCancel={() => setShowAuditForm(false)}
           onSave={addAudit}
-          onManageOptions={() => setShowManage(true)}
+          onGerirLista={setListaAberta}
         />
       )}
 
@@ -7933,7 +8159,81 @@ export default function App() {
           onRemoveFinding={removeFinding}
           onUpdateFinding={updateFinding}
           onRemoveAudit={removeAudit}
-          onManageOptions={() => setShowManage(true)}
+          onGerirLista={setListaAberta}
+        />
+      )}
+
+      {listaAberta === "__indice" && (
+        <div
+          className="veil"
+          style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }}
+          onClick={() => setListaAberta(null)}
+        >
+          <div
+            className="sheet"
+            style={{
+              width: "min(520px, 100%)",
+              maxHeight: "calc(100vh - 32px)",
+              overflowY: "auto",
+              background: COLORS.paperRaised,
+              border: `1px solid ${COLORS.rule}`,
+              borderRadius: 14,
+              padding: "20px 22px 22px",
+              boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>Listas da app</div>
+              <button onClick={() => setListaAberta(null)} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Fechar">
+                <X size={17} />
+              </button>
+            </div>
+            <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 16, lineHeight: 1.5 }}>
+              Também podes gerir cada lista onde ela é usada, no link "Gerir" junto ao campo.
+            </div>
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+              {Object.entries(LISTAS).map(([chave, meta], i) => (
+                <button
+                  key={chave}
+                  onClick={() => setListaAberta(chave)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    width: "100%",
+                    textAlign: "left",
+                    border: "none",
+                    borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none",
+                    background: "transparent",
+                    padding: "11px 13px",
+                    cursor: "pointer",
+                    color: COLORS.ink,
+                    fontSize: 13.5,
+                  }}
+                  className="liftable"
+                >
+                  <span style={{ flex: 1, fontWeight: 500 }}>{meta.titulo}</span>
+                  <span style={{ fontSize: 11.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
+                    {(options[chave] || []).length} item(s)
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {listaAberta && listaAberta !== "__indice" && LISTAS[listaAberta] && (
+        <GestorLista
+          titulo={LISTAS[listaAberta].titulo}
+          nota={LISTAS[listaAberta].nota}
+          placeholder={LISTAS[listaAberta].placeholder}
+          itens={options[listaAberta] || []}
+          emUso={LISTAS[listaAberta].emUso}
+          onAdd={(v) => addOption(listaAberta, v)}
+          onRemove={(v) => removeOption(listaAberta, v)}
+          onClose={() => setListaAberta(null)}
         />
       )}
 
@@ -7948,7 +8248,7 @@ export default function App() {
           schoolOptions={options.schools}
           complaints={entries}
           sanctionTypes={options.sanctionTypes}
-          onManageOptions={() => setShowManage(true)}
+          onGerirLista={setListaAberta}
         />
       )}
 
