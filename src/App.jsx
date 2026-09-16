@@ -5635,10 +5635,11 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
   );
 }
 
-// ---------- Importar alunos por turma ----------
-// Aceita colar diretamente do Excel (colunas separadas por tabulação) ou um
-// ficheiro CSV. Não usa bibliotecas: o Excel copia em texto tabulado e o
-// "Guardar como CSV" produz texto simples, por isso basta partir linhas.
+// ---------- Importar alunos ----------
+// Dois modos: uma linha por turma (já contado) ou uma linha por aluno, como
+// vem do Excel da secretaria. No segundo caso a contagem é feita aqui, no
+// browser: nomes e números de aluno são lidos para contar e descartados a
+// seguir. Nada de pessoal chega à base de dados.
 function lerTabela(texto) {
   const linhas = String(texto)
     .replace(/\r/g, "")
@@ -5648,95 +5649,269 @@ function lerTabela(texto) {
   // Separador: tabulação (colado do Excel), ponto e vírgula (CSV português) ou vírgula.
   const primeira = linhas[0];
   const sep = primeira.includes("\t") ? "\t" : primeira.includes(";") ? ";" : ",";
-  return linhas.map((l) =>
-    l.split(sep).map((c) => c.trim().replace(/^"(.*)"$/, "$1"))
-  );
+  return linhas.map((l) => l.split(sep).map((c) => c.trim().replace(/^"(.*)"$/, "$1")));
 }
 
-const COLUNAS_IMPORT = [
+function normChave(t) {
+  return String(t || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Ano de nascimento a partir de "2016", "12/03/2016", "2016-03-12" ou "12-03-16".
+function anoNascimento(valor) {
+  const t = String(valor || "").trim();
+  if (!t) return null;
+  const soDigitos = t.replace(/\D/g, "");
+  if (/^\d{4}$/.test(t)) return Number(t);
+  const iso = t.match(/^(\d{4})[-/.]\d{1,2}[-/.]\d{1,2}/);
+  if (iso) return Number(iso[1]);
+  const pt = t.match(/^\d{1,2}[-/.]\d{1,2}[-/.](\d{2,4})$/);
+  if (pt) {
+    const a = Number(pt[1]);
+    return a < 100 ? 2000 + a : a;
+  }
+  if (soDigitos.length === 8) return Number(soDigitos.slice(4));
+  const qualquer = t.match(/(19|20)\d{2}/);
+  return qualquer ? Number(qualquer[0]) : null;
+}
+
+// Género a partir de M/F, Masculino/Feminino, H/M, 1/2.
+function generoDe(valor) {
+  const t = normChave(valor);
+  if (!t) return null;
+  if (["m", "masculino", "masc", "h", "homem", "male", "rapaz", "1"].includes(t)) return "m";
+  if (["f", "feminino", "fem", "mulher", "female", "rapariga", "2"].includes(t)) return "f";
+  if (t.startsWith("masc") || t.startsWith("homem")) return "m";
+  if (t.startsWith("fem") || t.startsWith("mulher")) return "f";
+  return null;
+}
+
+// Tenta adivinhar a turma a partir de nomenclaturas soltas: "SUB12", "sub-12",
+// "Sub 12 A", "S12", "Iniciação B". Devolve null quando não há certeza.
+function adivinharTurma(bruto, turmas, niveis) {
+  const t = normChave(bruto);
+  if (!t) return null;
+  const exata = turmas.find((x) => normChave(x) === t);
+  if (exata) return exata;
+  const sub = t.match(/(?:sub|s)\s*-?\s*(\d{1,2})/);
+  if (sub) {
+    const alvo = `sub-${Number(sub[1])}`;
+    const achado = turmas.find((x) => normChave(x) === alvo);
+    if (achado) return achado;
+  }
+  const nivel = (niveis || []).find((n) => t.startsWith(normChave(n)));
+  if (nivel) return nivel;
+  return null;
+}
+
+const COLUNAS_AGREGADO = [
   { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "polo/escola", "school"] },
-  { chave: "turma", rotulo: "Turma / equipa", sinonimos: ["turma", "equipa", "escalao", "escalão", "classe"] },
+  { chave: "turma", rotulo: "Turma / equipa", sinonimos: ["turma", "equipa", "escalao", "classe"] },
   { chave: "ano", rotulo: "Ano de nascimento", sinonimos: ["ano", "ano de nascimento", "nascimento", "anonascimento"] },
   { chave: "m", rotulo: "Masculinos", sinonimos: ["m", "masculinos", "masculino", "rapazes", "h"] },
   { chave: "f", rotulo: "Femininos", sinonimos: ["f", "femininos", "feminino", "raparigas"] },
 ];
 
-function normCab(t) {
-  return String(t || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-}
+const COLUNAS_LISTA = [
+  { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "polo/escola", "centro", "school"] },
+  { chave: "escalao", rotulo: "Escalão / turma", sinonimos: ["escalao", "turma", "equipa", "classe", "nivel", "escalao/turma"] },
+  { chave: "genero", rotulo: "Género", sinonimos: ["genero", "sexo", "gender", "m/f", "masc/fem"] },
+  { chave: "nascimento", rotulo: "Nascimento (ano ou data)", sinonimos: ["ano", "nascimento", "nasc", "data nasc", "data nasc.", "data de nascimento", "datanascimento", "dn", "ano de nascimento", "aniversario"] },
+];
 
-function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
+function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onGuardarMapa, onFechar, notificar }) {
+  const [modo, setModo] = useState("lista");
   const [texto, setTexto] = useState("");
-  const [mapa, setMapa] = useState({});
+  const [mapaCol, setMapaCol] = useState({});
   const [temCabecalho, setTemCabecalho] = useState(true);
+  const [mapaEscalao, setMapaEscalao] = useState({});
+  const [mapaEscola, setMapaEscola] = useState({});
   const [erro, setErro] = useState("");
 
+  const colunas = modo === "lista" ? COLUNAS_LISTA : COLUNAS_AGREGADO;
   const tabela = useMemo(() => lerTabela(texto), [texto]);
   const nCols = tabela.length ? Math.max(...tabela.map((l) => l.length)) : 0;
-
-  // Tenta adivinhar as colunas a partir dos títulos.
-  useEffect(() => {
-    if (!tabela.length || !temCabecalho) return;
-    const cab = tabela[0].map(normCab);
-    const novo = {};
-    COLUNAS_IMPORT.forEach((c) => {
-      const i = cab.findIndex((h) => c.sinonimos.includes(h));
-      if (i >= 0) novo[c.chave] = String(i);
-    });
-    setMapa(novo);
-  }, [texto, temCabecalho]);
-
   const linhasDados = temCabecalho ? tabela.slice(1) : tabela;
 
-  const processadas = useMemo(() => {
-    if (!linhasDados.length) return [];
-    return linhasDados.map((linha, idx) => {
-      const val = (chave) => {
-        const i = mapa[chave];
-        return i === undefined || i === "" ? "" : (linha[Number(i)] || "").trim();
-      };
-      const escola = val("escola");
-      const turma = val("turma");
-      const anoTxt = val("ano");
-      const m = val("m");
-      const f = val("f");
-      const ano = parseInt(String(anoTxt).replace(/\D/g, ""), 10);
-      const problemas = [];
-      if (!escola) problemas.push("sem escola");
-      else if (!escolas.includes(escola)) problemas.push(`escola "${escola}" não existe`);
-      if (!turma) problemas.push("sem turma");
-      else if (!turmas.includes(turma)) problemas.push(`turma "${turma}" não existe`);
-      if (!anoTxt || isNaN(ano) || ano < 1990 || ano > new Date().getFullYear()) problemas.push("ano inválido");
-      const mn = m === "" ? 0 : Number(String(m).replace(",", "."));
-      const fn = f === "" ? 0 : Number(String(f).replace(",", "."));
-      if (isNaN(mn) || mn < 0) problemas.push("masculinos inválido");
-      if (isNaN(fn) || fn < 0) problemas.push("femininos inválido");
-      if (!problemas.length && mn + fn === 0) problemas.push("sem atletas");
-      return {
-        linha: idx + (temCabecalho ? 2 : 1),
-        escola,
-        turma,
-        ano,
-        m: Math.round(mn) || 0,
-        f: Math.round(fn) || 0,
-        problemas,
-      };
+  // Adivinha as colunas pelos títulos.
+  useEffect(() => {
+    if (!tabela.length || !temCabecalho) return;
+    const cab = tabela[0].map(normChave);
+    const novo = {};
+    const usadas = new Set();
+    // Primeiro os títulos que batem exatamente, depois os que contêm o
+    // sinónimo ("Data Nasc." encontra "nasc"), para não roubar a coluna certa.
+    colunas.forEach((c) => {
+      const i = cab.findIndex((h, idx) => !usadas.has(idx) && c.sinonimos.includes(h));
+      if (i >= 0) {
+        novo[c.chave] = String(i);
+        usadas.add(i);
+      }
     });
-  }, [linhasDados, mapa, escolas, turmas, temCabecalho]);
+    colunas.forEach((c) => {
+      if (novo[c.chave] !== undefined) return;
+      const i = cab.findIndex(
+        (h, idx) => !usadas.has(idx) && h && c.sinonimos.some((sin) => sin.length >= 3 && (h.includes(sin) || sin.includes(h)))
+      );
+      if (i >= 0) {
+        novo[c.chave] = String(i);
+        usadas.add(i);
+      }
+    });
+    setMapaCol((atual) => {
+      const igual = Object.keys(novo).length === Object.keys(atual).length && Object.entries(novo).every(([k, v]) => atual[k] === v);
+      return igual ? atual : novo;
+    });
+  }, [texto, temCabecalho, modo]);
 
-  const validas = processadas.filter((p) => p.problemas.length === 0);
-  const invalidas = processadas.filter((p) => p.problemas.length > 0);
-  const totalAtletas = validas.reduce((t, p) => t + p.m + p.f, 0);
+  const valorDe = (linha, chave) => {
+    const i = mapaCol[chave];
+    return i === undefined || i === "" ? "" : (linha[Number(i)] || "").trim();
+  };
+
+  // ----- modo lista: valores distintos que precisam de reconciliação -----
+  const escaloesBrutos = useMemo(() => {
+    if (modo !== "lista" || mapaCol.escalao === undefined) return [];
+    const contagem = {};
+    linhasDados.forEach((l) => {
+      const v = valorDe(l, "escalao");
+      if (v) contagem[v] = (contagem[v] || 0) + 1;
+    });
+    return Object.entries(contagem).sort((a, b) => b[1] - a[1]);
+  }, [linhasDados, mapaCol, modo]);
+
+  const escolasBrutas = useMemo(() => {
+    if (modo !== "lista" || mapaCol.escola === undefined) return [];
+    const contagem = {};
+    linhasDados.forEach((l) => {
+      const v = valorDe(l, "escola");
+      if (v) contagem[v] = (contagem[v] || 0) + 1;
+    });
+    return Object.entries(contagem).sort((a, b) => b[1] - a[1]);
+  }, [linhasDados, mapaCol, modo]);
+
+  // Pré-preenche com o mapeamento guardado de importações anteriores e, na
+  // falta dele, com o que a app consegue adivinhar.
+  useEffect(() => {
+    if (modo !== "lista" || escaloesBrutos.length === 0) return;
+    setMapaEscalao((atual) => {
+      const novo = { ...atual };
+      let mudou = false;
+      escaloesBrutos.forEach(([bruto]) => {
+        if (novo[bruto] !== undefined) return;
+        const guardado = (mapaGuardado || {})[normChave(bruto)];
+        novo[bruto] = guardado || adivinharTurma(bruto, turmas, niveis) || "";
+        mudou = true;
+      });
+      // Devolver o mesmo objeto quando nada muda evita um ciclo de renderização.
+      return mudou ? novo : atual;
+    });
+  }, [escaloesBrutos, modo]);
+
+  useEffect(() => {
+    if (modo !== "lista" || escolasBrutas.length === 0) return;
+    setMapaEscola((atual) => {
+      const novo = { ...atual };
+      let mudou = false;
+      escolasBrutas.forEach(([bruto]) => {
+        if (novo[bruto] !== undefined) return;
+        const exata = escolas.find((e) => normChave(e) === normChave(bruto));
+        const parcial = escolas.find((e) => normChave(e).includes(normChave(bruto)) || normChave(bruto).includes(normChave(e)));
+        novo[bruto] = exata || parcial || "";
+        mudou = true;
+      });
+      return mudou ? novo : atual;
+    });
+  }, [escolasBrutas, modo]);
+
+  const porResolver = modo === "lista" ? escaloesBrutos.filter(([b]) => !mapaEscalao[b]).length : 0;
+  const escolasPorResolver = modo === "lista" ? escolasBrutas.filter(([b]) => !mapaEscola[b]).length : 0;
+
+  // ----- agregação -----
+  const resultado = useMemo(() => {
+    if (!linhasDados.length) return { linhas: [], ignoradas: 0, motivos: {}, semGenero: 0, semAno: 0 };
+
+    if (modo === "agregado") {
+      const linhas = [];
+      let ignoradas = 0;
+      const motivos = {};
+      linhasDados.forEach((l) => {
+        const escola = valorDe(l, "escola");
+        const turma = valorDe(l, "turma");
+        const ano = anoNascimento(valorDe(l, "ano"));
+        const m = Number(String(valorDe(l, "m") || 0).replace(",", ".")) || 0;
+        const f = Number(String(valorDe(l, "f") || 0).replace(",", ".")) || 0;
+        const problema = !escolas.includes(escola)
+          ? "escola desconhecida"
+          : !turmas.includes(turma)
+          ? "turma desconhecida"
+          : !ano
+          ? "ano inválido"
+          : m + f === 0
+          ? "sem atletas"
+          : null;
+        if (problema) {
+          ignoradas += 1;
+          motivos[problema] = (motivos[problema] || 0) + 1;
+          return;
+        }
+        linhas.push({ escola, turma, ano, m: Math.round(m), f: Math.round(f) });
+      });
+      return { linhas, ignoradas, motivos, semGenero: 0, semAno: 0 };
+    }
+
+    // modo lista: conta alunos por escola + turma + ano, separando o género
+    const grupos = new Map();
+    let ignoradas = 0;
+    let semGenero = 0;
+    let semAno = 0;
+    const motivos = {};
+    linhasDados.forEach((l) => {
+      const escolaBruta = valorDe(l, "escola");
+      const escalaoBruto = valorDe(l, "escalao");
+      const escola = mapaEscola[escolaBruta] || "";
+      const turma = mapaEscalao[escalaoBruto] || "";
+      if (!escola) {
+        ignoradas += 1;
+        motivos["escola sem correspondência"] = (motivos["escola sem correspondência"] || 0) + 1;
+        return;
+      }
+      if (!turma) {
+        ignoradas += 1;
+        motivos["escalão sem correspondência"] = (motivos["escalão sem correspondência"] || 0) + 1;
+        return;
+      }
+      const ano = anoNascimento(valorDe(l, "nascimento"));
+      if (!ano) semAno += 1;
+      const g = generoDe(valorDe(l, "genero"));
+      if (!g) semGenero += 1;
+      // Sem ano, o aluno conta na turma com ano 0, para não se perder no total.
+      const chave = `${escola}||${turma}||${ano || 0}`;
+      const atual = grupos.get(chave) || { escola, turma, ano: ano || 0, m: 0, f: 0 };
+      if (g === "f") atual.f += 1;
+      else atual.m += 1; // sem género indicado, entra em masculinos
+      grupos.set(chave, atual);
+    });
+    return {
+      linhas: [...grupos.values()].sort((a, b) => a.escola.localeCompare(b.escola) || a.turma.localeCompare(b.turma) || a.ano - b.ano),
+      ignoradas,
+      motivos,
+      semGenero,
+      semAno,
+    };
+  }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas]);
+
+  const totalAtletas = resultado.linhas.reduce((t, l) => t + l.m + l.f, 0);
 
   const carregarFicheiro = (ev) => {
     const ficheiro = ev.target.files && ev.target.files[0];
     if (!ficheiro) return;
     if (/\.xlsx?$/i.test(ficheiro.name)) {
-      setErro('Ficheiros .xls e .xlsx não são lidos diretamente. No Excel usa "Guardar como" → CSV, ou copia as células e cola na caixa abaixo.');
+      setErro('Ficheiros .xls e .xlsx não são lidos diretamente. No Excel usa "Guardar como" → CSV, ou seleciona as células e cola na caixa abaixo.');
       ev.target.value = "";
       return;
     }
@@ -5749,12 +5924,20 @@ function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
   };
 
   const confirmar = () => {
-    if (!validas.length) {
-      setErro("Não há linhas válidas para importar.");
+    if (!resultado.linhas.length) {
+      setErro("Não há nada para importar. Confirma o mapeamento das colunas e dos escalões.");
       return;
     }
-    onImportar(validas.map(({ escola, turma, ano, m, f }) => ({ escola, turma, ano, m, f })));
-    notificar(`${validas.length} linha(s) importada(s), ${totalAtletas} atletas.`);
+    onImportar(resultado.linhas);
+    if (modo === "lista" && onGuardarMapa) {
+      // Guarda as correspondências para a próxima importação já vir resolvida.
+      const mapa = {};
+      Object.entries(mapaEscalao).forEach(([bruto, turma]) => {
+        if (turma) mapa[normChave(bruto)] = turma;
+      });
+      onGuardarMapa(mapa);
+    }
+    notificar(`${resultado.linhas.length} turma(s) atualizada(s), ${totalAtletas} atletas contados.`);
     onFechar();
   };
 
@@ -5770,7 +5953,7 @@ function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
       <div
         className="sheet"
         style={{
-          width: "min(760px, 100%)",
+          width: "min(820px, 100%)",
           maxHeight: "calc(100vh - 32px)",
           overflowY: "auto",
           background: COLORS.paperRaised,
@@ -5781,58 +5964,114 @@ function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 4 }}>
-          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>Importar alunos por turma</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.015em" }}>Importar alunos</div>
           <button onClick={onFechar} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Fechar">
             <X size={17} />
           </button>
         </div>
-        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginBottom: 16 }}>
-          Copia as células no Excel e cola aqui, ou carrega um ficheiro CSV. Precisas das colunas escola, turma, ano de
-          nascimento, masculinos e femininos — apenas números, sem nomes de atletas.
+
+        <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2, marginBottom: 14 }}>
+          {[
+            ["lista", "Lista de alunos"],
+            ["agregado", "Já contado por turma"],
+          ].map(([k, l]) => (
+            <button
+              key={k}
+              className="pill"
+              onClick={() => {
+                setModo(k);
+                setErro("");
+              }}
+              style={{
+                background: modo === k ? COLORS.paperRaised : "transparent",
+                border: "none",
+                borderRadius: 7,
+                padding: "7px 14px",
+                fontSize: 13,
+                fontWeight: modo === k ? 600 : 500,
+                color: modo === k ? COLORS.ink : COLORS.ink2,
+                cursor: "pointer",
+                boxShadow: modo === k ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+
+        <div
+          style={{
+            fontSize: 12.5,
+            color: COLORS.ink2,
+            lineHeight: 1.55,
+            marginBottom: 14,
+            padding: "10px 12px",
+            background: COLORS.navyWash,
+            borderRadius: 9,
+          }}
+        >
+          {modo === "lista" ? (
+            <>
+              Uma linha por aluno, como vem do Excel da secretaria. A contagem é feita aqui, no teu browser: nomes e
+              números de aluno são usados para contar e não são guardados. Só entram na app os totais por escola, turma,
+              ano e género. Podes até colar as colunas com os nomes — basta não as mapear.
+            </>
+          ) : (
+            <>Uma linha por turma, com os totais já somados por ti.</>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-          <label
-            className="press"
-            style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" }}
-          >
+          <label className="press" style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
             <input type="file" accept=".csv,.tsv,.txt,text/csv" onChange={carregarFicheiro} style={{ display: "none" }} />
             Carregar CSV
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: COLORS.ink2 }}>
             <input type="checkbox" checked={temCabecalho} onChange={(e) => setTemCabecalho(e.target.checked)} />
-            A primeira linha são os títulos das colunas
+            A primeira linha são os títulos
           </label>
           {texto && (
-            <button onClick={() => { setTexto(""); setMapa({}); setErro(""); }} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto" }}>
+            <button
+              onClick={() => {
+                setTexto("");
+                setMapaCol({});
+                setMapaEscalao({});
+                setMapaEscola({});
+                setErro("");
+              }}
+              style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto" }}
+            >
               Limpar
             </button>
           )}
         </div>
 
         <textarea
-          rows={6}
+          rows={5}
           value={texto}
-          onChange={(e) => { setTexto(e.target.value); setErro(""); }}
-          placeholder={"Escola\tTurma\tAno\tM\tF\nDragon Force Gondomar\tSub-10\t2016\t14\t2\nDragon Force Gondomar\tRaíz\t2020\t9\t3"}
+          onChange={(e) => {
+            setTexto(e.target.value);
+            setErro("");
+          }}
+          placeholder={
+            modo === "lista"
+              ? "Nome\tID\tEscola\tEscalão\tGénero\tData nasc.\nAna Silva\t10231\tGondomar\tSUB12\tF\t12/03/2014\nJoão Dias\t10232\tGondomar\tsub-12 A\tM\t2014"
+              : "Escola\tTurma\tAno\tM\tF\nGondomar\tSub-10\t2016\t14\t2"
+          }
           style={{ ...inputStyle, resize: "vertical", fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 12.5, lineHeight: 1.6 }}
         />
 
         {nCols > 0 && (
           <>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "16px 0 8px" }}>
-              Que coluna corresponde a quê
+              Que coluna é o quê
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
-              {COLUNAS_IMPORT.map((c) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
+              {colunas.map((c) => (
                 <div key={c.chave}>
                   <label style={{ ...labelStyle, marginTop: 0 }}>{c.rotulo}</label>
-                  <select
-                    value={mapa[c.chave] ?? ""}
-                    onChange={(e) => setMapa((mp) => ({ ...mp, [c.chave]: e.target.value }))}
-                    style={inputStyle}
-                  >
+                  <select value={mapaCol[c.chave] ?? ""} onChange={(e) => setMapaCol((mp) => ({ ...mp, [c.chave]: e.target.value }))} style={inputStyle}>
                     <option value="">—</option>
                     {Array.from({ length: nCols }).map((_, i) => (
                       <option key={i} value={String(i)}>
@@ -5843,46 +6082,154 @@ function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
                 </div>
               ))}
             </div>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginBottom: 14 }}>
+              As colunas que não mapeares são ignoradas — incluindo nome e número de aluno.
+            </div>
           </>
         )}
 
-        {processadas.length > 0 && (
+        {/* Reconciliação dos escalões e escolas */}
+        {modo === "lista" && escaloesBrutos.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Escalões encontrados no ficheiro
+              </div>
+              {porResolver > 0 && (
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.warn }}>{porResolver} por decidir</span>
+              )}
+            </div>
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 230, overflowY: "auto" }}>
+              {escaloesBrutos.map(([bruto, n], i) => (
+                <div
+                  key={bruto}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 11px",
+                    borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none",
+                    background: mapaEscalao[bruto] ? "transparent" : COLORS.warnBg,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 500, minWidth: 0, flex: 1 }}>
+                    {bruto}
+                    <span style={{ color: COLORS.slate, fontWeight: 400 }}> · {n} aluno(s)</span>
+                  </span>
+                  <span style={{ color: COLORS.slate, fontSize: 12 }}>→</span>
+                  <select
+                    value={mapaEscalao[bruto] || ""}
+                    onChange={(e) => setMapaEscalao((mp) => ({ ...mp, [bruto]: e.target.value }))}
+                    style={{ ...inputStyle, width: 210 }}
+                  >
+                    <option value="">Ignorar estes alunos</option>
+                    {turmas.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 7 }}>
+              Vários escalões podem apontar para a mesma turma — é assim que se juntam nomenclaturas diferentes. As
+              correspondências ficam guardadas para a próxima importação.
+            </div>
+          </div>
+        )}
+
+        {modo === "lista" && escolasBrutas.length > 0 && escolasPorResolver > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Escolas por confirmar
+            </div>
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+              {escolasBrutas.map(([bruto, n], i) => (
+                <div
+                  key={bruto}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 11px",
+                    borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none",
+                    background: mapaEscola[bruto] ? "transparent" : COLORS.warnBg,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>
+                    {bruto}
+                    <span style={{ color: COLORS.slate, fontWeight: 400 }}> · {n} aluno(s)</span>
+                  </span>
+                  <span style={{ color: COLORS.slate, fontSize: 12 }}>→</span>
+                  <select
+                    value={mapaEscola[bruto] || ""}
+                    onChange={(e) => setMapaEscola((mp) => ({ ...mp, [bruto]: e.target.value }))}
+                    style={{ ...inputStyle, width: 210 }}
+                  >
+                    <option value="">Ignorar</option>
+                    {escolas.map((e) => (
+                      <option key={e} value={e}>
+                        {e}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pré-visualização do que vai ser gravado */}
+        {resultado.linhas.length > 0 && (
           <>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-              <Tag label={`${validas.length} linha(s) pronta(s)`} color={COLORS.ok} bg={COLORS.okBg} />
-              {invalidas.length > 0 && <Tag label={`${invalidas.length} com problemas`} color={COLORS.danger} bg={COLORS.dangerBg} />}
-              <Tag label={`${totalAtletas} atletas`} color={COLORS.navySoft} bg={COLORS.navyWash} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <Tag label={`${resultado.linhas.length} turma(s)`} color={COLORS.navySoft} bg={COLORS.navyWash} />
+              <Tag label={`${totalAtletas} atletas`} color={COLORS.ok} bg={COLORS.okBg} />
+              {resultado.ignoradas > 0 && <Tag label={`${resultado.ignoradas} linha(s) ignorada(s)`} color={COLORS.danger} bg={COLORS.dangerBg} />}
+              {resultado.semGenero > 0 && <Tag label={`${resultado.semGenero} sem género`} color={COLORS.warn} bg={COLORS.warnBg} />}
+              {resultado.semAno > 0 && <Tag label={`${resultado.semAno} sem ano`} color={COLORS.warn} bg={COLORS.warnBg} />}
             </div>
 
-            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+            {Object.keys(resultado.motivos).length > 0 && (
+              <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10 }}>
+                Ignoradas por: {Object.entries(resultado.motivos).map(([k, v]) => `${k} (${v})`).join(", ")}.
+              </div>
+            )}
+            {resultado.semGenero > 0 && (
+              <div style={{ fontSize: 12, color: COLORS.warn, marginBottom: 10 }}>
+                Alunos sem género indicado são contados como masculinos. Confirma a coluna do género se o número for alto.
+              </div>
+            )}
+
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 250, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Linha", "Escola", "Turma", "Ano", "M", "F", "Estado"].map((h) => (
-                      <th key={h} style={th}>{h}</th>
+                    {["Escola", "Turma", "Ano", "M", "F", "Total"].map((h) => (
+                      <th key={h} style={th}>
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {processadas.slice(0, 60).map((p) => (
-                    <tr key={p.linha} style={{ background: p.problemas.length ? COLORS.dangerBg : "transparent" }}>
-                      <td style={{ ...td, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{p.linha}</td>
-                      <td style={td}>{p.escola || "—"}</td>
-                      <td style={td}>{p.turma || "—"}</td>
-                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{isNaN(p.ano) ? "—" : p.ano}</td>
-                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{p.m}</td>
-                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{p.f}</td>
-                      <td style={{ ...td, fontSize: 11.5, color: p.problemas.length ? COLORS.danger : COLORS.ok }}>
-                        {p.problemas.length ? p.problemas.join("; ") : "pronta"}
-                      </td>
+                  {resultado.linhas.slice(0, 80).map((l) => (
+                    <tr key={`${l.escola}|${l.turma}|${l.ano}`}>
+                      <td style={td}>{l.escola}</td>
+                      <td style={td}>{l.turma}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{l.ano || "—"}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{l.m}</td>
+                      <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{l.f}</td>
+                      <td style={{ ...td, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{l.m + l.f}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {processadas.length > 60 && (
+            {resultado.linhas.length > 80 && (
               <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 8 }}>
-                A mostrar as primeiras 60 de {processadas.length} linhas.
+                A mostrar as primeiras 80 de {resultado.linhas.length} linhas.
               </div>
             )}
           </>
@@ -5897,14 +6244,14 @@ function ImportarAlunos({ escolas, turmas, onImportar, onFechar, notificar }) {
           <button
             className="press"
             onClick={confirmar}
-            disabled={!validas.length}
-            style={{ ...primaryBtnStyle, opacity: validas.length ? 1 : 0.5, cursor: validas.length ? "pointer" : "default" }}
+            disabled={!resultado.linhas.length}
+            style={{ ...primaryBtnStyle, opacity: resultado.linhas.length ? 1 : 0.5, cursor: resultado.linhas.length ? "pointer" : "default" }}
           >
-            Importar {validas.length || ""} linha(s)
+            Importar {resultado.linhas.length || ""} turma(s)
           </button>
         </div>
         <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10, lineHeight: 1.5 }}>
-          Linhas com a mesma escola, turma e ano substituem o registo existente. As que têm problemas são ignoradas.
+          Cada combinação de escola, turma e ano substitui o registo existente com o novo total.
         </div>
       </div>
     </div>
@@ -5994,6 +6341,7 @@ function InscritosPage({
   onSaveSemana,
   onRetrato,
   onImportarTurmas,
+  onGuardarMapaEscaloes,
   notificar,
   onSaveTurma,
   onRemoveTurma,
@@ -6129,6 +6477,7 @@ function InscritosPage({
           onSaveSemana={onSaveSemana}
           onRetrato={onRetrato}
           onImportarTurmas={onImportarTurmas}
+          onGuardarMapaEscaloes={onGuardarMapaEscaloes}
           notificar={notificar}
           onSaveTurma={onSaveTurma}
           onRemoveTurma={onRemoveTurma}
@@ -6162,6 +6511,7 @@ function InscritosRegisto({
   epocaAnterior,
   options,
   onImportarTurmas,
+  onGuardarMapaEscaloes,
   onRetrato,
   notificar,
   onSaveSemana,
@@ -6539,7 +6889,10 @@ function InscritosRegisto({
           <ImportarAlunos
             escolas={escolas}
             turmas={turmas}
+            niveis={niveis}
+            mapaGuardado={options.mapaEscaloes}
             onImportar={onImportarTurmas}
+            onGuardarMapa={onGuardarMapaEscaloes}
             onFechar={() => setImportarAberto(false)}
             notificar={notificar}
           />
@@ -7279,7 +7632,7 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {} });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
@@ -7459,7 +7812,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -7642,6 +7995,12 @@ export default function App() {
     }
     persistInscritos(proximo);
     notificar(`Retrato guardado para ${guardadas} escola(s).`);
+  };
+
+  // Guarda as correspondências entre as nomenclaturas do Excel e as turmas da
+  // app, para a importação seguinte já vir resolvida.
+  const guardarMapaEscaloes = (mapa) => {
+    persistOptions({ ...options, mapaEscaloes: { ...(options.mapaEscaloes || {}), ...mapa } });
   };
 
   const importarTurmas = (linhas) => {
@@ -8335,6 +8694,7 @@ export default function App() {
             onSaveSemana={saveSemanaInscritos}
             onRetrato={guardarRetrato}
             onImportarTurmas={importarTurmas}
+            onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
             onSaveTurma={saveTurmaAlunos}
             onRemoveTurma={removeTurmaAlunos}
