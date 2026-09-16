@@ -5646,9 +5646,27 @@ function lerTabela(texto) {
     .split("\n")
     .filter((l) => l.trim() !== "");
   if (linhas.length === 0) return [];
-  // Separador: tabulação (colado do Excel), ponto e vírgula (CSV português) ou vírgula.
-  const primeira = linhas[0];
-  const sep = primeira.includes("\t") ? "\t" : primeira.includes(";") ? ";" : ",";
+
+  // Escolhe o separador: tabulação (colado do Excel), ponto e vírgula (CSV
+  // português) ou vírgula. Testa em várias linhas, porque a primeira pode não
+  // ser representativa.
+  const amostra = linhas.slice(0, 5);
+  const conta = (sep) => amostra.map((l) => l.split(sep).length - 1).reduce((a, b) => a + b, 0);
+  let sep = null;
+  if (conta("\t") > 0) sep = "\t";
+  else if (conta(";") > 0) sep = ";";
+  else if (conta(",") > 0) sep = ",";
+
+  // Se nada disto aparece, o copiar-colar perdeu as tabulações e as colunas
+  // vieram separadas por espaços. Nesse caso divide por dois ou mais espaços,
+  // que é o que sobra quando se cola de uma tabela já formatada.
+  if (!sep) {
+    if (amostra.some((l) => /\s{2,}/.test(l))) {
+      return linhas.map((l) => l.trim().split(/\s{2,}/).map((c) => c.trim()));
+    }
+    return linhas.map((l) => [l.trim()]);
+  }
+
   return linhas.map((l) => l.split(sep).map((c) => c.trim().replace(/^"(.*)"$/, "$1")));
 }
 
@@ -5716,52 +5734,186 @@ const COLUNAS_AGREGADO = [
   { chave: "f", rotulo: "Femininos", sinonimos: ["f", "femininos", "feminino", "raparigas"] },
 ];
 
+// Títulos que contêm dados pessoais: nunca são sugeridos e, se forem
+// escolhidos à mão, a app avisa.
+const CABECALHOS_PESSOAIS = ["nome", "nif", "email", "e-mail", "contacto", "telefone", "telemovel", "morada", "cc", "cartao de cidadao"];
+function pareceColunaPessoal(titulo) {
+  const t = normChave(titulo);
+  return CABECALHOS_PESSOAIS.some((p) => t.includes(p));
+}
+
 const COLUNAS_LISTA = [
-  { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "polo/escola", "centro", "school"] },
-  { chave: "escalao", rotulo: "Escalão / turma", sinonimos: ["escalao", "turma", "equipa", "classe", "nivel", "escalao/turma"] },
+  { chave: "escola", rotulo: "Escola", sinonimos: ["recintos do atleta", "recinto do atleta", "recintos", "recinto", "escola", "polo", "polo/escola", "centro", "school"] },
+  { chave: "escalao", rotulo: "Escalão / turma", sinonimos: ["escalao", "escalao/turma", "turma", "equipas do atleta", "equipa do atleta", "equipa", "equipas", "classe", "nivel"] },
   { chave: "genero", rotulo: "Género", sinonimos: ["genero", "sexo", "gender", "m/f", "masc/fem"] },
-  { chave: "nascimento", rotulo: "Nascimento (ano ou data)", sinonimos: ["ano", "nascimento", "nasc", "data nasc", "data nasc.", "data de nascimento", "datanascimento", "dn", "ano de nascimento", "aniversario"] },
+  { chave: "nascimento", rotulo: "Nascimento (ano ou data)", sinonimos: ["ano de nascimento", "ano", "data de nascimento", "nascimento", "nasc", "data nasc", "data nasc.", "datanascimento", "dn", "aniversario"] },
+  {
+    chave: "periodo",
+    rotulo: "Período (mês ou semana)",
+    opcional: true,
+    sinonimos: ["mes", "mês", "periodo", "semana", "data"],
+    ajuda: "Se o ficheiro tem uma linha por atleta e por período, escolhe aqui a coluna para importares só um período.",
+  },
+  {
+    chave: "identificador",
+    rotulo: "Código do atleta (opcional)",
+    opcional: true,
+    sinonimos: ["codigo atleta no clube", "codigo do atleta", "codigo atleta", "codigo", "id atleta", "id", "n atleta", "numero de atleta"],
+    ajuda: "Usado apenas para não contar o mesmo atleta duas vezes. Não é guardado.",
+  },
 ];
+
+// Deteta se a primeira linha são títulos: basta que algumas células batam
+// com os sinónimos conhecidos e não pareçam dados (anos, M/F, etc.).
+function pareceCabecalho(linha, colunas) {
+  if (!linha || linha.length === 0) return false;
+  const cels = linha.map(normChave);
+  const batem = cels.filter((c) => colunas.some((col) => col.sinonimos.includes(c))).length;
+  const parecemDados = cels.filter((c) => /^\d{4}$/.test(c) || ["m", "f", "masculino", "feminino"].includes(c)).length;
+  return batem >= 2 && batem > parecemDados;
+}
+
+// Quando não há títulos (ou são insuficientes), adivinha o papel de cada
+// coluna pelo que tem dentro. É isto que permite colar só as linhas de dados.
+function inferirColunas(linhasDados, { escolas, turmas, niveis }) {
+  if (!linhasDados.length) return {};
+  const nCols = Math.max(...linhasDados.map((l) => l.length));
+  const amostra = linhasDados.slice(0, 60);
+  const valores = (i) => amostra.map((l) => (l[i] || "").trim()).filter((v) => v !== "");
+
+  const pontos = [];
+  for (let i = 0; i < nCols; i++) {
+    const vs = valores(i);
+    if (vs.length === 0) {
+      pontos.push({});
+      continue;
+    }
+    const frac = (f) => vs.filter(f).length / vs.length;
+    pontos.push({
+      genero: frac((v) => generoDe(v) !== null),
+      // Ano puro é melhor candidato do que data completa.
+      ano: frac((v) => /^(19|20)\d{2}$/.test(v.trim())),
+      data: frac((v) => anoNascimento(v) !== null && !/^(19|20)\d{2}$/.test(v.trim())),
+      escola: frac((v) => escolas.some((e) => normChave(e) === normChave(v) || normChave(e).includes(normChave(v)) || normChave(v).includes(normChave(e)))),
+      escalao: frac((v) => adivinharTurma(v, turmas, niveis) !== null),
+      periodo: frac((v) => /^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)/i.test(normChave(v)) || /^s\d{1,2}$/i.test(v.trim())),
+      // Identificador: muitos valores distintos e curtos, sem espaços.
+      id: vs.length >= 3 && new Set(vs).size / vs.length > 0.8 && frac((v) => /^[A-Za-z0-9._-]{3,15}$/.test(v.trim())) > 0.9 ? 1 : 0,
+      pessoal: frac((v) => v.includes("@")) > 0.5 || frac((v) => /^\d{9}$/.test(v.trim())) > 0.8 || frac((v) => /\s/.test(v) && /^[A-ZÁÂÃÉÍÓÔÕÚÇ]/.test(v)) > 0.7 ? 1 : 0,
+    });
+  }
+
+  // Atribui cada campo à coluna com melhor pontuação, sem repetir colunas.
+  const mapa = {};
+  const usadas = new Set();
+  const atribuir = (chave, metrica, minimo) => {
+    let melhor = -1;
+    let melhorVal = 0;
+    pontos.forEach((p, i) => {
+      if (usadas.has(i) || p.pessoal) return;
+      const v = p[metrica] || 0;
+      if (v > melhorVal) {
+        melhorVal = v;
+        melhor = i;
+      }
+    });
+    if (melhor >= 0 && melhorVal >= minimo) {
+      mapa[chave] = String(melhor);
+      usadas.add(melhor);
+    }
+  };
+
+  // Ordem importa: os campos mais inequívocos primeiro.
+  atribuir("genero", "genero", 0.8);
+  atribuir("escalao", "escalao", 0.5);
+  atribuir("escola", "escola", 0.6);
+  atribuir("nascimento", "ano", 0.8);
+  if (mapa.nascimento === undefined) atribuir("nascimento", "data", 0.8);
+  atribuir("periodo", "periodo", 0.7);
+  atribuir("identificador", "id", 1);
+  return mapa;
+}
 
 function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onGuardarMapa, onFechar, notificar }) {
   const [modo, setModo] = useState("lista");
   const [texto, setTexto] = useState("");
   const [mapaCol, setMapaCol] = useState({});
-  const [temCabecalho, setTemCabecalho] = useState(true);
+  const [cabecalhoManual, setCabecalhoManual] = useState(null);
   const [mapaEscalao, setMapaEscalao] = useState({});
   const [mapaEscola, setMapaEscola] = useState({});
+  const [periodoEscolhido, setPeriodoEscolhido] = useState("");
   const [erro, setErro] = useState("");
 
   const colunas = modo === "lista" ? COLUNAS_LISTA : COLUNAS_AGREGADO;
   const tabela = useMemo(() => lerTabela(texto), [texto]);
   const nCols = tabela.length ? Math.max(...tabela.map((l) => l.length)) : 0;
+  // O cabeçalho é detetado sozinho; o utilizador pode corrigir a decisão.
+  const cabecalhoDetetado = useMemo(() => (tabela.length ? pareceCabecalho(tabela[0], colunas) : false), [tabela, colunas]);
+  const temCabecalho = cabecalhoManual === null ? cabecalhoDetetado : cabecalhoManual;
   const linhasDados = temCabecalho ? tabela.slice(1) : tabela;
 
-  // Adivinha as colunas pelos títulos.
+  // Adivinha as colunas: primeiro pelos títulos, depois pelo conteúdo. É a
+  // segunda parte que permite colar só linhas de dados, sem cabeçalho.
   useEffect(() => {
-    if (!tabela.length || !temCabecalho) return;
+    if (!tabela.length) return;
+
+    if (!temCabecalho) {
+      const inferido = inferirColunas(linhasDados, { escolas, turmas, niveis: niveis || DEFAULT_NIVEIS });
+      setMapaCol((atual) => {
+        const igual =
+          Object.keys(inferido).length === Object.keys(atual).length && Object.entries(inferido).every(([k, v]) => atual[k] === v);
+        return igual ? atual : inferido;
+      });
+      return;
+    }
+
     const cab = tabela[0].map(normChave);
     const novo = {};
     const usadas = new Set();
     // Primeiro os títulos que batem exatamente, depois os que contêm o
     // sinónimo ("Data Nasc." encontra "nasc"), para não roubar a coluna certa.
+    const pessoais = new Set(tabela[0].map((t, idx) => (pareceColunaPessoal(t) ? idx : -1)).filter((i) => i >= 0));
+
+    // A ordem dos sinónimos é uma ordem de preferência: para o nascimento
+    // queremos "Ano de Nascimento" antes de "Data de Nascimento", e para o
+    // período "Mês" antes de "Data". Por isso percorremos os sinónimos e, para
+    // cada um, procuramos o título correspondente — e não o contrário.
+    const livre = (idx) => !usadas.has(idx) && !pessoais.has(idx);
     colunas.forEach((c) => {
-      const i = cab.findIndex((h, idx) => !usadas.has(idx) && c.sinonimos.includes(h));
-      if (i >= 0) {
-        novo[c.chave] = String(i);
-        usadas.add(i);
+      for (const sin of c.sinonimos) {
+        const i = cab.findIndex((h, idx) => livre(idx) && h === sin);
+        if (i >= 0) {
+          novo[c.chave] = String(i);
+          usadas.add(i);
+          return;
+        }
       }
     });
     colunas.forEach((c) => {
       if (novo[c.chave] !== undefined) return;
-      const i = cab.findIndex(
-        (h, idx) => !usadas.has(idx) && h && c.sinonimos.some((sin) => sin.length >= 3 && (h.includes(sin) || sin.includes(h)))
-      );
-      if (i >= 0) {
-        novo[c.chave] = String(i);
-        usadas.add(i);
+      for (const sin of c.sinonimos) {
+        if (sin.length < 3) continue;
+        const i = cab.findIndex((h, idx) => livre(idx) && h && (h.includes(sin) || sin.includes(h)));
+        if (i >= 0) {
+          novo[c.chave] = String(i);
+          usadas.add(i);
+          return;
+        }
       }
     });
+    // O que os títulos não resolveram, tenta-se pelo conteúdo das células.
+    const obrigatorias = colunas.filter((c) => !c.opcional).map((c) => c.chave);
+    if (obrigatorias.some((c) => novo[c] === undefined)) {
+      const inferido = inferirColunas(linhasDados, { escolas, turmas, niveis: niveis || DEFAULT_NIVEIS });
+      const usadas = new Set(Object.values(novo));
+      Object.entries(inferido).forEach(([chave, i]) => {
+        if (novo[chave] === undefined && !usadas.has(i)) {
+          novo[chave] = i;
+          usadas.add(i);
+        }
+      });
+    }
+
     setMapaCol((atual) => {
       const igual = Object.keys(novo).length === Object.keys(atual).length && Object.entries(novo).every(([k, v]) => atual[k] === v);
       return igual ? atual : novo;
@@ -5828,6 +5980,35 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
     });
   }, [escolasBrutas, modo]);
 
+  // Períodos presentes no ficheiro, quando a coluna está mapeada.
+  const periodos = useMemo(() => {
+    if (modo !== "lista" || mapaCol.periodo === undefined || mapaCol.periodo === "") return [];
+    const c = {};
+    linhasDados.forEach((l) => {
+      const v = valorDe(l, "periodo");
+      if (v) c[v] = (c[v] || 0) + 1;
+    });
+    return Object.entries(c).sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+  }, [linhasDados, mapaCol, modo]);
+
+  // Assume o período mais recente, para não somar meses diferentes sem se dar conta.
+  useEffect(() => {
+    if (periodos.length === 0) {
+      setPeriodoEscolhido("");
+      return;
+    }
+    setPeriodoEscolhido((atual) => (atual && periodos.some(([p]) => p === atual) ? atual : periodos[0][0]));
+  }, [periodos]);
+
+  // Colunas pessoais escolhidas à mão, para avisar.
+  const avisosPessoais = useMemo(() => {
+    if (!temCabecalho || !tabela.length) return [];
+    return Object.entries(mapaCol)
+      .filter(([, i]) => i !== "" && i !== undefined)
+      .map(([chave, i]) => ({ chave, titulo: tabela[0][Number(i)] }))
+      .filter((x) => x.titulo && pareceColunaPessoal(x.titulo));
+  }, [mapaCol, tabela, temCabecalho]);
+
   const porResolver = modo === "lista" ? escaloesBrutos.filter(([b]) => !mapaEscalao[b]).length : 0;
   const escolasPorResolver = modo === "lista" ? escolasBrutas.filter(([b]) => !mapaEscola[b]).length : 0;
 
@@ -5869,8 +6050,26 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
     let ignoradas = 0;
     let semGenero = 0;
     let semAno = 0;
+    let repetidos = 0;
     const motivos = {};
+    const vistos = new Set();
+    const temPeriodo = mapaCol.periodo !== undefined && mapaCol.periodo !== "" && periodoEscolhido;
+    const temId = mapaCol.identificador !== undefined && mapaCol.identificador !== "";
+
     linhasDados.forEach((l) => {
+      // Só o período escolhido, para não somar vários meses do mesmo atleta.
+      if (temPeriodo && valorDe(l, "periodo") !== periodoEscolhido) return;
+      // O mesmo atleta só conta uma vez, mesmo que apareça repetido.
+      if (temId) {
+        const id = valorDe(l, "identificador");
+        if (id) {
+          if (vistos.has(id)) {
+            repetidos += 1;
+            return;
+          }
+          vistos.add(id);
+        }
+      }
       const escolaBruta = valorDe(l, "escola");
       const escalaoBruto = valorDe(l, "escalao");
       const escola = mapaEscola[escolaBruta] || "";
@@ -5902,8 +6101,9 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       motivos,
       semGenero,
       semAno,
+      repetidos,
     };
-  }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas]);
+  }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas, periodoEscolhido]);
 
   const totalAtletas = resultado.linhas.reduce((t, l) => t + l.m + l.f, 0);
 
@@ -6013,9 +6213,9 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
         >
           {modo === "lista" ? (
             <>
-              Uma linha por aluno, como vem do Excel da secretaria. A contagem é feita aqui, no teu browser: nomes e
-              números de aluno são usados para contar e não são guardados. Só entram na app os totais por escola, turma,
-              ano e género. Podes até colar as colunas com os nomes — basta não as mapear.
+              Uma linha por aluno, como vem do Excel da secretaria. A contagem é feita aqui, no teu browser: nada de
+              pessoal é guardado. Só entram na app os totais por escola, turma, ano e género. Podes colar o ficheiro
+              todo, com nomes, NIF e emails — essas colunas não são mapeadas nem lidas.
             </>
           ) : (
             <>Uma linha por turma, com os totais já somados por ti.</>
@@ -6028,8 +6228,11 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
             Carregar CSV
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: COLORS.ink2 }}>
-            <input type="checkbox" checked={temCabecalho} onChange={(e) => setTemCabecalho(e.target.checked)} />
+            <input type="checkbox" checked={temCabecalho} onChange={(e) => setCabecalhoManual(e.target.checked)} />
             A primeira linha são os títulos
+            {tabela.length > 0 && cabecalhoManual === null && (
+              <span style={{ color: COLORS.slate }}>(detetado)</span>
+            )}
           </label>
           {texto && (
             <button
@@ -6038,6 +6241,7 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
                 setMapaCol({});
                 setMapaEscalao({});
                 setMapaEscola({});
+                setCabecalhoManual(null);
                 setErro("");
               }}
               style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto" }}
@@ -6070,7 +6274,10 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 6 }}>
               {colunas.map((c) => (
                 <div key={c.chave}>
-                  <label style={{ ...labelStyle, marginTop: 0 }}>{c.rotulo}</label>
+                  <label style={{ ...labelStyle, marginTop: 0 }}>
+                    {c.rotulo}
+                    {c.opcional && <span style={{ color: COLORS.slate, fontWeight: 400 }}> · opcional</span>}
+                  </label>
                   <select value={mapaCol[c.chave] ?? ""} onChange={(e) => setMapaCol((mp) => ({ ...mp, [c.chave]: e.target.value }))} style={inputStyle}>
                     <option value="">—</option>
                     {Array.from({ length: nCols }).map((_, i) => (
@@ -6079,12 +6286,58 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
                       </option>
                     ))}
                   </select>
+                  {c.ajuda && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 4, lineHeight: 1.45 }}>{c.ajuda}</div>}
                 </div>
               ))}
             </div>
             <div style={{ fontSize: 11.5, color: COLORS.slate, marginBottom: 14 }}>
-              As colunas que não mapeares são ignoradas — incluindo nome e número de aluno.
+              As colunas que não mapeares são ignoradas — incluindo nome, NIF, email e código do atleta.
             </div>
+
+            {avisosPessoais.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: 9,
+                  alignItems: "flex-start",
+                  background: COLORS.dangerBg,
+                  border: `1px solid ${COLORS.danger}`,
+                  borderRadius: 9,
+                  padding: "10px 12px",
+                  marginBottom: 14,
+                }}
+              >
+                <AlertTriangle size={15} color={COLORS.danger} style={{ flex: "none", marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, color: COLORS.danger, lineHeight: 1.5 }}>
+                  Escolheste {avisosPessoais.map((a) => `"${a.titulo}"`).join(", ")}, que tem dados pessoais. Nada disso é
+                  guardado, mas confirma se é mesmo a coluna certa.
+                </div>
+              </div>
+            )}
+
+            {periodos.length > 1 && (
+              <div
+                style={{
+                  background: COLORS.warnBg,
+                  border: `1px solid ${COLORS.warn}`,
+                  borderRadius: 9,
+                  padding: "11px 13px",
+                  marginBottom: 14,
+                }}
+              >
+                <div style={{ fontSize: 12.5, color: COLORS.warn, lineHeight: 1.5, marginBottom: 9 }}>
+                  O ficheiro tem {periodos.length} períodos diferentes. Se importares tudo de uma vez, o mesmo atleta
+                  conta várias vezes — escolhe o período que queres.
+                </div>
+                <select value={periodoEscolhido} onChange={(e) => setPeriodoEscolhido(e.target.value)} style={{ ...inputStyle, width: 240 }}>
+                  {periodos.map(([p, n]) => (
+                    <option key={p} value={p}>
+                      {p} ({n} linhas)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </>
         )}
 
@@ -6189,6 +6442,7 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
               {resultado.ignoradas > 0 && <Tag label={`${resultado.ignoradas} linha(s) ignorada(s)`} color={COLORS.danger} bg={COLORS.dangerBg} />}
               {resultado.semGenero > 0 && <Tag label={`${resultado.semGenero} sem género`} color={COLORS.warn} bg={COLORS.warnBg} />}
               {resultado.semAno > 0 && <Tag label={`${resultado.semAno} sem ano`} color={COLORS.warn} bg={COLORS.warnBg} />}
+              {resultado.repetidos > 0 && <Tag label={`${resultado.repetidos} repetido(s) removido(s)`} color={COLORS.slate} bg={COLORS.doneBg} />}
             </div>
 
             {Object.keys(resultado.motivos).length > 0 && (
