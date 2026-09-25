@@ -393,9 +393,14 @@ const PERSON_TYPE_META = {
   atleta: { label: "Atleta(s)" },
 };
 
-// Os atletas são menores: não se guardam nomes nem nº de aluno, só quantos, o escalão e uma referência opcional.
+// Uma ocorrência de atletas pode ter um ou vários nomes.
+function nomesAtletas(s) {
+  return (s.atletas || []).map((n) => String(n || "").trim()).filter(Boolean);
+}
 function nomeOcorrencia(s) {
   if (s.personType !== "atleta") return s.personName;
+  const nomes = nomesAtletas(s);
+  if (nomes.length) return nomes.join(", ");
   const n = Number(s.nAtletas) || 1;
   const partes = [`${n} ${n === 1 ? "atleta" : "atletas"}`];
   if (s.escalao) partes.push(s.escalao);
@@ -3707,9 +3712,8 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
   const [form, setForm] = useState({
     personType: "familia",
     personName: "",
-    nAtletas: 1,
+    atletas: [""],
     escalao: "",
-    referencia: "",
     school: "",
     motivo: "ma_conduta",
     date: new Date().toISOString().slice(0, 10),
@@ -3722,7 +3726,9 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const eAtleta = form.personType === "atleta";
   const escaloes = (form.school && turmasPorEscola?.[form.school]?.length ? turmasPorEscola[form.school] : turmas) || [];
-  const podeGuardar = eAtleta ? Number(form.nAtletas) >= 1 : !!form.personName.trim();
+  const nomesValidos = form.atletas.map((n) => n.trim()).filter(Boolean);
+  const podeGuardar = eAtleta ? nomesValidos.length >= 1 : !!form.personName.trim();
+  const setAtleta = (i, v) => setForm((f) => ({ ...f, atletas: f.atletas.map((n, j) => (j === i ? v : n)) }));
 
   return (
     <div
@@ -3767,32 +3773,44 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
 
         {eAtleta ? (
           <>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Nº de atletas envolvidos</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <button
-                type="button"
-                className="press"
-                onClick={() => setForm((f) => ({ ...f, nAtletas: Math.max(1, (Number(f.nAtletas) || 1) - 1) }))}
-                style={{ ...secondaryBtnStyle, flex: "none", width: 38, padding: 0 }}
-              >
-                −
-              </button>
-              <input
-                type="number"
-                min={1}
-                value={form.nAtletas}
-                onChange={(e) => setForm((f) => ({ ...f, nAtletas: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1) }))}
-                style={{ ...inputStyle, width: 80, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
-              />
-              <button
-                type="button"
-                className="press"
-                onClick={() => setForm((f) => ({ ...f, nAtletas: (Number(f.nAtletas) || 0) + 1 }))}
-                style={{ ...secondaryBtnStyle, flex: "none", width: 38, padding: 0 }}
-              >
-                +
-              </button>
+            <label style={{ ...labelStyle, marginTop: 0 }}>{form.atletas.length > 1 ? `Atletas (${form.atletas.length})` : "Nome do atleta"}</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {form.atletas.map((nome, i) => (
+                <div key={i} style={{ display: "flex", gap: 6 }}>
+                  <input
+                    type="text"
+                    placeholder={i === 0 ? "Nome do atleta" : `Atleta ${i + 1}`}
+                    value={nome}
+                    autoFocus={i > 0 && i === form.atletas.length - 1 && !nome}
+                    onChange={(e) => setAtleta(i, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (nome.trim()) setForm((f) => ({ ...f, atletas: [...f.atletas, ""] }));
+                      }
+                    }}
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
+                  {form.atletas.length > 1 && (
+                    <button
+                      type="button"
+                      title="Remover atleta"
+                      onClick={() => setForm((f) => ({ ...f, atletas: f.atletas.filter((_, j) => j !== i) }))}
+                      style={{ ...iconBtnStyle, flex: "none" }}
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, atletas: [...f.atletas, ""] }))}
+              style={{ ...linkBtnStyle, marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <Plus size={14} /> Adicionar outro atleta
+            </button>
             <label style={labelStyle}>Escalão / turma</label>
             <select value={form.escalao} onChange={set("escalao")} style={inputStyle}>
               <option value="">Sem escalão indicado</option>
@@ -3802,17 +3820,6 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
                 </option>
               ))}
             </select>
-            <label style={labelStyle}>Referência interna (opcional)</label>
-            <input
-              type="text"
-              placeholder="Ex: iniciais, ou nº do processo"
-              value={form.referencia}
-              onChange={set("referencia")}
-              style={inputStyle}
-            />
-            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>
-              Os atletas são menores: não coloques nomes nem nº de aluno. A identificação fica no processo interno.
-            </div>
           </>
         ) : (
           <>
@@ -3974,9 +3981,9 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
               onSave({
                 ...form,
                 personName: eAtleta ? "" : form.personName.trim(),
-                nAtletas: eAtleta ? Number(form.nAtletas) || 1 : undefined,
+                atletas: eAtleta ? nomesValidos : undefined,
+                nAtletas: eAtleta ? nomesValidos.length : undefined,
                 escalao: eAtleta ? form.escalao : undefined,
-                referencia: eAtleta ? form.referencia.trim() : undefined,
                 id: `s_${Date.now()}`,
                 stage: form.personType === "elemento_df" ? "ocorrencia" : null,
                 notes: [],
@@ -4037,6 +4044,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
           <Tag label={(PERSON_TYPE_META[sanction.personType] || PERSON_TYPE_META.familia).label} color={COLORS.navy} bg={COLORS.rule} />
           <Tag label={motivoMeta.label} color={motivoMeta.color} bg={motivoMeta.bg} />
           {sanction.school && <Tag label={sanction.school} color={COLORS.slate} bg={COLORS.doneBg} />}
+          {sanction.personType === "atleta" && sanction.escalao && <Tag label={sanction.escalao} color={COLORS.slate} bg={COLORS.doneBg} />}
         </div>
 
         {relatedComplaint && (
@@ -4295,6 +4303,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
         <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
           {fmt(new Date(s.date + "T00:00:00"))}
           {s.school ? ` · ${s.school}` : ""}
+          {s.personType === "atleta" && s.escalao ? ` · ${s.escalao}` : ""}
           {s.relatedComplaintId ? " · associada a reclamação" : ""}
         </div>
       </div>
@@ -4414,7 +4423,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
       <div style={panelTitle}>Atletas</div>
       {atletas.length === 0 ? (
         <div style={{ marginBottom: 26 }}>
-          <Vazio icon={Users} titulo="Sem ocorrências com atletas" texto="Regista um ou vários atletas na mesma ocorrência, por escalão, sem nomes." />
+          <Vazio icon={Users} titulo="Sem ocorrências com atletas" texto="Regista um ou vários atletas na mesma ocorrência, com o nome e o escalão." />
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 26 }}>
