@@ -390,7 +390,18 @@ const MOTIVO_META = {
 const PERSON_TYPE_META = {
   familia: { label: "Pai / Encarregado de Educação" },
   elemento_df: { label: "Elemento Dragon Force" },
+  atleta: { label: "Atleta(s)" },
 };
+
+// Os atletas são menores: não se guardam nomes nem nº de aluno, só quantos, o escalão e uma referência opcional.
+function nomeOcorrencia(s) {
+  if (s.personType !== "atleta") return s.personName;
+  const n = Number(s.nAtletas) || 1;
+  const partes = [`${n} ${n === 1 ? "atleta" : "atletas"}`];
+  if (s.escalao) partes.push(s.escalao);
+  if (s.referencia) partes.push(s.referencia);
+  return partes.join(" · ");
+}
 
 const DF_STAGE_META = {
   ocorrencia: { label: "Ocorrência registada", color: COLORS.slate, bg: COLORS.doneBg },
@@ -3692,10 +3703,13 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista }) {
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista, turmas, turmasPorEscola }) {
   const [form, setForm] = useState({
     personType: "familia",
     personName: "",
+    nAtletas: 1,
+    escalao: "",
+    referencia: "",
     school: "",
     motivo: "ma_conduta",
     date: new Date().toISOString().slice(0, 10),
@@ -3706,6 +3720,9 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
     relatedComplaintId: "",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const eAtleta = form.personType === "atleta";
+  const escaloes = (form.school && turmasPorEscola?.[form.school]?.length ? turmasPorEscola[form.school] : turmas) || [];
+  const podeGuardar = eAtleta ? Number(form.nAtletas) >= 1 : !!form.personName.trim();
 
   return (
     <div
@@ -3726,13 +3743,13 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
         </div>
 
         <label style={{ ...labelStyle, marginTop: 0 }}>Quem está envolvido</label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           {Object.entries(PERSON_TYPE_META).map(([key, meta]) => (
             <button
               key={key}
               onClick={() => setForm((f) => ({ ...f, personType: key }))}
               style={{
-                flex: 1,
+                flex: "1 1 30%",
                 padding: "10px 8px",
                 borderRadius: 4,
                 border: `1.5px solid ${form.personType === key ? COLORS.navy : COLORS.rule}`,
@@ -3748,8 +3765,61 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
           ))}
         </div>
 
-        <label style={labelStyle}>Nome</label>
-        <input type="text" placeholder="Nome da pessoa envolvida" value={form.personName} onChange={set("personName")} style={inputStyle} />
+        {eAtleta ? (
+          <>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Nº de atletas envolvidos</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                className="press"
+                onClick={() => setForm((f) => ({ ...f, nAtletas: Math.max(1, (Number(f.nAtletas) || 1) - 1) }))}
+                style={{ ...secondaryBtnStyle, flex: "none", width: 38, padding: 0 }}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={1}
+                value={form.nAtletas}
+                onChange={(e) => setForm((f) => ({ ...f, nAtletas: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value, 10) || 1) }))}
+                style={{ ...inputStyle, width: 80, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
+              />
+              <button
+                type="button"
+                className="press"
+                onClick={() => setForm((f) => ({ ...f, nAtletas: (Number(f.nAtletas) || 0) + 1 }))}
+                style={{ ...secondaryBtnStyle, flex: "none", width: 38, padding: 0 }}
+              >
+                +
+              </button>
+            </div>
+            <label style={labelStyle}>Escalão / turma</label>
+            <select value={form.escalao} onChange={set("escalao")} style={inputStyle}>
+              <option value="">Sem escalão indicado</option>
+              {escaloes.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <label style={labelStyle}>Referência interna (opcional)</label>
+            <input
+              type="text"
+              placeholder="Ex: iniciais, ou nº do processo"
+              value={form.referencia}
+              onChange={set("referencia")}
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>
+              Os atletas são menores: não coloques nomes nem nº de aluno. A identificação fica no processo interno.
+            </div>
+          </>
+        ) : (
+          <>
+            <label style={labelStyle}>Nome</label>
+            <input type="text" placeholder="Nome da pessoa envolvida" value={form.personName} onChange={set("personName")} style={inputStyle} />
+          </>
+        )}
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <label style={{ ...labelStyle }}>Escola (opcional)</label>
@@ -3811,7 +3881,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
           style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
         />
 
-        {form.personType === "familia" && (
+        {form.personType !== "elemento_df" && (
           <>
             <label style={labelStyle}>Foi aplicada sanção?</label>
             <div style={{ display: "flex", gap: 8 }}>
@@ -3900,9 +3970,13 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
           </button>
           <button
             onClick={() => {
-              if (!form.personName.trim()) return;
+              if (!podeGuardar) return;
               onSave({
                 ...form,
+                personName: eAtleta ? "" : form.personName.trim(),
+                nAtletas: eAtleta ? Number(form.nAtletas) || 1 : undefined,
+                escalao: eAtleta ? form.escalao : undefined,
+                referencia: eAtleta ? form.referencia.trim() : undefined,
                 id: `s_${Date.now()}`,
                 stage: form.personType === "elemento_df" ? "ocorrencia" : null,
                 notes: [],
@@ -3958,9 +4032,9 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
             </button>
           </div>
         </div>
-        <h2 style={{ margin: "6px 0 6px", fontSize: 20, color: COLORS.navy }}>{sanction.personName}</h2>
+        <h2 style={{ margin: "6px 0 6px", fontSize: 20, color: COLORS.navy }}>{nomeOcorrencia(sanction)}</h2>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-          <Tag label={PERSON_TYPE_META[sanction.personType].label} color={COLORS.navy} bg={COLORS.rule} />
+          <Tag label={(PERSON_TYPE_META[sanction.personType] || PERSON_TYPE_META.familia).label} color={COLORS.navy} bg={COLORS.rule} />
           <Tag label={motivoMeta.label} color={motivoMeta.color} bg={motivoMeta.bg} />
           {sanction.school && <Tag label={sanction.school} color={COLORS.slate} bg={COLORS.doneBg} />}
         </div>
@@ -3977,7 +4051,7 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
           </div>
         )}
 
-        {sanction.personType === "familia" ? (
+        {sanction.personType !== "elemento_df" ? (
           <div style={{ marginBottom: 20 }}>
             <label style={{ ...labelStyle, marginTop: 0 }}>Foi aplicada sanção?</label>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -4165,6 +4239,20 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
 function SanctionsPage({ sanctions, onNew, onOpen }) {
   const familia = sanctions.filter((s) => s.personType === "familia");
   const elementosDF = sanctions.filter((s) => s.personType === "elemento_df");
+  const atletas = sanctions.filter((s) => s.personType === "atleta");
+  const nAtletasEnvolvidos = atletas.reduce((t, s) => t + (Number(s.nAtletas) || 1), 0);
+  const sancoesAplicadasAtletas = atletas.filter((s) => s.sanctionApplied === true).length;
+
+  const escalaoData = useMemo(() => {
+    const counts = {};
+    atletas.forEach((s) => {
+      const k = s.escalao || "Sem escalão";
+      counts[k] = (counts[k] || 0) + (Number(s.nAtletas) || 1);
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value]) => ({ name, value }));
+  }, [atletas]);
 
   const sancoesAplicadasFamilia = familia.filter((s) => s.sanctionApplied === true).length;
   const semSancaoFamilia = familia.filter((s) => s.sanctionApplied === false).length;
@@ -4179,13 +4267,13 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 
   const tipoSancaoData = useMemo(() => {
     const counts = {};
-    familia.forEach((s) => {
+    [...familia, ...atletas].forEach((s) => {
       if (s.sanctionApplied === true && s.sanctionType) counts[s.sanctionType] = (counts[s.sanctionType] || 0) + 1;
     });
     return Object.entries(counts)
       .sort((a, b) => b[1] - a[1])
       .map(([name, value]) => ({ name, value, color: colorForLabel(name).color }));
-  }, [familia]);
+  }, [familia, atletas]);
 
   const Row = ({ s }) => (
     <div
@@ -4203,7 +4291,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
       }}
     >
       <div>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{s.personName}</div>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>{nomeOcorrencia(s)}</div>
         <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
           {fmt(new Date(s.date + "T00:00:00"))}
           {s.school ? ` · ${s.school}` : ""}
@@ -4212,7 +4300,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <Tag label={MOTIVO_META[s.motivo].label} color={MOTIVO_META[s.motivo].color} bg={MOTIVO_META[s.motivo].bg} />
-        {s.personType === "familia" ? (
+        {s.personType !== "elemento_df" ? (
           s.sanctionApplied === true ? (
             <Tag label={s.sanctionType || "Sanção aplicada"} color={COLORS.danger} bg={COLORS.dangerBg} />
           ) : s.sanctionApplied === false ? (
@@ -4239,6 +4327,12 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
           <StatCard label="Sanções aplicadas (Pais/EE)" value={sancoesAplicadasFamilia} color={COLORS.danger} />
           <StatCard label="Sem sanção (Pais/EE)" value={semSancaoFamilia} color={COLORS.ok} />
           <StatCard label="Suspensão/Expulsão (DF)" value={sancoesFinaisDF} color={COLORS.danger} />
+          <StatCard
+            label="Atletas envolvidos"
+            value={nAtletasEnvolvidos}
+            color={COLORS.warn}
+            subtitle={atletas.length ? `${atletas.length} ocorrência${atletas.length === 1 ? "" : "s"} · ${sancoesAplicadasAtletas} com sanção` : undefined}
+          />
         </div>
         <button
           onClick={onNew}
@@ -4278,7 +4372,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 
       {tipoSancaoData.length > 0 && (
         <div style={{ ...panelStyle, marginBottom: 24 }}>
-          <div style={panelTitle}>Sanções aplicadas por tipo (Pais / EE)</div>
+          <div style={panelTitle}>Sanções aplicadas por tipo (Pais / EE e atletas)</div>
           <ResponsiveContainer width="100%" height={Math.max(160, tipoSancaoData.length * 34)}>
             <BarChart data={tipoSancaoData} layout="vertical" margin={{ left: 8 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
@@ -4286,6 +4380,21 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
               <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.danger} radius={[0, 3, 3, 0]} barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {escalaoData.length > 0 && (
+        <div style={{ ...panelStyle, marginBottom: 24 }}>
+          <div style={panelTitle}>Atletas envolvidos por escalão</div>
+          <ResponsiveContainer width="100%" height={Math.max(160, escalaoData.length * 34)}>
+            <BarChart data={escalaoData} layout="vertical" margin={{ left: 8 }}>
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+              <Bar dataKey="value" fill={COLORS.warn} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -4299,6 +4408,17 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 26 }}>
           {[...familia].sort((a, b) => new Date(b.date) - new Date(a.date)).map((s) => <Row key={s.id} s={s} />)}
+        </div>
+      )}
+
+      <div style={panelTitle}>Atletas</div>
+      {atletas.length === 0 ? (
+        <div style={{ marginBottom: 26 }}>
+          <Vazio icon={Users} titulo="Sem ocorrências com atletas" texto="Regista um ou vários atletas na mesma ocorrência, por escalão, sem nomes." />
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 26 }}>
+          {[...atletas].sort((a, b) => new Date(b.date) - new Date(a.date)).map((s) => <Row key={s.id} s={s} />)}
         </div>
       )}
 
@@ -9342,6 +9462,8 @@ export default function App() {
           complaints={entries}
           sanctionTypes={options.sanctionTypes}
           onGerirLista={setListaAberta}
+          turmas={options.turmas || DEFAULT_TURMAS}
+          turmasPorEscola={options.turmasPorEscola || {}}
         />
       )}
 
