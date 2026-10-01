@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage } from "./supabaseClient";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -110,6 +110,7 @@ const STORAGE_DESVINC_KEY = "reclamacoes:desvinculacoes";
 const STORAGE_ESPACOS_KEY = "reclamacoes:espacos";
 const STORAGE_EVENTOS_KEY = "reclamacoes:eventos";
 const STORAGE_SATISFACAO_KEY = "reclamacoes:satisfacao";
+const STORAGE_INQUERITOS_KEY = "reclamacoes:inqueritos-eventos";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -7814,6 +7815,1398 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
 
 // ---------- Paleta de comandos (⌘K) ----------
 // Salta entre secções e procura reclamações sem tocar no rato.
+// ======================================================================
+// ---------- Inquéritos de satisfação de eventos ----------
+// ======================================================================
+// Importa a exportação do Google Forms / Microsoft Forms (CSV ou Excel) e
+// guarda apenas contagens por pergunta. As respostas individuais, nomes,
+// emails e carimbos de hora nunca são gravados.
+
+const DEFAULT_TIPOS_EVENTO = ["Super Treinos", "Little Dragons", "Foot-Camps", "Super Camps", "Torneio das Lendas", "Taça dos Campeões"];
+
+const DEFAULT_DIMENSOES_INQ = [
+  "Satisfação global",
+  "Organização",
+  "Treinadores e staff",
+  "Atividades",
+  "Instalações",
+  "Comunicação",
+  "Alimentação",
+  "Equipamento e ofertas",
+  "Preço",
+  "Outros",
+];
+
+// Palavras-chave para propor a dimensão de cada pergunta. A primeira que
+// bater ganha, por isso as mais específicas vêm primeiro.
+const PISTAS_DIMENSAO = [
+  ["Alimentação", ["refei", "almoco", "lanche", "aliment", "comida", "jantar"]],
+  ["Equipamento e ofertas", ["equipamento", "kit", "oferta", "brinde", "t-shirt", "camisola", "merchandis"]],
+  ["Preço", ["preco", "valor pago", "custo", "qualidade/preco", "qualidade-preco", "qualidade preco"]],
+  ["Treinadores e staff", ["treinador", "monitor", "staff", "equipa tecnica", "acompanhamento", "coordena", "tecnicos"]],
+  ["Instalações", ["instala", "campo", "balneario", "espaco", "infraestrutura", "recinto", "estadio"]],
+  ["Comunicação", ["comunica", "informa", "e-mail", "email", "contacto", "divulga", "esclarec"]],
+  ["Organização", ["organiza", "horario", "logistic", "inscri", "planeamento", "pontualidade", "check-in", "acolhimento"]],
+  ["Atividades", ["atividade", "actividade", "treino", "exercicio", "conteudo", "programa", "jogo", "divers", "experiencia"]],
+  ["Satisfação global", ["global", "geral", "no geral", "de forma geral", "globalmente", "satisfacao com o evento", "avaliacao final"]],
+];
+
+function dimensaoProvavel(titulo, dimensoes) {
+  const t = normChave(titulo);
+  for (const [dim, pistas] of PISTAS_DIMENSAO) {
+    if (dimensoes.includes(dim) && pistas.some((p) => t.includes(p))) return dim;
+  }
+  return dimensoes.includes("Outros") ? "Outros" : dimensoes[dimensoes.length - 1] || "Outros";
+}
+
+// Escalas escritas por extenso, convertidas para 1 a 5.
+const ESCALA_TEXTO = {
+  5: ["muito satisfeito", "extremamente satisfeito", "totalmente satisfeito", "excelente", "muito bom", "muito boa", "concordo totalmente", "muito provavel", "extremamente provavel"],
+  4: ["satisfeito", "bom", "boa", "concordo", "provavel"],
+  3: ["nem satisfeito nem insatisfeito", "indiferente", "neutro", "razoavel", "suficiente", "nem concordo nem discordo", "mais ou menos", "satisfatorio", "satisfatoria"],
+  2: ["insatisfeito", "pouco satisfeito", "mau", "ma", "fraco", "fraca", "discordo", "improvavel", "pouco provavel", "insuficiente"],
+  1: ["muito insatisfeito", "nada satisfeito", "totalmente insatisfeito", "muito mau", "muito ma", "pessimo", "pessima", "discordo totalmente", "nada provavel", "muito fraco", "muito fraca"],
+};
+const MAPA_ESCALA_TEXTO = (() => {
+  const m = {};
+  Object.entries(ESCALA_TEXTO).forEach(([v, ls]) => ls.forEach((l) => (m[l] = Number(v))));
+  return m;
+})();
+
+const SEM_RESPOSTA = ["", "n/a", "na", "ns/nr", "nsnr", "nao se aplica", "nao sei", "nao sei / nao respondo", "sem opiniao", "-"];
+
+// "4", "4 - Satisfeito", "4 estrelas", "Satisfeito" → número na escala.
+function valorEscala(bruto) {
+  const t = normChave(bruto);
+  if (SEM_RESPOSTA.includes(t)) return null;
+  const m = t.match(/^(\d{1,2})(?:[.,]0+)?(?:\s*(?:-|–|—|\.|\)|estrelas?|pontos?|\/\s*\d+).*)?$/);
+  if (m) return Number(m[1]);
+  const limpo = t.replace(/[.!]+$/, "");
+  return MAPA_ESCALA_TEXTO[limpo] !== undefined ? MAPA_ESCALA_TEXTO[limpo] : undefined;
+}
+
+const COLUNAS_IGNORAR_INQ = [
+  "carimbo", "timestamp", "data/hora", "hora de inicio", "hora de conclusao", "hora da ultima modificacao",
+  "start time", "completion time", "last modified", "endereco de email", "email address", "id",
+];
+
+// Classifica uma coluna da exportação pelo conteúdo.
+function analisarColunaInq(titulo, valores) {
+  const t = normChave(titulo);
+  if (pareceColunaPessoal(titulo)) return { tipo: "ignorar", pessoal: true };
+  if (COLUNAS_IGNORAR_INQ.some((c) => t === c || t.startsWith(c))) return { tipo: "ignorar", tecnica: true };
+  const preenchidos = valores.map((v) => String(v ?? "").trim()).filter((v) => !SEM_RESPOSTA.includes(normChave(v)));
+  if (preenchidos.length === 0) return { tipo: "ignorar" };
+
+  const nums = preenchidos.map(valorEscala);
+  const reconhecidos = nums.filter((n) => n !== undefined && n !== null);
+  const recomenda = /recomend|recommend/.test(t);
+  if (reconhecidos.length / preenchidos.length >= 0.85) {
+    const max = Math.max(...reconhecidos);
+    const min = Math.min(...reconhecidos);
+    const todosNumericos = preenchidos.every((v) => /^\s*\d/.test(v));
+    if (max <= 10 && min >= 0) {
+      if (max > 5 || recomenda) {
+        const de0 = min === 0 || recomenda;
+        return { tipo: recomenda ? "nps" : "escala", min: de0 ? 0 : 1, max: 10 };
+      }
+      return { tipo: "escala", min: 1, max: todosNumericos && max <= 4 && !preenchidos.some((v) => /5/.test(v)) ? 4 : 5 };
+    }
+  }
+
+  const norm = preenchidos.map(normChave);
+  if (norm.every((v) => ["sim", "nao", "yes", "no"].includes(v))) return { tipo: "simnao" };
+
+  // Perguntas abertas pelo título, mesmo que haja poucas respostas diferentes.
+  if (/melhorar|coment|sugest|observac|porque|descrev|o que mais|outro aspeto|gostaria de|deixe|partilhe/.test(t)) return { tipo: "aberta" };
+
+  const distintos = new Set(norm);
+  const mediaComp = preenchidos.reduce((s, v) => s + v.length, 0) / preenchidos.length;
+  if (distintos.size <= 15 && (distintos.size <= 3 || distintos.size / preenchidos.length <= 0.6) && mediaComp < 60) {
+    return { tipo: "escolha" };
+  }
+  return { tipo: "aberta" };
+}
+
+// Leitor de CSV que respeita aspas (o Google Forms exporta assim).
+function lerCSVInq(texto) {
+  const src = String(texto).replace(/^﻿/, "");
+  const primeira = src.split(/\r?\n/)[0] || "";
+  const fora = primeira.replace(/"[^"]*"/g, "");
+  const sep = fora.includes("\t") ? "\t" : (fora.match(/;/g) || []).length > (fora.match(/,/g) || []).length ? ";" : ",";
+  const linhas = [];
+  let linha = [];
+  let campo = "";
+  let aspas = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (aspas) {
+      if (c === '"') {
+        if (src[i + 1] === '"') {
+          campo += '"';
+          i++;
+        } else aspas = false;
+      } else campo += c;
+    } else if (c === '"') aspas = true;
+    else if (c === sep) {
+      linha.push(campo);
+      campo = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      linha.push(campo);
+      linhas.push(linha);
+      linha = [];
+      campo = "";
+    } else campo += c;
+  }
+  if (campo !== "" || linha.length) {
+    linha.push(campo);
+    linhas.push(linha);
+  }
+  return linhas.filter((l) => l.some((c) => String(c).trim() !== ""));
+}
+
+// Leitor de .xlsx sem dependências: um .xlsx é um zip com XML lá dentro.
+// Descomprime com o DecompressionStream do browser e lê a primeira folha.
+async function lerExcelInq(ficheiro) {
+  if (/\.xls$/i.test(ficheiro.name)) throw new Error("o formato .xls antigo não é suportado; guarda como .xlsx ou CSV");
+  const buf = new Uint8Array(await ficheiro.arrayBuffer());
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 70000); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("não parece um ficheiro Excel válido");
+  const total = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const entradas = {};
+  const dec = new TextDecoder();
+  for (let k = 0; k < total; k++) {
+    const metodo = dv.getUint16(p + 10, true);
+    const tamComp = dv.getUint32(p + 20, true);
+    const nLen = dv.getUint16(p + 28, true);
+    const eLen = dv.getUint16(p + 30, true);
+    const cLen = dv.getUint16(p + 32, true);
+    const offLocal = dv.getUint32(p + 42, true);
+    const nome = dec.decode(buf.subarray(p + 46, p + 46 + nLen));
+    entradas[nome] = { metodo, tamComp, offLocal };
+    p += 46 + nLen + eLen + cLen;
+  }
+  const ler = async (nome) => {
+    const e = entradas[nome];
+    if (!e) return null;
+    const ini = e.offLocal + 30 + dv.getUint16(e.offLocal + 26, true) + dv.getUint16(e.offLocal + 28, true);
+    const dados = buf.subarray(ini, ini + e.tamComp);
+    if (e.metodo === 0) return dec.decode(dados);
+    const stream = new Blob([dados]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return dec.decode(await new Response(stream).arrayBuffer());
+  };
+  const xml = (t) => new DOMParser().parseFromString(t, "application/xml");
+
+  const partilhadas = [];
+  const sst = await ler("xl/sharedStrings.xml");
+  if (sst) {
+    [...xml(sst).getElementsByTagName("si")].forEach((si) => {
+      partilhadas.push([...si.getElementsByTagName("t")].map((t) => t.textContent).join(""));
+    });
+  }
+
+  // Primeira folha pela ordem do livro (não necessariamente sheet1.xml).
+  let caminho = "xl/worksheets/sheet1.xml";
+  const wb = await ler("xl/workbook.xml");
+  const rels = await ler("xl/_rels/workbook.xml.rels");
+  if (wb && rels) {
+    const folha = xml(wb).getElementsByTagName("sheet")[0];
+    const rid = folha && (folha.getAttribute("r:id") || folha.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
+    const rel = [...xml(rels).getElementsByTagName("Relationship")].find((r) => r.getAttribute("Id") === rid);
+    if (rel) {
+      const alvo = rel.getAttribute("Target").replace(/^\//, "");
+      caminho = alvo.startsWith("xl/") ? alvo : `xl/${alvo}`;
+    }
+  }
+  const folhaXml = await ler(caminho);
+  if (!folhaXml) throw new Error("não encontrei a folha de cálculo dentro do ficheiro");
+
+  const colNum = (ref) => {
+    const letras = ref.replace(/\d+/g, "");
+    let n = 0;
+    for (const ch of letras) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n - 1;
+  };
+  const linhas = [];
+  [...xml(folhaXml).getElementsByTagName("row")].forEach((row) => {
+    const linha = [];
+    [...row.getElementsByTagName("c")].forEach((c) => {
+      const t = c.getAttribute("t");
+      const v = c.getElementsByTagName("v")[0];
+      let valor = "";
+      if (t === "s") valor = partilhadas[Number(v?.textContent)] ?? "";
+      else if (t === "inlineStr") valor = [...c.getElementsByTagName("t")].map((x) => x.textContent).join("");
+      else valor = v ? v.textContent : "";
+      linha[colNum(c.getAttribute("r") || "")] = valor;
+    });
+    for (let i = 0; i < linha.length; i++) if (linha[i] === undefined) linha[i] = "";
+    linhas.push(linha);
+  });
+  return linhas.filter((l) => l.some((c) => String(c).trim() !== ""));
+}
+
+// Datas do carimbo do formulário (dd/mm/aaaa ou aaaa-mm-dd), para sugerir a data do inquérito.
+function dataDeCarimbo(v) {
+  const s = String(v || "").trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/);
+  if (m) {
+    const ano = m[3].length === 2 ? `20${m[3]}` : m[3];
+    return `${ano}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  }
+  return null;
+}
+
+// Retira emails e telefones dos comentários antes de os guardar.
+function limparComentario(t) {
+  return String(t || "")
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+    .replace(/(\+?351\s?)?\b9\d{2}[\s.]?\d{3}[\s.]?\d{3}\b/g, "[telefone]")
+    .trim();
+}
+
+// ---------- Métricas ----------
+// Satisfeitos: quartil de cima da escala (4–5 em 1–5; 8–10 em 0–10).
+// Insatisfeitos: quartil de baixo (1–2 em 1–5; 0–2 em 0–10).
+function limitesEscala(p) {
+  const amp = p.max - p.min;
+  return { sat: Math.ceil(p.min + 0.75 * amp - 1e-9), insat: Math.floor(p.min + 0.25 * amp + 1e-9) };
+}
+
+function resumoContagens(p, contagens) {
+  const c = contagens || {};
+  let n = 0;
+  let sat = 0;
+  let insat = 0;
+  let soma = 0;
+  let prom = 0;
+  let detr = 0;
+  const { sat: lSat, insat: lInsat } = limitesEscala(p);
+  Object.entries(c).forEach(([v, q]) => {
+    const x = Number(v);
+    n += q;
+    soma += x * q;
+    if (x >= lSat) sat += q;
+    if (x <= lInsat) insat += q;
+    if (x >= 9) prom += q;
+    if (x <= 6) detr += q;
+  });
+  return {
+    n,
+    sat,
+    insat,
+    pctSat: n ? Math.round((sat / n) * 100) : null,
+    pctInsat: n ? Math.round((insat / n) * 100) : null,
+    media: n ? soma / n : null,
+    indice: n ? Math.round(((soma / n - p.min) / (p.max - p.min)) * 100) : null,
+    prom,
+    detr,
+    nps: n ? Math.round(((prom - detr) / n) * 100) : null,
+  };
+}
+
+const pergEscala = (q) => q.tipo === "escala";
+const pergNps = (q) => q.tipo === "nps";
+
+// Satisfação de um conjunto de perguntas: soma das respostas satisfeitas sobre o total.
+function satisfacaoDe(perguntas, seg) {
+  let n = 0;
+  let sat = 0;
+  let insat = 0;
+  perguntas.filter(pergEscala).forEach((q) => {
+    const r = resumoContagens(q, seg ? (q.porSegmento || {})[seg] : q.contagens);
+    n += r.n;
+    sat += r.sat;
+    insat += r.insat;
+  });
+  return { n, pct: n ? Math.round((sat / n) * 100) : null, pctInsat: n ? Math.round((insat / n) * 100) : null };
+}
+
+function npsDe(inqueritos) {
+  let n = 0;
+  let prom = 0;
+  let detr = 0;
+  inqueritos.forEach((i) =>
+    (i.perguntas || []).filter(pergNps).forEach((q) => {
+      const r = resumoContagens(q, q.contagens);
+      n += r.n;
+      prom += r.prom;
+      detr += r.detr;
+    })
+  );
+  return n ? { n, prom, detr, neutros: n - prom - detr, valor: Math.round(((prom - detr) / n) * 100) } : null;
+}
+
+function satisfacaoInqueritos(lista) {
+  return satisfacaoDe(lista.flatMap((i) => i.perguntas || []));
+}
+
+const corSatisfacao = (pct) => (pct === null || pct === undefined ? COLORS.slate : pct >= 80 ? COLORS.ok : pct >= 70 ? COLORS.warn : COLORS.danger);
+const nomeInquerito = (i) => i.edicao || i.tipoEvento;
+
+// ---------- Observações automáticas ----------
+function observacoesInqueritos(lista, todos) {
+  const obs = [];
+  if (lista.length === 0) return obs;
+
+  lista.forEach((i) => {
+    const s = satisfacaoDe(i.perguntas || []);
+    if (s.pct !== null && s.pct < 70) {
+      obs.push({ nivel: "alarme", titulo: `${nomeInquerito(i)}: satisfação de ${s.pct}%`, texto: `Abaixo dos 70%. ${s.pctInsat}% das respostas são de insatisfação.` });
+    }
+    const nps = npsDe([i]);
+    if (nps && nps.valor < 0) {
+      obs.push({ nivel: "alarme", titulo: `${nomeInquerito(i)}: NPS negativo (${nps.valor})`, texto: `Há mais detratores (${nps.detr}) do que promotores (${nps.prom}).` });
+    }
+    if (i.enviados && i.respostas / i.enviados < 0.2) {
+      obs.push({ nivel: "atencao", titulo: `${nomeInquerito(i)}: taxa de resposta de ${Math.round((i.respostas / i.enviados) * 100)}%`, texto: "Com tão poucas respostas, os resultados podem não representar os participantes." });
+    } else if ((i.respostas || 0) < 10) {
+      obs.push({ nivel: "atencao", titulo: `${nomeInquerito(i)}: só ${i.respostas} respostas`, texto: "Amostra pequena: uma ou duas respostas mudam muito as percentagens." });
+    }
+
+    // Comparação com a edição anterior do mesmo evento.
+    const anteriores = todos
+      .filter((o) => o.tipoEvento === i.tipoEvento && o.id !== i.id && String(o.data) < String(i.data))
+      .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+    if (anteriores[0] && s.pct !== null) {
+      const ant = satisfacaoDe(anteriores[0].perguntas || []);
+      if (ant.pct !== null) {
+        const dif = s.pct - ant.pct;
+        if (dif <= -5) obs.push({ nivel: "atencao", titulo: `${nomeInquerito(i)} caiu ${Math.abs(dif)} p.p.`, texto: `De ${ant.pct}% em "${nomeInquerito(anteriores[0])}" para ${s.pct}%.` });
+        if (dif >= 5) obs.push({ nivel: "bom", titulo: `${nomeInquerito(i)} subiu ${dif} p.p.`, texto: `De ${ant.pct}% em "${nomeInquerito(anteriores[0])}" para ${s.pct}%.` });
+      }
+    }
+  });
+
+  // Perguntas com mais insatisfação.
+  const perguntas = lista.flatMap((i) => (i.perguntas || []).filter(pergEscala).map((q) => ({ q, i, r: resumoContagens(q, q.contagens) })));
+  perguntas
+    .filter((x) => x.r.n >= 5 && x.r.pctInsat >= 25)
+    .sort((a, b) => b.r.pctInsat - a.r.pctInsat)
+    .slice(0, 3)
+    .forEach((x) =>
+      obs.push({ nivel: "alarme", titulo: `${x.r.pctInsat}% insatisfeitos: "${x.q.texto.slice(0, 70)}${x.q.texto.length > 70 ? "…" : ""}"`, texto: `${nomeInquerito(x.i)} · ${x.q.dimensao}` })
+    );
+
+  // Dimensão mais fraca.
+  const porDim = {};
+  lista.forEach((i) =>
+    (i.perguntas || []).filter(pergEscala).forEach((q) => {
+      porDim[q.dimensao] = porDim[q.dimensao] || [];
+      porDim[q.dimensao].push(q);
+    })
+  );
+  const dims = Object.entries(porDim)
+    .map(([d, qs]) => ({ d, s: satisfacaoDe(qs) }))
+    .filter((x) => x.s.n >= 10)
+    .sort((a, b) => a.s.pct - b.s.pct);
+  if (dims.length >= 2 && dims[0].s.pct < 80) {
+    obs.push({ nivel: "atencao", titulo: `${dims[0].d} é a dimensão mais fraca (${dims[0].s.pct}%)`, texto: `A melhor é ${dims[dims.length - 1].d}, com ${dims[dims.length - 1].s.pct}%.` });
+  }
+
+  // Evento com melhor resultado.
+  const porTipo = [...new Set(lista.map((i) => i.tipoEvento))]
+    .map((t) => ({ t, s: satisfacaoInqueritos(lista.filter((i) => i.tipoEvento === t)) }))
+    .filter((x) => x.s.pct !== null && x.s.n >= 10)
+    .sort((a, b) => b.s.pct - a.s.pct);
+  if (porTipo[0] && porTipo[0].s.pct >= 90) {
+    obs.push({ nivel: "bom", titulo: `${porTipo[0].t}: ${porTipo[0].s.pct}% de satisfação`, texto: "O evento mais bem avaliado no período escolhido." });
+  }
+  return obs;
+}
+
+// ---------- Importação ----------
+const TIPOS_COLUNA_INQ = [
+  ["escala", "Escala de satisfação"],
+  ["nps", "Recomendação (NPS 0–10)"],
+  ["simnao", "Sim / Não"],
+  ["escolha", "Escolha (ex: escola, turno)"],
+  ["aberta", "Comentário"],
+  ["ignorar", "Ignorar"],
+];
+
+function ImportarInquerito({ tiposEvento, dimensoes, existentes, onGuardar, onFechar, onGerirLista, notificar }) {
+  const [tipoEvento, setTipoEvento] = useState(tiposEvento[0] || "");
+  const [edicao, setEdicao] = useState("");
+  const [data, setData] = useState("");
+  const [enviados, setEnviados] = useState("");
+  const [texto, setTexto] = useState("");
+  const [tabela, setTabela] = useState(null);
+  const [colunas, setColunas] = useState([]);
+  const [segmento, setSegmento] = useState("");
+  const [guardarComentarios, setGuardarComentarios] = useState(true);
+  const [erro, setErro] = useState("");
+  const [aLer, setALer] = useState(false);
+
+  const processar = (linhas) => {
+    if (!linhas || linhas.length < 2) {
+      setErro("Não encontrei respostas. A primeira linha deve ter as perguntas e cada linha seguinte uma resposta.");
+      return;
+    }
+    const [cab, ...dados] = linhas;
+    const cols = cab.map((titulo, idx) => {
+      const valores = dados.map((l) => l[idx]);
+      const a = analisarColunaInq(titulo, valores);
+      return { idx, titulo: String(titulo || `Coluna ${idx + 1}`).trim(), ...a, min: a.min ?? 1, max: a.max ?? 5, dimensao: dimensaoProvavel(titulo, dimensoes) };
+    });
+    setTabela({ cab, dados });
+    setColunas(cols);
+    setErro("");
+    const seg = cols.find((c) => c.tipo === "escolha" && /escola|polo|local|turno|escal|equipa|grupo|semana/.test(normChave(c.titulo)));
+    setSegmento(seg ? String(seg.idx) : "");
+    if (!data) {
+      const iCarimbo = cab.findIndex((c) => /carimbo|timestamp|hora de conclusao|completion time/.test(normChave(c)));
+      if (iCarimbo >= 0) {
+        const datas = dados.map((l) => dataDeCarimbo(l[iCarimbo])).filter(Boolean).sort();
+        if (datas[0]) setData(datas[0]);
+      }
+    }
+  };
+
+  const carregarFicheiro = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!edicao) setEdicao(f.name.replace(/\.(csv|xlsx?|tsv|txt)$/i, "").replace(/[_]+/g, " ").trim());
+    setALer(true);
+    try {
+      if (/\.xlsx?$/i.test(f.name)) processar(await lerExcelInq(f));
+      else processar(lerCSVInq(await f.text()));
+    } catch (err) {
+      setErro(`Não consegui ler o ficheiro (${err?.message || err}). Experimenta exportar como CSV ou copiar e colar as células.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const setCol = (idx, patch) => setColunas((cs) => cs.map((c) => (c.idx === idx ? { ...c, ...patch } : c)));
+
+  const respostas = tabela ? tabela.dados.length : 0;
+  const usadas = colunas.filter((c) => c.tipo !== "ignorar");
+  const duplicado = existentes.find((i) => i.tipoEvento === tipoEvento && normChave(i.edicao) === normChave(edicao) && i.data === data);
+
+  const guardar = () => {
+    if (!tipoEvento) return setErro("Escolhe o evento.");
+    if (!data) return setErro("Indica a data do evento.");
+    if (!tabela) return setErro("Carrega o ficheiro ou cola as respostas.");
+    if (!usadas.some((c) => c.tipo === "escala" || c.tipo === "nps")) return setErro("Nenhuma coluna está marcada como escala ou NPS.");
+
+    const segIdx = segmento === "" ? null : Number(segmento);
+    const valorSeg = (l) => (segIdx === null ? null : String(l[segIdx] ?? "").trim() || "Sem resposta");
+    const segmentos = {};
+    if (segIdx !== null) tabela.dados.forEach((l) => (segmentos[valorSeg(l)] = (segmentos[valorSeg(l)] || 0) + 1));
+
+    const perguntas = [];
+    const comentarios = [];
+    usadas.forEach((c) => {
+      if (c.idx === segIdx) return;
+      if (c.tipo === "aberta") {
+        if (!guardarComentarios) return;
+        tabela.dados.forEach((l) => {
+          const t = limparComentario(l[c.idx]);
+          if (t && !SEM_RESPOSTA.includes(normChave(t)) && t.length > 2) comentarios.push({ pergunta: c.titulo, texto: t, segmento: valorSeg(l) });
+        });
+        return;
+      }
+      const contagens = {};
+      const porSegmento = {};
+      tabela.dados.forEach((l) => {
+        const bruto = l[c.idx];
+        let chave;
+        if (c.tipo === "escala" || c.tipo === "nps") {
+          const v = valorEscala(bruto);
+          if (v === null || v === undefined || v < c.min || v > c.max) return;
+          chave = String(v);
+        } else {
+          const t = limparComentario(bruto);
+          if (!t || SEM_RESPOSTA.includes(normChave(t))) return;
+          chave = c.tipo === "simnao" ? (["sim", "yes"].includes(normChave(t)) ? "Sim" : "Não") : t;
+        }
+        contagens[chave] = (contagens[chave] || 0) + 1;
+        if (segIdx !== null) {
+          const s = valorSeg(l);
+          porSegmento[s] = porSegmento[s] || {};
+          porSegmento[s][chave] = (porSegmento[s][chave] || 0) + 1;
+        }
+      });
+      perguntas.push({
+        id: `q${c.idx}`,
+        texto: c.titulo,
+        tipo: c.tipo,
+        min: c.tipo === "escala" || c.tipo === "nps" ? Number(c.min) : undefined,
+        max: c.tipo === "escala" || c.tipo === "nps" ? Number(c.max) : undefined,
+        dimensao: c.tipo === "nps" ? "Recomendação" : c.tipo === "escala" ? c.dimensao : undefined,
+        contagens,
+        porSegmento: segIdx !== null ? porSegmento : undefined,
+      });
+    });
+
+    const reg = {
+      id: duplicado ? duplicado.id : `inq_${Date.now()}`,
+      tipoEvento,
+      edicao: edicao.trim() || tipoEvento,
+      data,
+      epoca: epocaDe(data),
+      enviados: enviados === "" ? null : Number(enviados),
+      respostas,
+      segmentoTitulo: segIdx !== null ? colunas.find((c) => c.idx === segIdx)?.titulo : null,
+      segmentos: segIdx !== null ? segmentos : null,
+      perguntas,
+      comentarios,
+      importadoEm: new Date().toISOString(),
+    };
+    onGuardar(reg, !!duplicado);
+    notificar(`${reg.edicao}: ${respostas} respostas e ${perguntas.length} perguntas importadas.`, "ok");
+    onFechar();
+  };
+
+  const resumoValores = (c) => {
+    if (!tabela) return "";
+    const vs = tabela.dados.map((l) => String(l[c.idx] ?? "").trim()).filter(Boolean);
+    const unicos = [...new Set(vs)];
+    return unicos.slice(0, 4).join(" · ") + (unicos.length > 4 ? ` … (+${unicos.length - 4})` : "");
+  };
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Importar inquérito</h2>
+          <button onClick={onFechar} style={iconBtnStyle}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 16, lineHeight: 1.5 }}>
+          Exporta as respostas do Google Forms (CSV) ou do Microsoft Forms (Excel). A app só guarda contagens por pergunta; nomes, emails e respostas individuais não ficam gravados.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Evento</label>
+              <button type="button" onClick={() => onGerirLista("tiposEvento")} style={{ ...linkBtnStyle, marginTop: 0 }}>
+                Gerir lista
+              </button>
+            </div>
+            <select value={tipoEvento} onChange={(e) => setTipoEvento(e.target.value)} style={inputStyle}>
+              {tiposEvento.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Edição</label>
+            <input type="text" placeholder="Ex: Foot-Camp Verão · 1.º turno" value={edicao} onChange={(e) => setEdicao(e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Data do evento</label>
+            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Inquéritos enviados (opcional)</label>
+            <input type="number" min={0} placeholder="Para a taxa de resposta" value={enviados} onChange={(e) => setEnviados(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
+          <label style={{ ...primaryBtnStyle, flex: "none", display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "10px 16px" }}>
+            <Plus size={15} /> {aLer ? "A ler…" : "Escolher ficheiro (CSV ou Excel)"}
+            <input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,text/csv" onChange={carregarFicheiro} style={{ display: "none" }} />
+          </label>
+          <span style={{ fontSize: 12, color: COLORS.slate }}>ou cola as células (com a linha das perguntas):</span>
+        </div>
+        <textarea
+          rows={3}
+          value={texto}
+          placeholder="Cola aqui…"
+          onChange={(e) => {
+            setTexto(e.target.value);
+            if (e.target.value.trim()) processar(lerCSVInq(e.target.value));
+          }}
+          style={{ ...inputStyle, marginTop: 8, resize: "vertical", fontFamily: "inherit" }}
+        />
+
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.danger }}>{erro}</div>}
+
+        {tabela && (
+          <>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", margin: "18px 0 10px" }}>
+              <div style={panelTitle}>
+                {respostas} respostas · {colunas.filter((c) => c.tipo === "escala" || c.tipo === "nps").length} perguntas de avaliação
+              </div>
+              {colunas.some((c) => c.pessoal) && (
+                <span style={{ fontSize: 12, color: COLORS.warn }}>As colunas com dados pessoais foram ignoradas.</span>
+              )}
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              {colunas.map((c) => (
+                <div
+                  key={c.idx}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(180px, 2fr) minmax(150px, 1fr) minmax(150px, 1fr)",
+                    gap: 8,
+                    alignItems: "center",
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    background: c.tipo === "ignorar" ? "transparent" : COLORS.paperSunken,
+                    opacity: c.tipo === "ignorar" ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.titulo}>
+                      {c.titulo}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: COLORS.slate, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.pessoal ? "Dado pessoal — não é importado" : c.tecnica ? "Data, hora ou ID — não é importado" : resumoValores(c)}
+                    </div>
+                  </div>
+                  <select value={c.tipo} disabled={c.pessoal} onChange={(e) => setCol(c.idx, { tipo: e.target.value, ...(e.target.value === "nps" ? { min: 0, max: 10 } : {}) })} style={{ ...inputStyle, padding: "7px 8px", fontSize: 12.5 }}>
+                    {TIPOS_COLUNA_INQ.map(([k, l]) => (
+                      <option key={k} value={k}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                  {c.tipo === "escala" ? (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <select value={c.dimensao} onChange={(e) => setCol(c.idx, { dimensao: e.target.value })} style={{ ...inputStyle, padding: "7px 8px", fontSize: 12.5, flex: 1, minWidth: 0 }}>
+                        {dimensoes.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={`${c.min}-${c.max}`}
+                        onChange={(e) => {
+                          const [mi, ma] = e.target.value.split("-").map(Number);
+                          setCol(c.idx, { min: mi, max: ma });
+                        }}
+                        title="Escala"
+                        style={{ ...inputStyle, padding: "7px 6px", fontSize: 12.5, width: 74, flex: "none" }}
+                      >
+                        {["1-4", "1-5", "1-10", "0-10"].map((e) => (
+                          <option key={e} value={e}>
+                            {e.replace("-", "–")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11.5, color: COLORS.slate }}>
+                      {c.tipo === "nps" ? "0–6 detratores · 9–10 promotores" : c.tipo === "aberta" ? "Mostrado na lista de comentários" : ""}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginTop: 14 }}>
+              <div>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Comparar por (opcional)</label>
+                <select value={segmento} onChange={(e) => setSegmento(e.target.value)} style={inputStyle}>
+                  <option value="">Sem comparação</option>
+                  {colunas
+                    .filter((c) => c.tipo === "escolha")
+                    .map((c) => (
+                      <option key={c.idx} value={c.idx}>
+                        {c.titulo}
+                      </option>
+                    ))}
+                </select>
+                <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 5 }}>Ex: escola, turno ou escalão, para ver a satisfação de cada um.</div>
+              </div>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginTop: 18, cursor: "pointer" }}>
+                <input type="checkbox" checked={guardarComentarios} onChange={(e) => setGuardarComentarios(e.target.checked)} />
+                Guardar os comentários (emails e telefones são apagados)
+              </label>
+            </div>
+          </>
+        )}
+
+        {duplicado && tabela && (
+          <div style={{ marginTop: 14, fontSize: 12.5, color: COLORS.warn }}>Já existe um inquérito com este evento, edição e data. Ao guardar, é substituído.</div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onFechar} style={secondaryBtnStyle}>
+            Cancelar
+          </button>
+          <button onClick={guardar} disabled={!tabela} style={{ ...primaryBtnStyle, opacity: tabela ? 1 : 0.5 }}>
+            {duplicado ? "Substituir inquérito" : "Guardar inquérito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Barra empilhada insatisfeito / neutro / satisfeito, com legenda por extenso.
+function BarraDistribuicao({ r, altura = 10 }) {
+  if (!r || !r.n) return null;
+  const neutro = r.n - r.sat - r.insat;
+  const partes = [
+    { v: r.insat, cor: COLORS.danger, nome: "Insatisfeitos" },
+    { v: neutro, cor: COLORS.rule, nome: "Neutros" },
+    { v: r.sat, cor: COLORS.ok, nome: "Satisfeitos" },
+  ].filter((p) => p.v > 0);
+  return (
+    <div style={{ display: "flex", gap: 2, height: altura, borderRadius: 4, overflow: "hidden", background: COLORS.paperSunken }}>
+      {partes.map((p) => (
+        <div key={p.nome} title={`${p.nome}: ${p.v} (${Math.round((p.v / r.n) * 100)}%)`} style={{ width: `${(p.v / r.n) * 100}%`, background: p.cor }} />
+      ))}
+    </div>
+  );
+}
+
+function LegendaDistribuicao() {
+  return (
+    <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: COLORS.ink2, flexWrap: "wrap" }}>
+      {[
+        [COLORS.danger, "Insatisfeitos"],
+        [COLORS.rule, "Neutros"],
+        [COLORS.ok, "Satisfeitos"],
+      ].map(([c, l]) => (
+        <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: c }} />
+          {l}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Detalhe de um inquérito ----------
+function InqueritoDetalhe({ inquerito, onFechar, onAtualizar, onRemover }) {
+  const [enviados, setEnviados] = useState(inquerito.enviados ?? "");
+  const [segAtivo, setSegAtivo] = useState("");
+  const [confirmar, setConfirmar] = useState(false);
+  const s = satisfacaoDe(inquerito.perguntas || [], segAtivo || null);
+  const nps = npsDe([segAtivo ? { perguntas: (inquerito.perguntas || []).map((q) => ({ ...q, contagens: (q.porSegmento || {})[segAtivo] || {} })) } : inquerito]);
+  const taxa = inquerito.enviados ? Math.round((inquerito.respostas / inquerito.enviados) * 100) : null;
+  const segs = inquerito.segmentos ? Object.entries(inquerito.segmentos).sort((a, b) => b[1] - a[1]) : [];
+  const contagensDe = (q) => (segAtivo ? (q.porSegmento || {})[segAtivo] || {} : q.contagens);
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(720px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
+            {fmt(new Date(inquerito.data + "T00:00:00"))} · Época {inquerito.epoca}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button title="Eliminar" onClick={() => (confirmar ? onRemover(inquerito.id) : setConfirmar(true))} style={iconBtnStyle}>
+              <Trash2 size={16} color={COLORS.danger} />
+            </button>
+            <button onClick={onFechar} style={iconBtnStyle}>
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        {confirmar && (
+          <div style={{ fontSize: 12.5, color: COLORS.danger, marginTop: 6 }}>Carrega outra vez no caixote para eliminar este inquérito.</div>
+        )}
+        <h2 style={{ margin: "6px 0 6px", fontSize: 20, color: COLORS.navy }}>{inquerito.edicao}</h2>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+          <Tag label={inquerito.tipoEvento} color={COLORS.navy} bg={COLORS.rule} />
+          <Tag label={`${inquerito.respostas} respostas`} color={COLORS.slate} bg={COLORS.doneBg} />
+          {taxa !== null && <Tag label={`Taxa de resposta ${taxa}%`} color={COLORS.slate} bg={COLORS.doneBg} />}
+        </div>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <StatCard label="Satisfação" value={s.pct ?? "—"} subtitle={s.pct !== null ? `% satisfeitos · ${s.pctInsat}% insatisfeitos` : "Sem perguntas de escala"} color={corSatisfacao(s.pct)} anel={s.pct} />
+          {nps && <StatCard label="NPS" value={nps.valor} subtitle={`${nps.prom} promotores · ${nps.detr} detratores`} color={nps.valor >= 30 ? COLORS.ok : nps.valor >= 0 ? COLORS.warn : COLORS.danger} />}
+        </div>
+
+        {segs.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ ...labelStyle, marginTop: 0 }}>{inquerito.segmentoTitulo}</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[["", "Todos"], ...segs.map(([k, n]) => [k, `${k} (${n})`])].map(([k, l]) => (
+                <button
+                  key={k || "todos"}
+                  onClick={() => setSegAtivo(k)}
+                  className="pill"
+                  style={{
+                    padding: "5px 11px",
+                    borderRadius: 20,
+                    border: `1.5px solid ${segAtivo === k ? COLORS.navy : COLORS.rule}`,
+                    background: segAtivo === k ? COLORS.navy : "transparent",
+                    color: segAtivo === k ? COLORS.onAccent : COLORS.ink2,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <div style={panelTitle}>Respostas por pergunta</div>
+          <LegendaDistribuicao />
+        </div>
+        <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
+          {(inquerito.perguntas || []).map((q) => {
+            const c = contagensDe(q);
+            if (q.tipo === "escala" || q.tipo === "nps") {
+              const r = resumoContagens(q, c);
+              return (
+                <div key={q.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, marginBottom: 5 }}>
+                    <span style={{ minWidth: 0 }}>
+                      {q.texto}
+                      <span style={{ color: COLORS.slate, fontSize: 11.5 }}> · {q.tipo === "nps" ? "NPS" : q.dimensao}</span>
+                    </span>
+                    <strong style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      {q.tipo === "nps" ? `NPS ${r.nps ?? "—"}` : r.pctSat !== null ? `${r.pctSat}%` : "—"}
+                    </strong>
+                  </div>
+                  <BarraDistribuicao r={q.tipo === "nps" ? { n: r.n, sat: r.prom, insat: r.detr } : r} />
+                  <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>
+                    {r.n} respostas · média {r.media !== null ? r.media.toFixed(1).replace(".", ",") : "—"} em {q.min}–{q.max}
+                  </div>
+                </div>
+              );
+            }
+            const total = Object.values(c).reduce((a, b) => a + b, 0);
+            return (
+              <div key={q.id}>
+                <div style={{ fontSize: 13, marginBottom: 5 }}>{q.texto}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {Object.entries(c)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([k, n]) => (
+                      <span key={k} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 12, background: COLORS.paperSunken, color: COLORS.ink2 }}>
+                        {k} <strong style={{ color: COLORS.ink }}>{total ? Math.round((n / total) * 100) : 0}%</strong>
+                      </span>
+                    ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {(inquerito.comentarios || []).length > 0 && (
+          <>
+            <div style={{ ...panelTitle, marginBottom: 8 }}>Comentários ({inquerito.comentarios.filter((cm) => !segAtivo || cm.segmento === segAtivo).length})</div>
+            <div style={{ display: "grid", gap: 6, marginBottom: 18 }}>
+              {inquerito.comentarios
+                .filter((cm) => !segAtivo || cm.segmento === segAtivo)
+                .map((cm, i) => (
+                  <div key={i} style={{ fontSize: 13, padding: "8px 11px", background: COLORS.paperSunken, borderRadius: 8, lineHeight: 1.5 }}>
+                    {cm.texto}
+                    <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>
+                      {cm.pergunta}
+                      {cm.segmento ? ` · ${cm.segmento}` : ""}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </>
+        )}
+
+        <label style={labelStyle}>Inquéritos enviados</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="number" min={0} value={enviados} onChange={(e) => setEnviados(e.target.value)} placeholder="Para calcular a taxa de resposta" style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={() => onAtualizar(inquerito.id, { enviados: enviados === "" ? null : Number(enviados) })} style={{ ...primaryBtnStyle, flex: "none", padding: "0 14px" }}>
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Análise ----------
+const INQ_PARAMS = [
+  { key: "evento", label: "Satisfação por evento" },
+  { key: "evolucao", label: "Evolução por edição" },
+  { key: "dimensao", label: "Por dimensão" },
+  { key: "nps", label: "NPS por evento" },
+  { key: "perguntas", label: "Melhores e piores perguntas" },
+  { key: "segmento", label: "Por escola / turno" },
+  { key: "comentarios", label: "Comentários" },
+];
+
+const CORES_SERIE = () => [COLORS.navy, COLORS.progress, COLORS.purple, COLORS.warn, COLORS.ok, COLORS.navySoft];
+
+function InqueritosAnalise({ inqueritos, tiposEvento }) {
+  const epocas = [...new Set(inqueritos.map((i) => i.epoca).filter(Boolean))].sort().reverse();
+  const [fEpoca, setFEpoca] = useState("todas");
+  const [fTipo, setFTipo] = useState("todos");
+  const [visiveis, setVisiveis] = useState(new Set(INQ_PARAMS.map((p) => p.key)));
+  const [procura, setProcura] = useState("");
+  const toggle = (k) =>
+    setVisiveis((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+
+  const lista = inqueritos
+    .filter((i) => fEpoca === "todas" || i.epoca === fEpoca)
+    .filter((i) => fTipo === "todos" || i.tipoEvento === fTipo)
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)));
+
+  // Cada tipo de evento tem sempre a mesma cor, pela ordem da lista.
+  const ordemTipos = [...tiposEvento, ...[...new Set(inqueritos.map((i) => i.tipoEvento))].filter((t) => !tiposEvento.includes(t))];
+  const corTipo = (t) => CORES_SERIE()[ordemTipos.indexOf(t) % CORES_SERIE().length];
+
+  const respostas = lista.reduce((s, i) => s + (i.respostas || 0), 0);
+  const comEnviados = lista.filter((i) => i.enviados);
+  const taxa = comEnviados.length ? Math.round((comEnviados.reduce((s, i) => s + i.respostas, 0) / comEnviados.reduce((s, i) => s + i.enviados, 0)) * 100) : null;
+  const global = satisfacaoInqueritos(lista);
+  const nps = npsDe(lista);
+
+  const tiposPresentes = ordemTipos.filter((t) => lista.some((i) => i.tipoEvento === t));
+  const porEvento = tiposPresentes.map((t) => {
+    const l = lista.filter((i) => i.tipoEvento === t);
+    const s = satisfacaoInqueritos(l);
+    return { name: t, valor: s.pct, respostas: l.reduce((a, i) => a + i.respostas, 0), edicoes: l.length };
+  });
+
+  const evolucao = lista.map((i) => {
+    const linha = { name: `${i.edicao} (${fmt(new Date(i.data + "T00:00:00"))})` };
+    linha[i.tipoEvento] = satisfacaoDe(i.perguntas || []).pct;
+    return linha;
+  });
+
+  const porDim = {};
+  lista.forEach((i) =>
+    (i.perguntas || []).filter(pergEscala).forEach((q) => {
+      (porDim[q.dimensao] = porDim[q.dimensao] || []).push(q);
+    })
+  );
+  const dimData = Object.entries(porDim)
+    .map(([d, qs]) => ({ name: d, valor: satisfacaoDe(qs).pct, n: satisfacaoDe(qs).n }))
+    .sort((a, b) => b.valor - a.valor);
+
+  const npsData = tiposPresentes
+    .map((t) => {
+      const v = npsDe(lista.filter((i) => i.tipoEvento === t));
+      if (!v) return null;
+      return { name: t, Promotores: Math.round((v.prom / v.n) * 100), Neutros: Math.round((v.neutros / v.n) * 100), Detratores: Math.round((v.detr / v.n) * 100), nps: v.valor };
+    })
+    .filter(Boolean);
+
+  const perguntas = lista
+    .flatMap((i) => (i.perguntas || []).filter(pergEscala).map((q) => ({ q, i, r: resumoContagens(q, q.contagens) })))
+    .filter((x) => x.r.n >= 3);
+  const melhores = [...perguntas].sort((a, b) => b.r.pctSat - a.r.pctSat).slice(0, 5);
+  const piores = [...perguntas].sort((a, b) => a.r.pctSat - b.r.pctSat || b.r.pctInsat - a.r.pctInsat).slice(0, 5);
+
+  // Junta segmentos com o mesmo nome entre inquéritos (ex: a mesma escola em várias edições).
+  const segAgg = {};
+  lista.forEach((i) =>
+    Object.keys(i.segmentos || {}).forEach((sg) => {
+      const s = satisfacaoDe(i.perguntas || [], sg);
+      if (!s.n) return;
+      segAgg[sg] = segAgg[sg] || { n: 0, sat: 0, respostas: 0 };
+      segAgg[sg].n += s.n;
+      segAgg[sg].sat += Math.round((s.pct / 100) * s.n);
+      segAgg[sg].respostas += i.segmentos[sg];
+    })
+  );
+  const segData = Object.entries(segAgg)
+    .map(([k, v]) => ({ name: k, valor: Math.round((v.sat / v.n) * 100), respostas: v.respostas }))
+    .sort((a, b) => b.valor - a.valor);
+
+  const comentarios = lista
+    .flatMap((i) => (i.comentarios || []).map((c) => ({ ...c, evento: i.tipoEvento, edicao: i.edicao, data: i.data })))
+    .filter((c) => !procura || normChave(c.texto).includes(normChave(procura)))
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
+  const selectFiltro = { ...inputStyle, width: "auto", minWidth: 160, padding: "8px 10px" };
+  const eixoPct = { type: "number", domain: [0, 100], tick: { fontSize: 11, fill: COLORS.slate }, axisLine: false, tickLine: false, tickFormatter: (v) => `${v}%` };
+
+  if (inqueritos.length === 0) {
+    return <SemDados icon={MessageSquareText} titulo="Ainda sem inquéritos" texto="Importa as respostas de um evento no separador Registo para ver a análise aqui." />;
+  }
+
+  return (
+    <div>
+      <Filtros>
+        <select value={fEpoca} onChange={(e) => setFEpoca(e.target.value)} style={selectFiltro}>
+          <option value="todas">Todas as épocas</option>
+          {epocas.map((e) => (
+            <option key={e} value={e}>
+              Época {e}
+            </option>
+          ))}
+        </select>
+        <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={selectFiltro}>
+          <option value="todos">Todos os eventos</option>
+          {ordemTipos
+            .filter((t) => inqueritos.some((i) => i.tipoEvento === t))
+            .map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+        </select>
+      </Filtros>
+
+      {lista.length === 0 ? (
+        <SemDados texto="Não há inquéritos com estes filtros." />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
+            <StatCard label="Satisfação" value={global.pct ?? "—"} subtitle={global.pct !== null ? `% satisfeitos · ${global.pctInsat}% insatisfeitos` : undefined} color={corSatisfacao(global.pct)} anel={global.pct} />
+            <StatCard label="NPS" value={nps ? nps.valor : "—"} subtitle={nps ? `${nps.n} respostas à recomendação` : "Sem pergunta de recomendação"} color={!nps ? COLORS.slate : nps.valor >= 30 ? COLORS.ok : nps.valor >= 0 ? COLORS.warn : COLORS.danger} />
+            <StatCard label="Respostas" value={respostas} subtitle={`${lista.length} inquérito${lista.length === 1 ? "" : "s"}`} />
+            <StatCard label="Taxa de resposta" value={taxa ?? "—"} subtitle={taxa !== null ? `% · em ${comEnviados.length} com envios registados` : "Indica os enviados em cada inquérito"} anel={taxa} color={COLORS.navySoft} />
+          </div>
+
+          <Observacoes itens={observacoesInqueritos(lista, inqueritos)} />
+          <ParamChips params={INQ_PARAMS} visible={visiveis} onToggle={toggle} />
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16 }}>
+            {visiveis.has("evento") && porEvento.length > 0 && (
+              <div style={panelStyle}>
+                <div style={panelTitle}>Satisfação por evento</div>
+                <ResponsiveContainer width="100%" height={Math.max(170, porEvento.length * 38)}>
+                  <BarChart data={porEvento} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis {...eixoPct} />
+                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
+                    <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" label={{ value: "70%", position: "top", fontSize: 10, fill: COLORS.danger }} />
+                    <Bar dataKey="valor" name="Satisfeitos" radius={[0, 4, 4, 0]} barSize={18}>
+                      {porEvento.map((d) => (
+                        <Cell key={d.name} fill={corTipo(d.name)} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {visiveis.has("evolucao") && evolucao.length > 1 && (
+              <div style={panelStyle}>
+                <div style={panelTitle}>Evolução por edição</div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={evolucao} margin={{ left: -10, right: 16, top: 8 }}>
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" tick={false} axisLine={{ stroke: COLORS.rule }} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip content={<DicaGrafico sufixo="%" />} />
+                    <ReferenceLine y={70} stroke={COLORS.danger} strokeDasharray="4 4" />
+                    {tiposPresentes.map((t) => (
+                      <Line key={t} type="monotone" dataKey={t} name={t} stroke={corTipo(t)} strokeWidth={2} dot={{ r: 4, fill: corTipo(t), stroke: COLORS.paperRaised, strokeWidth: 2 }} connectNulls />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+                {tiposPresentes.length > 1 && (
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11.5, color: COLORS.ink2, marginTop: 6 }}>
+                    {tiposPresentes.map((t) => (
+                      <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 10, height: 3, borderRadius: 2, background: corTipo(t) }} />
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {visiveis.has("dimensao") && dimData.length > 0 && (
+              <div style={panelStyle}>
+                <div style={panelTitle}>Satisfação por dimensão</div>
+                <ResponsiveContainer width="100%" height={Math.max(170, dimData.length * 34)}>
+                  <BarChart data={dimData} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis {...eixoPct} />
+                    <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
+                    <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" />
+                    <Bar dataKey="valor" name="Satisfeitos" fill={COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {visiveis.has("nps") && npsData.length > 0 && (
+              <div style={panelStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                  <div style={panelTitle}>NPS por evento</div>
+                  <div style={{ display: "flex", gap: 12, fontSize: 11.5, color: COLORS.ink2 }}>
+                    {[
+                      [COLORS.danger, "Detratores (0–6)"],
+                      [COLORS.rule, "Neutros (7–8)"],
+                      [COLORS.ok, "Promotores (9–10)"],
+                    ].map(([c, l]) => (
+                      <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: c }} />
+                        {l}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                  {npsData.map((d) => (
+                    <div key={d.name}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
+                        <span>{d.name}</span>
+                        <strong style={{ fontVariantNumeric: "tabular-nums" }}>NPS {d.nps}</strong>
+                      </div>
+                      <div style={{ display: "flex", gap: 2, height: 12, borderRadius: 4, overflow: "hidden" }}>
+                        {[
+                          ["Detratores", COLORS.danger],
+                          ["Neutros", COLORS.rule],
+                          ["Promotores", COLORS.ok],
+                        ]
+                          .filter(([k]) => d[k] > 0)
+                          .map(([k, c]) => (
+                            <div key={k} title={`${k}: ${d[k]}%`} style={{ width: `${d[k]}%`, background: c }} />
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {visiveis.has("segmento") && segData.length > 1 && (
+              <div style={panelStyle}>
+                <div style={panelTitle}>Por escola / turno</div>
+                <ResponsiveContainer width="100%" height={Math.max(170, segData.length * 32)}>
+                  <BarChart data={segData} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+                    <XAxis {...eixoPct} />
+                    <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
+                    <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" />
+                    <Bar dataKey="valor" name="Satisfeitos" fill={COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={16} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>Agrupa pelos valores da coluna escolhida em "Comparar por" ao importar.</div>
+              </div>
+            )}
+          </div>
+
+          {visiveis.has("perguntas") && perguntas.length > 0 && (
+            <div style={{ ...panelStyle, marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                <div style={panelTitle}>Melhores e piores perguntas</div>
+                <LegendaDistribuicao />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 22 }}>
+                {[
+                  ["A melhorar", piores],
+                  ["Pontos fortes", melhores],
+                ].map(([titulo, itens]) => (
+                  <div key={titulo}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.slate, marginBottom: 8 }}>{titulo}</div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {itens.map((x) => (
+                        <div key={`${x.i.id}-${x.q.id}`}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5, marginBottom: 4 }}>
+                            <span style={{ minWidth: 0 }}>{x.q.texto}</span>
+                            <strong style={{ fontVariantNumeric: "tabular-nums" }}>{x.r.pctSat}%</strong>
+                          </div>
+                          <BarraDistribuicao r={x.r} altura={8} />
+                          <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>
+                            {nomeInquerito(x.i)} · {x.q.dimensao} · {x.r.n} respostas
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {visiveis.has("comentarios") && lista.some((i) => (i.comentarios || []).length) && (
+            <div style={{ ...panelStyle, marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={panelTitle}>Comentários ({comentarios.length})</div>
+                <div style={{ position: "relative" }}>
+                  <Search size={14} color={COLORS.slate} style={{ position: "absolute", left: 10, top: 10 }} />
+                  <input value={procura} onChange={(e) => setProcura(e.target.value)} placeholder="Procurar palavra…" style={{ ...inputStyle, paddingLeft: 30, width: 220 }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 6, maxHeight: 420, overflowY: "auto" }}>
+                {comentarios.slice(0, 200).map((c, i) => (
+                  <div key={i} style={{ fontSize: 13, padding: "8px 11px", background: COLORS.paperSunken, borderRadius: 8, lineHeight: 1.5 }}>
+                    {c.texto}
+                    <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>
+                      {c.edicao}
+                      {c.segmento ? ` · ${c.segmento}` : ""} · {c.pergunta}
+                    </div>
+                  </div>
+                ))}
+                {comentarios.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Nenhum comentário com essa palavra.</div>}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Página ----------
+function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtualizar, onRemover, onGerirLista, notificar }) {
+  const [view, setView] = useState("registo");
+  const [importar, setImportar] = useState(false);
+  const [aberto, setAberto] = useState(null);
+  const [fTipo, setFTipo] = useState("todos");
+
+  const ordenados = [...inqueritos]
+    .filter((i) => fTipo === "todos" || i.tipoEvento === fTipo)
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const atual = aberto ? inqueritos.find((i) => i.id === aberto) : null;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+        <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2 }}>
+          {[
+            ["registo", "Registo"],
+            ["analise", "Análise"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setView(key)}
+              className="pill"
+              style={{
+                background: view === key ? COLORS.paperRaised : "transparent",
+                border: "none",
+                borderRadius: 7,
+                padding: "7px 14px",
+                fontSize: 13.5,
+                fontWeight: view === key ? 600 : 500,
+                color: view === key ? COLORS.ink : COLORS.ink2,
+                cursor: "pointer",
+                boxShadow: view === key ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setImportar(true)}
+          className="press"
+          style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.navy, color: COLORS.onAccent, border: "none", borderRadius: 8, padding: "10px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}
+        >
+          <Plus size={16} /> Importar inquérito
+        </button>
+      </div>
+
+      <div key={view} className="pageIn">
+        {view === "analise" ? (
+          <InqueritosAnalise inqueritos={inqueritos} tiposEvento={tiposEvento} />
+        ) : inqueritos.length === 0 ? (
+          <SemDados
+            icon={MessageSquareText}
+            titulo="Ainda sem inquéritos"
+            texto="Exporta as respostas do Google Forms ou Microsoft Forms e importa-as aqui. Só ficam guardadas as contagens."
+            acao="Importar inquérito"
+            onAcao={() => setImportar(true)}
+          />
+        ) : (
+          <>
+            <Filtros>
+              <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 180, padding: "8px 10px" }}>
+                <option value="todos">Todos os eventos</option>
+                {tiposEvento.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </Filtros>
+            <div style={{ display: "grid", gap: 8 }}>
+              {ordenados.map((i) => {
+                const s = satisfacaoDe(i.perguntas || []);
+                const n = npsDe([i]);
+                return (
+                  <div
+                    key={i.id}
+                    onClick={() => setAberto(i.id)}
+                    className="liftable"
+                    style={{ ...panelStyle, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", cursor: "pointer" }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{i.edicao}</div>
+                      <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
+                        {i.tipoEvento} · {fmt(new Date(i.data + "T00:00:00"))} · {i.respostas} respostas
+                        {i.enviados ? ` · ${Math.round((i.respostas / i.enviados) * 100)}% de resposta` : ""}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {n && <Tag label={`NPS ${n.valor}`} color={n.valor >= 30 ? COLORS.ok : n.valor >= 0 ? COLORS.warn : COLORS.danger} bg={n.valor >= 30 ? COLORS.okBg : n.valor >= 0 ? COLORS.warnBg : COLORS.dangerBg} />}
+                      {s.pct !== null && (
+                        <Tag
+                          label={`${s.pct}% satisfeitos`}
+                          color={corSatisfacao(s.pct)}
+                          bg={s.pct >= 80 ? COLORS.okBg : s.pct >= 70 ? COLORS.warnBg : COLORS.dangerBg}
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      {importar && (
+        <ImportarInquerito
+          tiposEvento={tiposEvento}
+          dimensoes={dimensoes}
+          existentes={inqueritos}
+          onGuardar={onGuardar}
+          onFechar={() => setImportar(false)}
+          onGerirLista={onGerirLista}
+          notificar={notificar}
+        />
+      )}
+      {atual && (
+        <InqueritoDetalhe
+          key={atual.id}
+          inquerito={atual}
+          onFechar={() => setAberto(null)}
+          onAtualizar={onAtualizar}
+          onRemover={(id) => {
+            onRemover(id);
+            setAberto(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 // Navega-se com as setas, confirma-se com Enter e sai-se com Escape.
 function PaletaComandos({ aberta, onFechar, comandos }) {
   const [busca, setBusca] = useState("");
@@ -8015,7 +9408,7 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {} });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
@@ -8027,6 +9420,7 @@ export default function App() {
   const [desvinculacoes, setDesvinculacoes] = useState([]);
   const [espacos, setEspacos] = useState([]);
   const [eventos, setEventos] = useState([]);
+  const [inqueritos, setInqueritos] = useState([]);
   const [satisfacao, setSatisfacao] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -8145,6 +9539,7 @@ export default function App() {
   const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
   const persistSatisfacao = fazPersist(setSatisfacao, STORAGE_SATISFACAO_KEY, "a satisfação");
+  const persistInqueritos = fazPersist(setInqueritos, STORAGE_INQUERITOS_KEY, "os inquéritos");
 
   const persistInscritos = useCallback(async (next) => {
     setInscritos(next);
@@ -8195,7 +9590,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -8236,6 +9631,7 @@ export default function App() {
         [STORAGE_ESPACOS_KEY, setEspacos],
         [STORAGE_EVENTOS_KEY, setEventos],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
+        [STORAGE_INQUERITOS_KEY, setInqueritos],
       ]) {
         try {
           const r = await dbStorage.get(chave);
@@ -8475,6 +9871,13 @@ export default function App() {
 
   const saveEvento = (reg) => persistEventos([...eventos, reg]);
   const removeEvento = (id) => persistEventos(eventos.filter((e) => e.id !== id));
+  const guardarInquerito = (reg, substituir) =>
+    persistInqueritos(substituir ? inqueritos.map((i) => (i.id === reg.id ? reg : i)) : [...inqueritos, reg]);
+  const atualizarInquerito = (id, patch) => persistInqueritos(inqueritos.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  const removerInquerito = (id) => {
+    persistInqueritos(inqueritos.filter((i) => i.id !== id));
+    notificar("Inquérito eliminado.", "aviso");
+  };
 
   const saveSatisfacao = (reg) => persistSatisfacao([...satisfacao, reg]);
   const removeSatisfacao = (id) => persistSatisfacao(satisfacao.filter((x) => x.id !== id));
@@ -8550,6 +9953,7 @@ export default function App() {
     auditorias: "Auditorias",
     sancoes: "Sanções",
     inscritos: "Inscritos",
+    inqueritos: "Inquéritos",
   }[page];
 
   const titulo =
@@ -8559,6 +9963,8 @@ export default function App() {
       ? "Sanções"
       : page === "inscritos"
       ? "Gestão de inscritos"
+      : page === "inqueritos"
+      ? "Inquéritos de satisfação"
       : "Reclamações";
 
   // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
@@ -8629,6 +10035,20 @@ export default function App() {
       placeholder: "Ex: Campo 3",
       emUso: (x) => espacos.filter((sp) => sp.espaco === x).length,
     },
+    tiposEvento: {
+      area: "Inquéritos",
+      titulo: "Eventos",
+      nota: "Os eventos com inquérito de satisfação. Cada edição é associada a um destes.",
+      placeholder: "Ex: Dragon Cup",
+      emUso: (x) => inqueritos.filter((i) => i.tipoEvento === x).length,
+    },
+    dimensoesInquerito: {
+      area: "Inquéritos",
+      titulo: "Dimensões das perguntas",
+      nota: "Agrupam perguntas diferentes de vários formulários, para se poderem comparar entre eventos.",
+      placeholder: "Ex: Segurança",
+      emUso: (x) => inqueritos.reduce((n, i) => n + (i.perguntas || []).filter((q) => q.dimensao === x).length, 0),
+    },
     turmas: {
       area: "Inscritos",
       titulo: "Turmas e equipas",
@@ -8644,6 +10064,7 @@ export default function App() {
     { id: "p-auditorias", grupo: "Ir para", titulo: "Auditorias", icon: ClipboardList, acao: () => setPage("auditorias") },
     { id: "p-sancoes", grupo: "Ir para", titulo: "Sanções", icon: Scale, acao: () => setPage("sancoes") },
     { id: "p-inscritos", grupo: "Ir para", titulo: "Inscritos", icon: Users, acao: () => setPage("inscritos") },
+    { id: "p-inqueritos", grupo: "Ir para", titulo: "Inquéritos de satisfação", icon: MessageSquareText, acao: () => setPage("inqueritos") },
     {
       id: "a-nova",
       grupo: "Ações",
@@ -8692,6 +10113,7 @@ export default function App() {
         { key: "auditorias", label: "Auditorias", icon: ClipboardList, contador: audits.length || null },
         { key: "sancoes", label: "Sanções", icon: Scale, contador: sanctions.length || null },
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
+        { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
       ],
     },
   ];
@@ -8726,7 +10148,7 @@ export default function App() {
 
         /* Conteúdo da página: entra com um fade curto e um deslize mínimo. */
         @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        .pageIn { animation: pageIn 260ms var(--ease) both; }
+        .pageIn { animation: pageIn 260ms var(--ease) backwards; }
 
         /* Fundo escurecido dos modais. */
         @keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
@@ -8734,7 +10156,7 @@ export default function App() {
 
         /* Caixa centrada: sobe e cresce ligeiramente, como uma folha do iOS. */
         @keyframes sheetIn { from { opacity: 0; transform: translateY(14px) scale(0.975); } to { opacity: 1; transform: none; } }
-        .sheet { animation: sheetIn 300ms var(--ease) both; }
+        .sheet { animation: sheetIn 300ms var(--ease) both; box-sizing: border-box; }
 
         /* Painel lateral: desliza da direita. */
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: none; } }
@@ -8776,7 +10198,7 @@ export default function App() {
         /* Os blocos de cada página entram em cascata, com poucos milissegundos
            de diferença. Dá a sensação de fluidez sem atrasar a leitura. */
         @keyframes riseIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        .pageIn > * { animation: riseIn 300ms var(--ease) both; }
+        .pageIn > * { animation: riseIn 300ms var(--ease) backwards; }
         .pageIn > *:nth-child(1) { animation-delay: 0ms; }
         .pageIn > *:nth-child(2) { animation-delay: 45ms; }
         .pageIn > *:nth-child(3) { animation-delay: 90ms; }
@@ -9085,6 +10507,17 @@ export default function App() {
             onToggleTurmaEscola={toggleTurmaEscola}
             onAddOption={addOption}
             onRemoveOption={removeOption}
+          />
+        ) : page === "inqueritos" ? (
+          <InqueritosPage
+            inqueritos={inqueritos}
+            tiposEvento={options.tiposEvento || DEFAULT_TIPOS_EVENTO}
+            dimensoes={options.dimensoesInquerito || DEFAULT_DIMENSOES_INQ}
+            onGuardar={guardarInquerito}
+            onAtualizar={atualizarInquerito}
+            onRemover={removerInquerito}
+            onGerirLista={setListaAberta}
+            notificar={notificar}
           />
         ) : page === "sancoes" ? (
           <SanctionsPage
@@ -9401,7 +10834,7 @@ export default function App() {
               Também podes gerir cada lista onde ela é usada, no link "Gerir" junto ao campo.
             </div>
             {(listaAberta === "__indice"
-              ? ["Geral", "Reclamações", "Auditorias", "Sanções", "Inscritos"]
+              ? ["Geral", "Reclamações", "Auditorias", "Sanções", "Inscritos", "Inquéritos"]
               : [listaAberta.split(":")[1]]
             ).map((areaNome) => {
               const doGrupo = Object.entries(LISTAS).filter(([, m]) => m.area === areaNome);
