@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { dbStorage } from "./supabaseClient";
+import { dbStorage, supabase } from "./supabaseClient";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -13482,7 +13482,7 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 }
 
 // ---------- Main App ----------
-export default function App() {
+function AppPrincipal({ onSair }) {
   const [entries, setEntries] = useState([]);
   const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ });
   const [audits, setAudits] = useState([]);
@@ -14525,6 +14525,15 @@ export default function App() {
               </button>
             ))}
           </div>
+          {onSair && (
+            <button
+              onClick={onSair}
+              className="navItem"
+              style={{ width: "100%", marginTop: 8, background: "transparent", border: "none", borderRadius: 7, padding: "6px 8px", fontSize: 12, color: COLORS.ink2, cursor: "pointer", textAlign: "left" }}
+            >
+              Sair
+            </button>
+          )}
         </div>
       </div>
 
@@ -15160,3 +15169,154 @@ export default function App() {
     </div>
   );
 }
+
+// ======================================================================
+// ---------- Entrada com palavra-passe ----------
+// ======================================================================
+// A app só carrega dados depois de iniciar sessão no Supabase. A proteção
+// real está nas regras da base de dados (só utilizadores autenticados leem e
+// escrevem); este ecrã é a porta de entrada.
+
+// Conta partilhada da equipa: cria este utilizador no Supabase
+// (Authentication → Users → Add user) com a palavra-passe que quiseres.
+const EMAIL_ENTRADA = "equipa@qualidade-df.app";
+
+function EcraEntrada({ onEntrar, aVerificar }) {
+  const [pass, setPass] = useState("");
+  const [email, setEmail] = useState(EMAIL_ENTRADA);
+  const [outroEmail, setOutroEmail] = useState(false);
+  const [ver, setVer] = useState(false);
+  const [erro, setErro] = useState("");
+  const [aEntrar, setAEntrar] = useState(false);
+
+  const entrar = async (e) => {
+    e.preventDefault();
+    if (!pass) return setErro("Escreve a palavra-passe.");
+    setAEntrar(true);
+    setErro("");
+    try {
+      const { error } = await onEntrar(email.trim(), pass);
+      if (error) setErro(/invalid/i.test(error.message || "") ? "Palavra-passe incorreta." : `Não foi possível entrar: ${error.message}`);
+    } catch (err) {
+      setErro("Sem ligação ao servidor. Tenta de novo daqui a pouco.");
+    } finally {
+      setAEntrar(false);
+    }
+  };
+
+  return (
+    <div className="entrada">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        .entrada {
+          min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; box-sizing: border-box;
+          font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #EAF0F8;
+          background:
+            radial-gradient(1100px 600px at 50% -10%, rgba(64, 120, 210, 0.28), transparent 60%),
+            radial-gradient(700px 500px at 85% 110%, rgba(30, 80, 160, 0.22), transparent 60%),
+            #08172B;
+          -webkit-font-smoothing: antialiased;
+        }
+        .entradaCaixa { width: min(360px, 100%); display: flex; flex-direction: column; align-items: center; text-align: center; }
+        .entradaLogo { height: 92px; width: auto; opacity: 0; animation: entradaLogo 1100ms cubic-bezier(0.32, 0.72, 0, 1) 80ms forwards; filter: drop-shadow(0 10px 30px rgba(40, 110, 220, 0.35)); }
+        .entradaLogoHalo { position: relative; display: grid; place-items: center; width: 150px; height: 150px; margin-bottom: 14px; }
+        .entradaLogoHalo::before {
+          content: ""; position: absolute; inset: 0; border-radius: 50%;
+          background: radial-gradient(circle, rgba(90, 150, 255, 0.22), transparent 65%);
+          animation: entradaHalo 5s ease-in-out infinite;
+        }
+        .entradaTitulo { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; opacity: 0; animation: entradaSobe 700ms cubic-bezier(0.32, 0.72, 0, 1) 380ms forwards; }
+        .entradaSub { margin: 6px 0 26px; font-size: 13px; color: #8FA3BF; opacity: 0; animation: entradaSobe 700ms cubic-bezier(0.32, 0.72, 0, 1) 460ms forwards; }
+        .entradaForm { width: 100%; display: grid; gap: 10px; opacity: 0; animation: entradaSobe 700ms cubic-bezier(0.32, 0.72, 0, 1) 560ms forwards; }
+        .entradaCampo { position: relative; }
+        .entradaInput {
+          width: 100%; box-sizing: border-box; height: 46px; border-radius: 12px; padding: 0 44px 0 14px;
+          border: 1px solid rgba(160, 190, 230, 0.22); background: rgba(255, 255, 255, 0.06); color: #F3F6FB;
+          font: inherit; font-size: 15px; outline: none; transition: border-color 160ms ease, background 160ms ease;
+        }
+        .entradaInput::placeholder { color: #7D8FA8; }
+        .entradaInput:focus { border-color: rgba(120, 170, 255, 0.7); background: rgba(255, 255, 255, 0.09); }
+        .entradaOlho { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #8FA3BF; font: inherit; font-size: 12px; cursor: pointer; padding: 6px; border-radius: 6px; }
+        .entradaOlho:focus-visible, .entradaLink:focus-visible { outline: 2px solid rgba(120, 170, 255, 0.8); }
+        .entradaBotao {
+          height: 46px; border-radius: 12px; border: none; cursor: pointer; font: inherit; font-size: 15px; font-weight: 600;
+          color: #08172B; background: #F3F6FB; transition: transform 120ms ease, opacity 160ms ease;
+        }
+        .entradaBotao:hover { opacity: 0.92; }
+        .entradaBotao:active { transform: scale(0.985); }
+        .entradaBotao:disabled { opacity: 0.6; cursor: default; }
+        .entradaBotao:focus-visible { outline: 2px solid rgba(120, 170, 255, 0.9); outline-offset: 2px; }
+        .entradaErro { font-size: 13px; color: #FF9C9C; min-height: 18px; }
+        .entradaLink { background: none; border: none; color: #8FA3BF; font: inherit; font-size: 12px; cursor: pointer; margin-top: 4px; text-decoration: underline; text-underline-offset: 3px; }
+        .entradaRodape { margin-top: 34px; font-size: 11px; color: #5F7391; letter-spacing: 0.04em; }
+        @keyframes entradaLogo { from { opacity: 0; transform: translateY(10px) scale(0.94); } to { opacity: 1; transform: none; } }
+        @keyframes entradaSobe { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        @keyframes entradaHalo { 0%, 100% { transform: scale(0.92); opacity: 0.7; } 50% { transform: scale(1.06); opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+          .entradaLogo, .entradaTitulo, .entradaSub, .entradaForm { animation: none; opacity: 1; }
+          .entradaLogoHalo::before { animation: none; }
+        }
+      `}</style>
+      <div className="entradaCaixa">
+        <div className="entradaLogoHalo">
+          <img className="entradaLogo" src={LOGO_BRANCO} alt="Dragon Force" />
+        </div>
+        <h1 className="entradaTitulo">Auditoria e Gestão de Qualidade</h1>
+        <div className="entradaSub">Dragon Force · acesso reservado</div>
+        {aVerificar ? null : (
+          <form className="entradaForm" onSubmit={entrar}>
+            {outroEmail && (
+              <input className="entradaInput" type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
+            )}
+            {!outroEmail && <input type="hidden" autoComplete="username" value={email} readOnly />}
+            <div className="entradaCampo">
+              <input
+                className="entradaInput"
+                type={ver ? "text" : "password"}
+                autoComplete="current-password"
+                placeholder="Palavra-passe"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                autoFocus
+                aria-label="Palavra-passe"
+              />
+              <button type="button" className="entradaOlho" onClick={() => setVer((v) => !v)} aria-label={ver ? "Esconder palavra-passe" : "Mostrar palavra-passe"}>
+                {ver ? "Esconder" : "Mostrar"}
+              </button>
+            </div>
+            <button className="entradaBotao" type="submit" disabled={aEntrar}>
+              {aEntrar ? "A entrar…" : "Entrar"}
+            </button>
+            <div className="entradaErro" role="alert">
+              {erro}
+            </div>
+            <button type="button" className="entradaLink" onClick={() => setOutroEmail((v) => !v)}>
+              {outroEmail ? "Usar a conta da equipa" : "Entrar com outro e-mail"}
+            </button>
+          </form>
+        )}
+        <div className="entradaRodape">FC PORTO · DRAGON FORCE</div>
+      </div>
+    </div>
+  );
+}
+
+// Porta de entrada: mostra o ecrã de entrada até haver sessão.
+export default function App() {
+  const [sessao, setSessao] = useState(undefined);
+
+  useEffect(() => {
+    let ativo = true;
+    supabase.auth.getSession().then(({ data }) => ativo && setSessao(data?.session || null));
+    const { data } = supabase.auth.onAuthStateChange((_evento, s) => setSessao(s || null));
+    return () => {
+      ativo = false;
+      data?.subscription?.unsubscribe?.();
+    };
+  }, []);
+
+  if (sessao === undefined) return <EcraEntrada aVerificar onEntrar={() => {}} />;
+  if (!sessao) return <EcraEntrada onEntrar={(email, password) => supabase.auth.signInWithPassword({ email, password })} />;
+  return <AppPrincipal onSair={() => supabase.auth.signOut()} />;
+}
+
