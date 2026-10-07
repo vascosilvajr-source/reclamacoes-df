@@ -6489,9 +6489,10 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
         >
           {modo === "lista" ? (
             <>
-              Uma linha por aluno, como vem do Excel da secretaria. A contagem é feita aqui, no teu browser: nada de
-              pessoal é guardado. Só entram na app os totais por escola, turma, ano e género. Podes colar o ficheiro
-              todo, com nomes, NIF e emails — essas colunas não são mapeadas nem lidas.
+              Uma linha por aluno, com as colunas <strong>ID</strong>, <strong>Escola</strong>, <strong>Género</strong> (M ou F),{" "}
+              <strong>Ano de nascimento</strong> e <strong>Equipa/Turma</strong>. Não é preciso nome. A contagem é feita aqui,
+              no teu browser: o ID serve só para não contar o mesmo aluno duas vezes e não é guardado. Só entram na app os
+              totais por escola, turma, ano e género.
             </>
           ) : (
             <>Uma linha por turma, com os totais já somados por ti.</>
@@ -6536,7 +6537,7 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
           }}
           placeholder={
             modo === "lista"
-              ? "Nome\tID\tEscola\tEscalão\tGénero\tData nasc.\nAna Silva\t10231\tGondomar\tSUB12\tF\t12/03/2014\nJoão Dias\t10232\tGondomar\tsub-12 A\tM\t2014"
+              ? "ID\tEscola\tGénero\tAno de Nascimento\tEquipa/Turma\n10231\tGondomar\tF\t2014\tSub-12 A\n10232\tGondomar\tM\t2015\tSub-11 B"
               : "Escola\tTurma\tAno\tM\tF\nGondomar\tSub-10\t2016\t14\t2"
           }
           style={{ ...inputStyle, resize: "vertical", fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 12.5, lineHeight: 1.6 }}
@@ -14918,7 +14919,7 @@ function AppPrincipal({ onSair }) {
             <table className="registoTabela" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 880 }}>
               <thead>
                 <tr style={{ background: COLORS.paperSunken, textAlign: "left" }}>
-                  {["Nº · data", "Canal", "Categoria", "Reclamante", "Prazo", "Estado", ""].map((h) => (
+                  {[["Nº", "Receção"], ["Canal", "Gravidade"], ["Categoria", "Tema"], ["Reclamante", "Escola"], ["Prazo"], ["Estado"], [""]].map(([h, h2]) => (
                     <th
                       key={h}
                       style={{
@@ -14932,6 +14933,7 @@ function AppPrincipal({ onSair }) {
                       }}
                     >
                       {h}
+                      {h2 && <span style={{ display: "block", marginTop: 2, fontWeight: 500, opacity: 0.75 }}>{h2}</span>}
                     </th>
                   ))}
                 </tr>
