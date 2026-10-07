@@ -20,6 +20,7 @@ import {
   AreaChart,
   Area,
   ComposedChart,
+  LabelList,
 } from "recharts";
 
 // ---------- Tokens ----------
@@ -10229,6 +10230,7 @@ const SECCOES_RELATORIO = [
   { key: "satisfacao", label: "Satisfação e inquéritos" },
   { key: "causas", label: "Causa raiz" },
   { key: "sancoes", label: "Sanções" },
+  { key: "acompanhar", label: "Pontos a acompanhar" },
   { key: "notas", label: "Notas e conclusões" },
 ];
 
@@ -10252,6 +10254,41 @@ function dentroPeriodo(periodo, data) {
   return true;
 }
 
+// O mesmo período, um ano antes: para comparar com a época passada.
+function noPeriodoHomologo(periodo, data) {
+  if (!data) return false;
+  const d = String(data).slice(0, 10);
+  const umAnoDepois = (iso) => {
+    const x = new Date(iso + "T00:00:00");
+    x.setFullYear(x.getFullYear() + 1);
+    return x;
+  };
+  if (periodo.startsWith("epoca:")) {
+    const ano = Number(periodo.slice(6, 10));
+    if (epocaDe(d) !== `${ano - 1}/${String(ano).slice(2)}`) return false;
+    // Época em curso: só até à mesma data do ano passado.
+    return epocaDe(isoDe(new Date())) === periodo.slice(6) ? umAnoDepois(d) <= new Date() : true;
+  }
+  if (periodo.startsWith("dias:")) {
+    const fim = new Date();
+    fim.setFullYear(fim.getFullYear() - 1);
+    const ini = new Date(fim);
+    ini.setDate(ini.getDate() - Number(periodo.slice(5)));
+    const x = new Date(d + "T00:00:00");
+    return x >= ini && x <= fim;
+  }
+  return false;
+}
+
+function nomeHomologo(periodo) {
+  if (periodo.startsWith("epoca:")) {
+    const ano = Number(periodo.slice(6, 10));
+    return `${ano - 1}/${String(ano).slice(2)}`;
+  }
+  if (periodo.startsWith("dias:")) return "há um ano";
+  return null;
+}
+
 function nomePeriodo(periodo) {
   if (periodo.startsWith("epoca:")) return `Época ${periodo.slice(6)}`;
   const f = PERIODOS_FIXOS.find(([k]) => k === periodo);
@@ -10260,7 +10297,12 @@ function nomePeriodo(periodo) {
 
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
 const por100 = (n, alunos) => (alunos ? Math.round((n / alunos) * 1000) / 10 : null);
-const fmtNum = (v, dec = 0) => (v === null || v === undefined || isNaN(v) ? "—" : Number(v).toLocaleString("pt-PT", { maximumFractionDigits: dec, minimumFractionDigits: 0 }));
+const fmtNum = (v, dec = 0) => {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  const f = 10 ** dec;
+  const r = Math.round(Number(v) * f) / f;
+  return (r === 0 ? 0 : r).toLocaleString("pt-PT", { maximumFractionDigits: dec, minimumFractionDigits: 0 });
+};
 const ordinal = (n) => `${n}.º`;
 
 // Métricas de uma escola, usadas para o relatório e para a comparação com as outras.
@@ -10331,55 +10373,263 @@ const METRICAS_COMP = [
   { key: "conversao", label: "Conversão de experiências", unidade: "%", melhor: "alto", limiar: 8 },
 ];
 
-function KpiRel({ label, valor, unidade, comparacao, cor }) {
+// Identidade do relatório: papel branco, azul institucional, tipografia serifada
+// nos títulos e números. Sóbrio, ao estilo de um relatório de clube.
+const REL_AZUL = "#0B2A5B";
+const REL_AZUL2 = "#1D4F9A";
+const REL_SERIFA = "'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman', serif";
+const REL_VERDE = "#1E7A4C";
+// Azul institucional no papel claro; no tema escuro usa o azul da app, que se lê melhor.
+const azulRel = () => (COLORS.paper === TEMA_ESCURO.paper ? COLORS.navy : REL_AZUL2);
+const REL_VERMELHO = "#B3261E";
+
+// Logótipo DF na cor que se quiser (o ficheiro é branco; usa-se como máscara).
+function LogoRel({ altura = 44, cor = REL_AZUL }) {
   return (
-    <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.paperSunken, minWidth: 0 }}>
-      <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 500 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: cor || COLORS.ink, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+    <span
+      role="img"
+      aria-label="Dragon Force"
+      style={{
+        display: "inline-block",
+        height: altura,
+        width: altura * 0.83,
+        background: cor,
+        WebkitMaskImage: `url(${LOGO_BRANCO})`,
+        maskImage: `url(${LOGO_BRANCO})`,
+        WebkitMaskSize: "contain",
+        maskSize: "contain",
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        flex: "none",
+      }}
+    />
+  );
+}
+
+const corRel = (cor) => (cor === COLORS.ok ? REL_VERDE : cor === COLORS.danger ? REL_VERMELHO : cor === COLORS.warn ? "#9A6200" : null);
+
+function KpiRel({ label, valor, unidade, comparacao, cor, extra }) {
+  const destaque = cor && cor !== COLORS.ink && cor !== COLORS.slate ? corRel(cor) || cor : null;
+  return (
+    <div className="relKpi">
+      <div className="relRotulo">{label}</div>
+      <div style={{ fontFamily: REL_SERIFA, fontSize: 30, fontWeight: 600, letterSpacing: "-0.01em", color: destaque || COLORS.ink, marginTop: 6, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>
         {valor}
-        {valor !== "—" && unidade ? <span style={{ fontSize: 14, fontWeight: 500, marginLeft: 1 }}>{unidade}</span> : null}
+        {valor !== "—" && unidade ? <span style={{ fontSize: 16, fontWeight: 500, marginLeft: 2 }}>{unidade}</span> : null}
       </div>
-      {comparacao && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>{comparacao}</div>}
+      {comparacao && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 7, lineHeight: 1.45 }}>{comparacao}</div>}
+      {extra}
     </div>
   );
 }
 
 function SeccaoRel({ titulo, nota, children }) {
   return (
-    <section className="relSeccao" style={{ paddingTop: 22, marginTop: 22, borderTop: `1px solid ${COLORS.rule}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        <h3 style={{ margin: 0, fontSize: 16, color: COLORS.navy, letterSpacing: "-0.01em" }}>{titulo}</h3>
-        {nota && <div style={{ fontSize: 11.5, color: COLORS.slate }}>{nota}</div>}
+    <section className="relSeccao" style={{ marginTop: 46 }}>
+      <div className="relSeccaoTopo" style={{ display: "flex", alignItems: "baseline", gap: 14, paddingBottom: 10, marginBottom: 20, borderBottom: `1px solid ${COLORS.ink}` }}>
+        <span className="relNum" style={{ fontFamily: REL_SERIFA, fontSize: 15, fontWeight: 600, color: azulRel(), fontVariantNumeric: "lining-nums tabular-nums", minWidth: 22 }} />
+        <h3 style={{ margin: 0, fontFamily: REL_SERIFA, fontSize: 24, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.01em", lineHeight: 1.15 }}>{titulo}</h3>
+        {nota && <div style={{ marginLeft: "auto", fontSize: 11.5, color: COLORS.slate, textAlign: "right", maxWidth: 380 }}>{nota}</div>}
       </div>
       {children}
     </section>
   );
 }
 
-function BarrasRel({ dados, cor, largura = 150, sufixo = "" }) {
-  if (!dados.length) return <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem registos no período.</div>;
+// Uma linha do quadro de comparação: valor, posição entre as escolas e diferença para a média.
+function LinhaComparacaoRel({ c, comparar }) {
+  const tom = !comparar || !c.estado || c.estado === "igual" ? COLORS.ink : c.estado === "melhor" ? REL_VERDE : REL_VERMELHO;
+  const n = c.p ? c.p.de : 0;
+  const dif = c.v !== null && c.v !== undefined && c.med !== null ? c.v - c.med : null;
+  const unidadeDif = c.unidade === "%" ? " p.p." : "";
+  const texto =
+    dif === null || !comparar
+      ? null
+      : c.estado === "igual"
+      ? "Em linha com a média"
+      : `${dif > 0 ? "+" : "−"}${fmtNum(Math.abs(dif), c.dec ?? (c.unidade === "%" ? 0 : 1))}${unidadeDif} ${dif > 0 ? "acima" : "abaixo"} da média`;
   return (
-    <ResponsiveContainer width="100%" height={Math.max(120, dados.length * 30)}>
-      <BarChart data={dados} layout="vertical" margin={{ left: 4, right: 18 }}>
-        <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
-        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-        <YAxis type="category" dataKey="name" width={largura} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+    <tr className="relLinhaComp">
+      <td style={{ padding: "13px 0", fontSize: 13, color: COLORS.ink }}>{c.label}</td>
+      <td style={{ padding: "13px 12px", textAlign: "right", fontFamily: REL_SERIFA, fontSize: 22, fontWeight: 600, color: tom, fontVariantNumeric: "lining-nums tabular-nums", whiteSpace: "nowrap" }}>
+        {fmtNum(c.v, c.dec ?? 0)}
+        {c.v !== null && c.v !== undefined && c.unidade ? <span style={{ fontSize: 14, fontWeight: 500 }}>{c.unidade}</span> : null}
+      </td>
+      <td style={{ padding: "13px 12px", width: 190 }}>
+        {comparar && c.p && n > 1 ? (
+          <div>
+            <div style={{ position: "relative", height: 12 }}>
+              <div style={{ position: "absolute", left: 0, right: 0, top: 5.5, height: 1, background: COLORS.rule }} />
+              {Array.from({ length: n }).map((_, i) => {
+                const eu = i + 1 === c.p.pos;
+                const tam = eu ? 12 : 6;
+                return (
+                  <span
+                    key={i}
+                    style={{
+                      position: "absolute",
+                      left: `calc(${(i / (n - 1)) * 100}% - ${tam / 2}px)`,
+                      top: 6 - tam / 2,
+                      width: tam,
+                      height: tam,
+                      borderRadius: "50%",
+                      background: eu ? azulRel() : COLORS.paperRaised,
+                      border: eu ? "none" : `1px solid ${COLORS.slate}`,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: COLORS.slate, marginTop: 5, letterSpacing: "0.02em" }}>
+              <span>1.º</span>
+              <span style={{ color: COLORS.ink, fontWeight: 600 }}>
+                {ordinal(c.p.pos)} de {n}
+              </span>
+              <span>{ordinal(n)}</span>
+            </div>
+          </div>
+        ) : (
+          <span style={{ fontSize: 11, color: COLORS.slate }}>{c.v === null || c.v === undefined ? "Sem dados" : ""}</span>
+        )}
+      </td>
+      <td style={{ padding: "13px 0", textAlign: "right", fontSize: 12, fontWeight: 600, color: c.estado === "igual" ? COLORS.slate : tom, whiteSpace: "nowrap", width: 170 }}>{texto}</td>
+    </tr>
+  );
+}
+
+function BarrasRel({ dados, cor, largura = 150, sufixo = "" }) {
+  if (!dados.length) return <div className="relVazio">Sem registos no período.</div>;
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(80, dados.length * 26 + 8)}>
+      <BarChart data={dados} layout="vertical" margin={{ left: 0, right: 34, top: 2, bottom: 2 }}>
+        <XAxis type="number" hide domain={[0, "dataMax"]} />
+        <YAxis type="category" dataKey="name" width={largura} tick={{ fontSize: 11.5, fill: COLORS.ink2 }} axisLine={false} tickLine={false} />
         <Tooltip content={<DicaGrafico sufixo={sufixo} />} cursor={{ fill: COLORS.ruleSoft }} />
-        <Bar dataKey="value" name="Total" fill={cor || COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false} />
+        <Bar dataKey="value" name="Total" fill={cor || azulRel()} barSize={9} isAnimationActive={false}>
+          <LabelList dataKey="value" position="right" formatter={(v) => `${v}${sufixo}`} style={{ fontSize: 11.5, fontWeight: 600, fill: COLORS.ink }} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
+// Variação face a outro valor. "bom" diz para que lado é bom subir.
+function VariacaoRel({ atual, anterior, bom = "alto", rotulo }) {
+  if (atual === null || atual === undefined || anterior === null || anterior === undefined) return null;
+  const dif = atual - anterior;
+  const positivo = bom === "alto" ? dif > 0 : dif < 0;
+  const cor = dif === 0 ? COLORS.slate : positivo ? REL_VERDE : REL_VERMELHO;
+  return (
+    <div style={{ fontSize: 11, fontWeight: 600, color: cor, marginTop: 6 }}>
+      {dif === 0 ? "Igual" : `${dif > 0 ? "+" : "−"}${fmtNum(Math.abs(dif))}`} {rotulo}
+    </div>
+  );
+}
+
+// Uma barra dividida em partes, com legenda.
+function BarraPartesRel({ partes, total }) {
+  const soma = total ?? partes.reduce((n, p) => n + (p.valor || 0), 0);
+  if (!soma) return <div className="relVazio">Sem registos no período.</div>;
+  return (
+    <div>
+      <div style={{ display: "flex", height: 8, background: COLORS.ruleSoft, gap: 2 }}>
+        {partes
+          .filter((p) => p.valor > 0)
+          .map((p) => (
+            <div key={p.label} title={`${p.label}: ${p.valor}`} style={{ width: `${(p.valor / soma) * 100}%`, background: p.cor }} />
+          ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", marginTop: 10 }}>
+        {partes.map((p) => (
+          <div key={p.label} style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 12 }}>
+            <span style={{ width: 8, height: 8, background: p.cor, alignSelf: "center" }} />
+            <span style={{ color: COLORS.ink2 }}>{p.label}</span>
+            <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p.valor}</strong>
+            <span style={{ color: COLORS.slate }}>{Math.round((p.valor / soma) * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Ocupação de cada turma: alunos face à capacidade.
+function LotacaoRel({ lotacao }) {
+  if (!lotacao.length) return <div className="relVazio">Sem turmas registadas.</div>;
+  const corDe = (p) => (p >= 95 ? "#9A6200" : p < 50 ? COLORS.slate : azulRel());
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "9px 26px" }}>
+      {lotacao.map((t) => (
+        <div key={t.turma} style={{ display: "grid", gridTemplateColumns: "86px 1fr 44px", alignItems: "center", gap: 10, fontSize: 12 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: COLORS.ink2 }}>{t.turma}</span>
+          <div style={{ height: 5, background: COLORS.ruleSoft }}>
+            <div style={{ width: `${Math.min(100, t.pct || 0)}%`, height: "100%", background: corDe(t.pct || 0) }} />
+          </div>
+          <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: t.pct >= 95 ? "#9A6200" : COLORS.ink, fontWeight: t.pct >= 95 ? 700 : 500 }}>
+            {t.n}/{t.cap || "—"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Indicador de percentagem em anel fino.
+function AnelRel({ valor, rotulo, cor, tamanho = 88 }) {
+  const r = tamanho / 2 - 4;
+  const c = 2 * Math.PI * r;
+  const v = valor === null || valor === undefined ? null : Math.max(0, Math.min(100, valor));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{ position: "relative", width: tamanho, height: tamanho, flex: "none" }}>
+        <svg width={tamanho} height={tamanho} viewBox={`0 0 ${tamanho} ${tamanho}`} aria-hidden="true">
+          <circle cx={tamanho / 2} cy={tamanho / 2} r={r} fill="none" stroke={COLORS.ruleSoft} strokeWidth="3" />
+          {v !== null && <circle cx={tamanho / 2} cy={tamanho / 2} r={r} fill="none" stroke={corRel(cor) || cor || azulRel()} strokeWidth="3" strokeDasharray={`${(c * v) / 100} ${c}`} transform={`rotate(-90 ${tamanho / 2} ${tamanho / 2})`} />}
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontFamily: REL_SERIFA, fontSize: 24, fontWeight: 600, color: COLORS.ink, fontVariantNumeric: "lining-nums" }}>
+          {v === null ? "—" : `${Math.round(v)}%`}
+        </div>
+      </div>
+      {rotulo && <div style={{ fontSize: 12, color: COLORS.ink2, lineHeight: 1.5 }}>{rotulo}</div>}
+    </div>
+  );
+}
+
+// "O que salta à vista", em versão de documento.
+function DestaquesRel({ itens }) {
+  if (!itens || !itens.length) return null;
+  const ordem = { alarme: 0, atencao: 1, bom: 2 };
+  const cor = { alarme: REL_VERMELHO, atencao: "#9A6200", bom: REL_VERDE };
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="relRotulo" style={{ marginBottom: 6 }}>Em destaque</div>
+      {[...itens]
+        .sort((a, b) => (ordem[a.nivel] ?? 1) - (ordem[b.nivel] ?? 1))
+        .map((o, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "10px 1fr", gap: 12, padding: "10px 0", borderBottom: `1px solid ${COLORS.ruleSoft}` }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: cor[o.nivel] || COLORS.slate, marginTop: 7 }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink }}>{o.titulo}</div>
+              <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 2, lineHeight: 1.5 }}>{o.texto}</div>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 function TabelaRel({ colunas, linhas, vazio }) {
-  if (!linhas.length) return <div style={{ fontSize: 12.5, color: COLORS.slate }}>{vazio}</div>;
+  if (!linhas.length) return <div className="relVazio">{vazio}</div>;
   return (
     <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+      <table className="relTabela" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
         <thead>
           <tr>
             {colunas.map((c) => (
-              <th key={c} style={{ textAlign: "left", fontWeight: 600, color: COLORS.slate, fontSize: 11, padding: "6px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
+              <th key={c} className="relRotulo" style={{ textAlign: "left", padding: "0 10px 8px 0", borderBottom: `1px solid ${COLORS.ink}`, whiteSpace: "nowrap" }}>
                 {c}
               </th>
             ))}
@@ -10389,7 +10639,7 @@ function TabelaRel({ colunas, linhas, vazio }) {
           {linhas.map((l, i) => (
             <tr key={i}>
               {l.map((v, j) => (
-                <td key={j} style={{ padding: "7px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, verticalAlign: "top", fontVariantNumeric: "tabular-nums" }}>
+                <td key={j} style={{ padding: "9px 10px 9px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, verticalAlign: "top", fontVariantNumeric: "tabular-nums", lineHeight: 1.45, color: COLORS.ink }}>
                   {v}
                 </td>
               ))}
@@ -10412,7 +10662,7 @@ const contar = (lista, chave) => {
     .map(([name, value]) => ({ name, value }));
 };
 
-const LS_RELATORIO = "df-relatorio-seccoes";
+const LS_RELATORIO = "df-relatorio-seccoes-v2";
 
 function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
   const epocaAtual = epocaDe(new Date().toISOString().slice(0, 10));
@@ -10474,6 +10724,21 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
     }
     return { ...c, v, med, p, estado };
   });
+  const posicaoGeral = (() => {
+    const medias = todas
+      .map((t) => {
+        const ps = METRICAS_COMP.map((c) => {
+          const vs = todas.filter((x) => x.m[c.key] !== null && x.m[c.key] !== undefined && !isNaN(x.m[c.key])).sort((a, b) => (c.melhor === "alto" ? b.m[c.key] - a.m[c.key] : a.m[c.key] - b.m[c.key]));
+          const i = vs.findIndex((x) => x.e === t.e);
+          return i >= 0 && vs.length > 1 ? i / (vs.length - 1) : null;
+        }).filter((x) => x !== null);
+        return { e: t.e, media: ps.length >= 3 ? ps.reduce((a, b) => a + b, 0) / ps.length : null };
+      })
+      .filter((x) => x.media !== null)
+      .sort((a, b) => a.media - b.media);
+    const i = medias.findIndex((x) => x.e === escola);
+    return i >= 0 && medias.length > 1 ? { pos: i + 1, de: medias.length } : null;
+  })();
   const fortes = comparacoes.filter((c) => c.estado === "melhor");
   const fracos = comparacoes.filter((c) => c.estado === "pior");
 
@@ -10484,6 +10749,9 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
   const tempoRes = reclRes.length ? Math.round(reclRes.reduce((s, r) => s + (new Date(r.resolvedDate) - new Date(r.receivedDate + "T00:00:00")) / 86400000, 0) / reclRes.length) : null;
   const eficazes = pct(reclRes.filter((r) => r.eficacia === "eficaz").length, reclRes.filter((r) => r.eficacia).length);
   const reclMes = contar(recl, (r) => mesDeData(r.receivedDate)).sort((a, b) => a.name.localeCompare(b.name));
+  const homologo = nomeHomologo(periodo);
+  const reclHom = homologo ? reclamacoes.filter((r) => r.school === escola && noPeriodoHomologo(periodo, r.receivedDate)) : null;
+  const reclAtrasadas = reclAbertas.filter((r) => r.derivedStatus === "atrasado");
 
   // ---- Auditorias ----
   const auds = audits.filter((a) => a.school === escola).sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -10592,6 +10860,13 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               onClick={() => {
                 // O PDF sai sempre em tema claro; se estiver escuro, troca e repõe no fim.
                 const imprimir = () => {
+                  const tituloAntes = document.title;
+                  document.title = `Relatório ${escola} - ${nomePeriodo(periodo)}`.replace(/[\\/:*?"<>|]/g, "-");
+                  const repor = () => {
+                    document.title = tituloAntes;
+                    window.removeEventListener("afterprint", repor);
+                  };
+                  window.addEventListener("afterprint", repor);
                   try {
                     window.print();
                   } catch (e) {
@@ -10642,39 +10917,98 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
       </div>
 
       {/* ---- Folha do relatório ---- */}
-      <article className="relFolha" style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 14, padding: "28px 30px 34px", maxWidth: 1000, boxShadow: COLORS.shadow }}>
-        <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.08em" }}>Relatório de escola · {nomePeriodo(periodo)}</div>
-            <h2 style={{ margin: "6px 0 4px", fontSize: 26, color: COLORS.navy, letterSpacing: "-0.02em", textWrap: "balance" }}>{escola}</h2>
-            <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
-              {fmtNum(m.alunos)} alunos inscritos · gerado a {geradoEm}
+      <article className="relFolha" style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, maxWidth: 880, margin: "0 auto", boxShadow: "0 1px 2px rgba(10,20,40,0.06), 0 12px 40px -12px rgba(10,20,40,0.18)", overflow: "hidden" }}>
+       {/* A tabela só serve a impressão: repete uma margem no topo e um rodapé em cada página. */}
+       <table className="relPaginas">
+        <thead>
+          <tr>
+            <td>
+              <div className="relEspaco" />
+            </td>
+          </tr>
+        </thead>
+        <tfoot>
+          <tr>
+            <td>
+              <div className="relRodapeImp">
+                <span>FC Porto · Dragon Force · Gestão da Qualidade</span>
+                <span>
+                  Relatório de escola · {escola} · {nomePeriodo(periodo)}
+                </span>
+              </div>
+            </td>
+          </tr>
+        </tfoot>
+        <tbody>
+          <tr>
+            <td>
+        <header className="relCapa">
+          <div style={{ background: REL_AZUL, color: "#fff", display: "flex", alignItems: "center", gap: 14, padding: "14px 44px" }}>
+            <LogoRel altura={30} cor="#fff" />
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.16em", textTransform: "uppercase", lineHeight: 1.5 }}>
+              FC Porto · Dragon Force
+              <div style={{ fontWeight: 500, opacity: 0.7, letterSpacing: "0.12em" }}>Gestão da Qualidade</div>
+            </div>
+            <div style={{ marginLeft: "auto", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.8 }}>Relatório de escola</div>
+          </div>
+          <div style={{ padding: "44px 44px 0" }}>
+            <div className="relRotulo" style={{ color: azulRel() }}>
+              {nomePeriodo(periodo)}
+            </div>
+            <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 46, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05, textWrap: "balance" }}>{escola}</h2>
+            <div style={{ fontSize: 13, color: COLORS.ink2 }}>
+              Emitido a {geradoEm}
+              {cls ? ` · ${cls.label.toLowerCase()} face à época passada` : ""}
+            </div>
+            <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: `repeat(${comparar && posicaoGeral ? 5 : 4}, minmax(0, 1fr))`, marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
+              {[
+                ["Alunos inscritos", fmtNum(m.alunos), null, null],
+                ["Face à época passada", m.crescimento === null ? "—" : `${m.crescimento > 0 ? "+" : m.crescimento < 0 ? "−" : ""}${fmtNum(Math.abs(m.crescimento), 1)}%`, m.crescimento === null ? null : m.crescimento >= 0 ? REL_VERDE : REL_VERMELHO, epocaAnterior[escola]?.inscritos ? `${fmtNum(epocaAnterior[escola].inscritos)} na época passada` : null],
+                ["Reclamações", fmtNum(recl.length), null, m.reclPor100 !== null ? `${fmtNum(m.reclPor100, 1)} por 100 alunos` : null],
+                ["Satisfação", m.satisfacao === null || m.satisfacao === undefined ? "—" : `${m.satisfacao}%`, null, "inquérito da escola"],
+                ...(comparar && posicaoGeral ? [["Posição geral", `${ordinal(posicaoGeral.pos)}`, null, `entre ${posicaoGeral.de} escolas`]] : []),
+              ].map(([l, v, c, sub], i) => (
+                <div key={l} style={{ padding: "16px 16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
+                  <div className="relRotulo">{l}</div>
+                  <div style={{ fontFamily: REL_SERIFA, fontSize: 34, fontWeight: 600, color: c || COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                  {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
+                </div>
+              ))}
             </div>
           </div>
-          {cls && (
-            <Tag label={`${cls.label} · ${m.crescimento > 0 ? "+" : ""}${fmtNum(m.crescimento, 1)}% face à época passada`} color={cls.color} bg={cls.bg} />
-          )}
         </header>
+        <div className="relCorpo" style={{ padding: "0 44px 40px" }}>
 
         {ver("resumo") && (
           <SeccaoRel titulo="Resumo" nota={comparar ? `Comparação com as outras ${outras.length} escolas no mesmo período` : null}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
-              {comparacoes.map((c) => (
-                <KpiRel key={c.key} label={c.label} valor={fmtNum(c.v, c.dec ?? 0)} unidade={c.unidade} comparacao={txtComp(c)} cor={comparar ? corEstado(c.estado) : COLORS.ink} />
-              ))}
-            </div>
+            <table className="relQuadro" style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Indicador", "Valor", comparar ? "Posição entre escolas" : "", comparar ? "Face à média" : ""].map((h, i) => (
+                    <th key={i} className="relRotulo" style={{ textAlign: i === 0 || i === 2 ? "left" : "right", padding: i === 0 ? "0 0 8px" : i === 3 ? "0 0 8px" : "0 12px 8px", borderBottom: `1px solid ${COLORS.ink}` }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {comparacoes.map((c) => (
+                  <LinhaComparacaoRel key={c.key} c={c} comparar={comparar} />
+                ))}
+              </tbody>
+            </table>
             {comparar && (fortes.length > 0 || fracos.length > 0) && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginTop: 16 }}>
+              <div className="relFortes">
                 {[
                   ["Pontos fortes", fortes, COLORS.ok],
                   ["A melhorar", fracos, COLORS.danger],
                 ].map(([t, lista, cor]) => (
-                  <div key={t}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: cor, marginBottom: 6 }}>{t}</div>
+                  <div key={t} style={{ borderTop: `2px solid ${cor === COLORS.ok ? REL_VERDE : REL_VERMELHO}`, paddingTop: 12 }}>
+                    <div className="relRotulo" style={{ color: cor === COLORS.ok ? REL_VERDE : REL_VERMELHO, marginBottom: 8 }}>{t}</div>
                     {lista.length === 0 ? (
                       <div style={{ fontSize: 12.5, color: COLORS.slate }}>Nada que se destaque da média.</div>
                     ) : (
-                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
+                      <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12.5, lineHeight: 1.65, color: COLORS.ink }}>
                         {lista.map((c) => (
                           <li key={c.key}>
                             {c.label}: <strong>{fmtNum(c.v, c.dec ?? 0)}{c.unidade}</strong> contra {fmtNum(c.med, c.dec ?? 0)}
@@ -10687,8 +11021,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                 ))}
               </div>
             )}
-            <div style={{ marginTop: 16 }}>
-              <Observacoes
+            <DestaquesRel
                 itens={[
                   ...observacoesReclamacoes(recl),
                   ...observacoesAuditorias(constat),
@@ -10696,28 +11029,50 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                     .map((i) => ({ i, s: satisfacaoDe(i.perguntas || [], escola) }))
                     .filter((x) => x.s.pct !== null && x.s.pct < 70)
                     .map((x) => ({ nivel: "alarme", titulo: `${x.i.edicao}: ${x.s.pct}% de satisfação nesta escola`, texto: `Abaixo dos 70%, com ${x.i.segmentos[escola]} respostas de encarregados da escola.` })),
-                ].slice(0, 8)}
+                ].slice(0, 6)}
               />
-            </div>
           </SeccaoRel>
         )}
 
         {ver("reclamacoes") && (
           <SeccaoRel titulo="Reclamações" nota={`${recl.length} no período`}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
-              <KpiRel label="Recebidas" valor={fmtNum(recl.length)} comparacao={`${fmtNum(m.reclPor100, 1)} por 100 alunos`} />
+            <div className="relKpis">
+              <KpiRel
+                label="Recebidas"
+                valor={fmtNum(recl.length)}
+                comparacao={`${fmtNum(m.reclPor100, 1)} por 100 alunos`}
+                extra={reclHom ? <VariacaoRel atual={recl.length} anterior={reclHom.length} bom="baixo" rotulo={`vs ${homologo}`} /> : null}
+              />
               <KpiRel label="Em aberto" valor={fmtNum(reclAbertas.length)} cor={reclAbertas.some((r) => r.derivedStatus === "atrasado") ? COLORS.danger : COLORS.ink} comparacao={`${reclAbertas.filter((r) => r.derivedStatus === "atrasado").length} fora do prazo`} />
               <KpiRel label="Resolvidas no prazo" valor={fmtNum(m.prazo)} unidade="%" comparacao={txtComp(kpi("prazo"))} />
               <KpiRel label="Tempo médio de resolução" valor={fmtNum(tempoRes)} unidade=" dias" />
               <KpiRel label="Respostas eficazes" valor={fmtNum(eficazes)} unidade="%" />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            {recl.length > 0 && (
+              <div className="relGrelha" style={{ marginBottom: 14 }}>
+                <div>
+                  <div className="relSub">Gravidade</div>
+                  <BarraPartesRel
+                    partes={["alta", "media", "baixa"].map((k) => ({ label: SEVERITY_META[k].label, valor: recl.filter((r) => r.severity === k).length, cor: { alta: REL_VERMELHO, media: "#C58A1A", baixa: "#9DB5DD" }[k] }))}
+                  />
+                </div>
+                <div>
+                  <div className="relSub">Canal de entrada</div>
+                  <BarraPartesRel
+                    partes={contar(recl, "canal")
+                      .slice(0, 5)
+                      .map((x, i) => ({ label: CANAL_META[x.name]?.label || x.name, valor: x.value, cor: [REL_AZUL, REL_AZUL2, "#5C84C2", "#9DB5DD", "#CBD8EE"][i] }))}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="relGrelha">
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Por tema</div>
+                <div className="relSub">Por tema</div>
                 <BarrasRel dados={contar(recl, "tema").slice(0, 8)} largura={180} />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Por mês</div>
+                <div className="relSub">Por mês</div>
                 {reclMes.length ? (
                   <ResponsiveContainer width="100%" height={180}>
                     <BarChart data={reclMes.map((x) => ({ ...x, name: x.name.slice(5) + "/" + x.name.slice(2, 4) }))} margin={{ left: -20, right: 8 }}>
@@ -10725,7 +11080,9 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                       <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                       <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
-                      <Bar dataKey="value" name="Reclamações" fill={COLORS.navySoft} radius={[4, 4, 0, 0]} barSize={18} isAnimationActive={false} />
+                      <Bar dataKey="value" name="Reclamações" fill={azulRel()} barSize={16} isAnimationActive={false}>
+                        <LabelList dataKey="value" position="top" style={{ fontSize: 11.5, fontWeight: 700, fill: COLORS.ink }} />
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -10733,7 +11090,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                 )}
               </div>
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, margin: "14px 0 6px" }}>Em aberto</div>
+            <div className="relSub" style={{ marginTop: 18 }}>Em aberto</div>
             <TabelaRel
               colunas={["Nº", "Receção", "Tema", "Gravidade", "Estado", "Prazo"]}
               vazio="Nenhuma reclamação em aberto."
@@ -10753,27 +11110,36 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
         {ver("auditorias") && (
           <SeccaoRel titulo="Auditorias" nota={auds[0] ? `Última auditoria a ${fmt(new Date(auds[0].date + "T00:00:00"))}` : "Sem auditorias registadas"}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 14 }}>
+            <div className="relKpis">
               <KpiRel label="Auditorias no período" valor={fmtNum(audsPeriodo.length)} />
               {["NCM", "NC", "OM", "AS"].map((c) => (
                 <KpiRel key={c} label={CLASSIFICATION_META[c].label} valor={fmtNum(constat.filter((f) => f.classification === c).length)} cor={c === "NCM" && constat.some((f) => f.classification === "NCM") ? COLORS.danger : COLORS.ink} />
               ))}
-              <KpiRel label="Resolvidas" valor={fmtNum(pct(constat.filter((f) => f.resolvida).length, constat.length))} unidade="%" comparacao={`eficazes ${fmtNum(pct(constat.filter((f) => f.eficacia === "eficaz").length, constat.filter((f) => f.resolvida).length))}%`} />
+              <KpiRel
+                label="Resolvidas"
+                valor={fmtNum(pct(constat.filter((f) => f.resolvida).length, constat.length))}
+                unidade="%"
+                comparacao={constat.length ? `eficazes ${fmtNum(pct(constat.filter((f) => f.eficacia === "eficaz").length, constat.filter((f) => f.resolvida).length))}%` : "Sem constatações no período"}
+              />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            <div className="relGrelha">
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Constatações por área</div>
+                <div className="relSub">Constatações por área</div>
                 <BarrasRel dados={contar(constat, "area")} />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Por resolver (todas as auditorias)</div>
+                <div className="relSub">Por resolver (todas as auditorias)</div>
                 <TabelaRel
                   colunas={["Classificação", "Área", "Constatação"]}
                   vazio="Todas as constatações estão resolvidas."
                   linhas={porResolver
                     .sort((a, b) => (ordemCls[a.classification] ?? 9) - (ordemCls[b.classification] ?? 9))
                     .slice(0, 10)
-                    .map((f) => [<strong style={{ color: CLASSIFICATION_META[f.classification]?.color }}>{f.classification}</strong>, f.area || "—", f.description])}
+                    .map((f) => [
+                      <strong style={{ fontSize: 11.5, color: corRel(CLASSIFICATION_META[f.classification]?.color) || CLASSIFICATION_META[f.classification]?.color }}>{f.classification}</strong>,
+                      f.area || "—",
+                      f.description,
+                    ])}
                 />
               </div>
             </div>
@@ -10782,7 +11148,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
         {ver("inscritos") && (
           <SeccaoRel titulo="Inscritos e turmas" nota={`${turmas.length} turmas`}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+            <div className="relKpis">
               <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={epocaAnterior[escola]?.inscritos ? `${fmtNum(epocaAnterior[escola].inscritos)} na época passada` : null} />
               <KpiRel label="Escolinha" valor={fmtNum(pct(escolinha, masc + fem))} unidade="%" comparacao={`${fmtNum(escolinha)} alunos · ${fmtNum(masc + fem - escolinha)} em competição`} />
               <KpiRel label="Raparigas" valor={fmtNum(pct(fem, masc + fem))} unidade="%" comparacao={`${fmtNum(fem)} de ${fmtNum(masc + fem)}`} />
@@ -10801,9 +11167,9 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                 );
               })()}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            <div className="relGrelha">
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Evolução semanal</div>
+                <div className="relSub">Evolução semanal</div>
                 {serie.length > 1 ? (
                   <ResponsiveContainer width="100%" height={190}>
                     <AreaChart data={serie} margin={{ left: -14, right: 10, top: 6 }}>
@@ -10812,7 +11178,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                       <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
                       <Tooltip content={<DicaGrafico />} />
                       {epocaAnterior[escola]?.inscritos && <ReferenceLine y={epocaAnterior[escola].inscritos} stroke={COLORS.slate} strokeDasharray="4 4" label={{ value: "Época passada", position: "insideTopLeft", fontSize: 10, fill: COLORS.slate }} />}
-                      <Area type="monotone" dataKey="Inscritos" stroke={COLORS.navy} strokeWidth={2} fill={COLORS.navy} fillOpacity={0.08} isAnimationActive={false} />
+                      <Area type="monotone" dataKey="Inscritos" stroke={azulRel()} strokeWidth={1.75} fill={azulRel()} fillOpacity={0.06} isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
@@ -10820,42 +11186,59 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                 )}
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Alunos por escalão</div>
+                <div className="relSub">Alunos por escalão</div>
                 <BarrasRel dados={porEscalao} largura={90} />
               </div>
             </div>
-            {(cheias.length > 0 || vazias.length > 0) && (
-              <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 10, lineHeight: 1.6 }}>
-                {cheias.length > 0 && (
-                  <div>
-                    <strong>Sem vagas:</strong> {cheias.map((t) => `${t.turma} (${t.n}/${t.cap})`).join(", ")}
+            <div className="relGrelha" style={{ marginTop: 14, gridTemplateColumns: "minmax(0, 1fr)" }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                  <div className="relSub">Ocupação das turmas</div>
+                  <div style={{ display: "flex", gap: 14, fontSize: 11, color: COLORS.slate, marginBottom: 10 }}>
+                    {[
+                      ["#9A6200", "95% ou mais"],
+                      [azulRel(), "50% a 94%"],
+                      [COLORS.slate, "abaixo de 50%"],
+                    ].map(([c, t]) => (
+                      <span key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 8, height: 8, background: c }} />
+                        {t}
+                      </span>
+                    ))}
                   </div>
-                )}
-                {vazias.length > 0 && (
-                  <div>
-                    <strong>Com muitas vagas:</strong> {vazias.map((t) => `${t.turma} (${t.n}/${t.cap})`).join(", ")}
+                </div>
+                <LotacaoRel lotacao={lotacao} />
+                {masc + fem > 0 && (
+                  <div style={{ marginTop: 18 }}>
+                    <div className="relSub">Rapazes e raparigas</div>
+                    <BarraPartesRel
+                      partes={[
+                        { label: "Rapazes", valor: masc, cor: REL_AZUL },
+                        { label: "Raparigas", valor: fem, cor: "#9DB5DD" },
+                      ]}
+                    />
                   </div>
                 )}
               </div>
-            )}
+            </div>
           </SeccaoRel>
         )}
 
         {ver("movimentos") && (
           <SeccaoRel titulo="Desistências, experiências e desvinculações">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+            <div className="relKpis">
               <KpiRel label="Desistências" valor={fmtNum(nDesist)} comparacao={`${fmtNum(m.desistPct, 1)}% dos alunos`} cor={kpi("desistPct").estado === "pior" && comparar ? COLORS.danger : COLORS.ink} />
               <KpiRel label="Experiências" valor={fmtNum(somaXp())} comparacao={`${somaXp("sucesso")} converteram · ${somaXp("pendente")} por avaliar`} />
               <KpiRel label="Conversão" valor={fmtNum(m.conversao)} unidade="%" comparacao={txtComp(kpi("conversao"))} />
               <KpiRel label="Pedidos de desvinculação" valor={fmtNum(desv.length)} comparacao={`${desv.filter((v) => v.aceite === true).length} aceites · ${desv.filter((v) => v.cedida).length} cedidos`} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            <div className="relGrelha">
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Motivos de desistência</div>
-                <BarrasRel dados={contar(desist.map((x) => ({ ...x, __peso: x.n })), "motivo")} largura={190} cor={COLORS.warn} />
+                <div className="relSub">Motivos de desistência</div>
+                <BarrasRel dados={contar(desist.map((x) => ({ ...x, __peso: x.n })), "motivo")} largura={190} />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Clubes de destino</div>
+                <div className="relSub">Clubes de destino</div>
                 <BarrasRel dados={contar(desv, "clubeDestino")} largura={120} />
               </div>
             </div>
@@ -10864,13 +11247,49 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
         {ver("satisfacao") && (
           <SeccaoRel titulo="Satisfação e inquéritos" nota={m.satisfacao !== null ? `Satisfação média de ${m.satisfacao}%` : null}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+            {(() => {
+              const respostas = inqEscola.reduce((n, i) => n + (i.segmentos[escola] || 0), 0);
+              const nps = inqEscola.length ? npsDe(inqEscola.map((i) => ({ perguntas: (i.perguntas || []).map((q) => ({ ...q, contagens: (q.porSegmento || {})[escola] || {} })) }))) : null;
+              const satEventos = inqEscola.length ? satisfacaoDe(inqEscola.flatMap((i) => i.perguntas || []), escola).pct : null;
+              if (m.satisfacao === null && !inqEscola.length) return null;
+              return (
+                <div className="relGrelha" style={{ marginBottom: 14 }}>
+                  <div>
+                    <div className="relSub">Inquérito da escola</div>
+                    <AnelRel valor={m.satisfacao} cor={corSatisfacao(m.satisfacao)} rotulo={comparar && kpi("satisfacao").med !== null ? `Média das outras escolas: ${fmtNum(kpi("satisfacao").med)}%${kpi("satisfacao").p ? ` · ${ordinal(kpi("satisfacao").p.pos)} de ${kpi("satisfacao").p.de}` : ""}` : "Satisfação média no período"} />
+                  </div>
+                  <div>
+                    <div className="relSub">Eventos e campos</div>
+                    <AnelRel
+                      valor={satEventos}
+                      cor={corSatisfacao(satEventos)}
+                      rotulo={
+                        inqEscola.length ? (
+                          <>
+                            {inqEscola.length} evento{inqEscola.length === 1 ? "" : "s"} · {respostas} respostas de encarregados da escola
+                            {nps ? (
+                              <>
+                                <br />
+                                NPS <strong style={{ color: nps.valor >= 50 ? COLORS.ok : nps.valor >= 0 ? COLORS.warn : COLORS.danger }}>{nps.valor > 0 ? "+" : ""}{nps.valor}</strong>
+                              </>
+                            ) : null}
+                          </>
+                        ) : (
+                          "Sem inquéritos de eventos com esta escola no período"
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+            <div className="relGrelha">
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Inquérito da escola, por categoria</div>
+                <div className="relSub">Inquérito da escola, por categoria</div>
                 <BarrasRel dados={satCategorias} largura={190} sufixo="%" />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Eventos com participantes da escola</div>
+                <div className="relSub">Eventos com participantes da escola</div>
                 <TabelaRel
                   colunas={["Evento", "Respostas", "Satisfação", "NPS"]}
                   vazio="Nenhum inquérito de evento com esta escola no período."
@@ -10884,11 +11303,12 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
             </div>
             {comentarios.length > 0 && (
               <>
-                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, margin: "14px 0 6px" }}>O que disseram os encarregados ({comentarios.length})</div>
-                <div style={{ display: "grid", gap: 6 }}>
+                <div className="relSub" style={{ marginTop: 18 }}>O que disseram os encarregados ({comentarios.length})</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 8 }}>
                   {comentarios.slice(0, 8).map((c, i) => (
-                    <div key={i} style={{ fontSize: 12.5, padding: "7px 10px", background: COLORS.paperSunken, borderRadius: 8 }}>
-                      “{c.texto}” <span style={{ color: COLORS.slate, fontSize: 11 }}>· {c.edicao}</span>
+                    <div key={i} style={{ fontFamily: REL_SERIFA, fontStyle: "italic", fontSize: 14, padding: "4px 0 4px 14px", borderLeft: `2px solid ${azulRel()}`, lineHeight: 1.5, color: COLORS.ink }}>
+                      “{c.texto}”
+                      <div style={{ fontStyle: "normal", color: COLORS.slate, fontSize: 10.5, marginTop: 2, fontFamily: "'Inter', system-ui, sans-serif" }}>{c.edicao}</div>
                     </div>
                   ))}
                 </div>
@@ -10899,7 +11319,23 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
         {ver("causas") && (
           <SeccaoRel titulo="Causa raiz" nota="Reclamações concluídas e constatações resolvidas no período">
-            <PainelCausas titulo=" " itens={itensCausa(recl, audsPeriodo)} />
+            {(() => {
+              const itens = itensCausa(recl, audsPeriodo);
+              const semCausa = itens.filter((i) => !i.causa).length;
+              return (
+                <div className="relGrelha">
+                  <div>
+                    <div className="relSub">Reclamações</div>
+                    <BarrasRel dados={contar(itens.filter((i) => i.origem === "Reclamações"), "causa")} largura={170} />
+                  </div>
+                  <div>
+                    <div className="relSub">Constatações de auditoria</div>
+                    <BarrasRel dados={contar(itens.filter((i) => i.origem === "Auditorias"), "causa")} largura={170} />
+                    {semCausa > 0 && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 8 }}>{semCausa} sem causa raiz indicada</div>}
+                  </div>
+                </div>
+              );
+            })()}
           </SeccaoRel>
         )}
 
@@ -10920,6 +11356,45 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
           </SeccaoRel>
         )}
 
+        {ver("acompanhar") &&
+          (() => {
+            const itens = [];
+            reclAtrasadas.forEach((r) => itens.push({ nivel: "alto", t: `Reclamação ${String(r.entryNumber).padStart(4, "0")} (${r.tema || r.categoria || "sem tema"}) fora do prazo desde ${fmt(new Date(r.deadline))}` }));
+            reclAbertas
+              .filter((r) => r.derivedStatus !== "atrasado")
+              .forEach((r) => itens.push({ nivel: "medio", t: `Reclamação ${String(r.entryNumber).padStart(4, "0")} (${r.tema || r.categoria || "sem tema"}) com prazo a ${fmt(new Date(r.deadline))}` }));
+            if (porResolver.length) {
+              const porCls = ["NCM", "NC", "OM", "AS"].map((c) => [c, porResolver.filter((f) => f.classification === c).length]).filter(([, n]) => n);
+              itens.push({ nivel: porResolver.some((f) => f.classification === "NCM" || f.classification === "NC") ? "alto" : "medio", t: `${porResolver.length} ${porResolver.length === 1 ? "constatação" : "constatações"} de auditoria por resolver (${porCls.map(([c, n]) => `${n} ${c}`).join(", ")})` });
+            }
+            if (comparar) fracos.forEach((c) => itens.push({ nivel: "medio", t: `${c.label}: ${fmtNum(c.v, c.dec ?? 0)}${c.unidade}, contra ${fmtNum(c.med, c.dec ?? 0)}${c.unidade} de média nas outras escolas` }));
+            inqEscola
+              .map((i) => ({ i, s: satisfacaoDe(i.perguntas || [], escola) }))
+              .filter((x) => x.s.pct !== null && x.s.pct < 70)
+              .forEach((x) => itens.push({ nivel: "medio", t: `${x.i.edicao}: ${x.s.pct}% de satisfação entre os encarregados da escola` }));
+            cheias.forEach((t) => itens.push({ nivel: "baixo", t: `${t.turma} sem vagas (${t.n}/${t.cap})` }));
+            const motivoTop = contar(desist.map((x) => ({ ...x, __peso: x.n })), "motivo")[0];
+            if (motivoTop && motivoTop.value >= 2) itens.push({ nivel: "baixo", t: `Principal motivo de desistência: ${motivoTop.name.toLowerCase()} (${motivoTop.value})` });
+            const corN = { alto: REL_VERMELHO, medio: "#C58A1A", baixo: COLORS.slate };
+            return (
+              <SeccaoRel titulo="Pontos a acompanhar" nota="Gerados a partir dos dados do período">
+                {itens.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.ink2 }}>Nada pendente nesta escola.</div>
+                ) : (
+                  <div>
+                    {itens.map((it, i) => (
+                      <div key={i} className="relLinhaComp" style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "10px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, lineHeight: 1.5, color: COLORS.ink }}>
+                        <span style={{ width: 13, height: 13, border: `1px solid ${COLORS.ink2}`, flex: "none", marginTop: 3 }} />
+                        <span style={{ flex: 1 }}>{it.t}</span>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: corN[it.nivel], flex: "none", marginTop: 6 }} title={it.nivel} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </SeccaoRel>
+            );
+          })()}
+
         {ver("notas") && (
           <SeccaoRel titulo="Notas e conclusões" nota="Ficam guardadas para esta escola e este período">
             <textarea
@@ -10935,10 +11410,25 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.55 }}
             />
             <div className="relSoImpressao" style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-              {nota || "—"}
+              {nota ||
+                Array.from({ length: 5 }).map((_, i) => <div key={i} style={{ height: 30, borderBottom: `1px solid ${COLORS.rule}` }} />)}
             </div>
           </SeccaoRel>
         )}
+          <div className="relFimEcra" style={{ marginTop: 44, paddingTop: 14, borderTop: `1px solid ${COLORS.rule}`, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10.5, color: COLORS.slate, letterSpacing: "0.04em" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <LogoRel altura={18} cor={COLORS.slate} />
+              FC Porto · Dragon Force · Gestão da Qualidade
+            </span>
+            <span>
+              {escola} · {nomePeriodo(periodo)}
+            </span>
+          </div>
+        </div>
+            </td>
+          </tr>
+        </tbody>
+       </table>
       </article>
     </div>
   );
@@ -14285,7 +14775,7 @@ function AppPrincipal({ onSair }) {
     >
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap');
         .spin { animation: spin 0.9s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .navItem:hover { background: ${COLORS.paperSunken}; }
@@ -14401,13 +14891,57 @@ function AppPrincipal({ onSair }) {
 
         /* ---- relatório: o que aparece no ecrã e o que sai no PDF ---- */
         .relSoImpressao { display: none; }
+        .relFolha { counter-reset: relSec; }
+        .relSeccao { counter-increment: relSec; }
+        .relNum::before { content: counter(relSec, decimal-leading-zero); }
+        .relRotulo { font-size: 10px; font-weight: 600; color: ${COLORS.slate}; text-transform: uppercase; letter-spacing: 0.12em; }
+        .relVazio { font-size: 12.5px; color: ${COLORS.slate}; font-style: italic; padding: 4px 0; }
+        .relLinhaComp td { border-bottom: 1px solid ${COLORS.ruleSoft}; }
+        @media (max-width: 760px) {
+          .relLinhaComp { grid-template-columns: minmax(0, 1fr) auto !important; row-gap: 8px !important; }
+          .relLinhaComp > div:nth-child(3), .relLinhaComp > div:nth-child(4) { grid-column: span 1; }
+        }
+        .relPaginas, .relPaginas > tbody, .relPaginas > tbody > tr, .relPaginas > tbody > tr > td { display: block; width: 100%; border-collapse: collapse; padding: 0; }
+        .relPaginas > thead, .relPaginas > tfoot { display: none; }
+        .relKpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); margin-bottom: 26px; border-top: 1px solid ${COLORS.rule}; border-bottom: 1px solid ${COLORS.rule}; }
+        .relKpi { padding: 14px 14px 14px 16px; border-left: 1px solid ${COLORS.rule}; min-width: 0; display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+        .relKpi > .relRotulo { align-self: start; }
+        .relKpi:first-child { border-left: none; padding-left: 0; }
+        .relGrelha { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 34px; align-items: start; margin-bottom: 26px; }
+        .relGrelha > div { min-width: 0; }
+        .relFortes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 34px; margin-top: 26px; }
+        .relSub { font-size: 10px; font-weight: 600; color: ${COLORS.ink2}; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid ${COLORS.ruleSoft}; }
+        @media (max-width: 760px) {
+          .relKpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .relGrelha, .relFortes { grid-template-columns: 1fr; }
+          .relCapaNumeros { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; row-gap: 14px; }
+          .relCorpo { padding: 0 18px 24px !important; }
+          .relCapa > div { padding-left: 18px !important; padding-right: 18px !important; }
+          .relQuadro td:nth-child(3), .relQuadro th:nth-child(3) { display: none; }
+        }
         @media print {
-          @page { size: A4; margin: 14mm; }
-          .naoImprimir, .relControlos, .relSoEcra, .demoFaixa { display: none !important; }
+          /* Margem zero: o browser deixa de imprimir data, título e link. As margens
+             passam a ser feitas pela própria folha (espaço repetido em cada página). */
+          @page { size: A4; margin: 0; }
+          .naoImprimir, .relControlos, .relSoEcra, .demoFaixa, .relFolha button, .relFimEcra { display: none !important; }
           .relSoImpressao { display: block !important; }
           .pageIn, .pageIn > * { animation: none !important; }
-          .relFolha { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: none !important; }
-          .relSeccao { break-inside: avoid; }
+          .appConteudo > .pageIn { padding: 0 !important; max-width: none !important; }
+          .appEcra, .appConteudo, .appConteudo > .pageIn { background: #fff !important; }
+          .relFolha { width: 880px !important; max-width: none !important; margin: 0 auto !important; zoom: 0.8; border: none !important; box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; background: #fff !important; }
+          .relPaginas { display: table !important; width: 100%; border-collapse: collapse; }
+          .relPaginas > thead { display: table-header-group !important; }
+          .relPaginas > tfoot { display: table-footer-group !important; }
+          .relPaginas > tbody { display: table-row-group !important; }
+          .relPaginas > tbody > tr { display: table-row !important; }
+          .relPaginas > tbody > tr > td, .relPaginas > thead td, .relPaginas > tfoot td { display: table-cell !important; padding: 0; }
+          .relEspaco { height: 16mm; }
+          .relRodapeImp { height: 16mm; display: flex; justify-content: space-between; align-items: center; margin: 0 44px; border-top: 1px solid #D5DBE5; font-size: 10px; letter-spacing: 0.04em; color: #6B7A90; }
+          .relCapa { margin: 0; }
+          .relSeccaoTopo, .relSub { break-after: avoid; }
+          .relKpi, .relKpis, .relGrelha, .relGrelha > div, .relFortes, .relTabela tr, .relLinhaComp { break-inside: avoid; }
+          .relSeccaoTopo + * { break-before: avoid; }
+          .relSeccao { break-inside: auto; }
           body, html { background: #fff !important; height: auto !important; overflow: visible !important; }
           .appEcra, .appConteudo { height: auto !important; overflow: visible !important; display: block !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
