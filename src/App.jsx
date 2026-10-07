@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage } from "./supabaseClient";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -19,6 +19,7 @@ import {
   ReferenceLine,
   AreaChart,
   Area,
+  ComposedChart,
 } from "recharts";
 
 // ---------- Tokens ----------
@@ -111,6 +112,9 @@ const STORAGE_ESPACOS_KEY = "reclamacoes:espacos";
 const STORAGE_EVENTOS_KEY = "reclamacoes:eventos";
 const STORAGE_SATISFACAO_KEY = "reclamacoes:satisfacao";
 const STORAGE_INQUERITOS_KEY = "reclamacoes:inqueritos-eventos";
+const STORAGE_NOTAS_REL_KEY = "reclamacoes:relatorios-notas";
+const STORAGE_PLANO_INQ_KEY = "reclamacoes:inqueritos-plano";
+const STORAGE_RESPOSTAS_KEY = "reclamacoes:respostas-tipo";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -144,7 +148,7 @@ function ptHolidays(year) {
   const corpusChristi = addDays(easter, 60);
   const fixed = [
     [0, 1], [3, 25], [4, 1], [5, 10], [7, 15],
-    [11, 1], [11, 8], [11, 25],
+    [9, 5], [10, 1], [11, 1], [11, 8], [11, 25],
   ].map(([m, d]) => new Date(year, m, d));
   return [...fixed, goodFriday, corpusChristi].map((d) => d.toDateString());
 }
@@ -1687,7 +1691,10 @@ function GestorLista({ titulo, nota, itens, placeholder, emUso, onAdd, onRemove,
 // ---------- Manage schools/categories modal ----------
 
 // ---------- Complaint detail / notes timeline ----------
-function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen }) {
+function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista }) {
+  const [respostaTipoId, setRespostaTipoId] = useState(entry.respostaTipoId || null);
+  const [assuntoSugerido, setAssuntoSugerido] = useState("");
+  const [causaRaiz, setCausaRaiz] = useState(entry.causaRaiz || "");
   const [note, setNote] = useState("");
   const [concluding, setConcluding] = useState(false);
   const [responseText, setResponseText] = useState(entry.responseText || "");
@@ -1707,7 +1714,8 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
       entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
     );
     setStartedOn(entry.startedDate ? new Date(entry.startedDate).toISOString().slice(0, 10) : "");
-  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate, entry.startedDate]);
+    setCausaRaiz(entry.causaRaiz || "");
+  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate, entry.startedDate, entry.causaRaiz]);
 
   const submit = () => {
     const v = note.trim();
@@ -1718,7 +1726,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
 
   const confirmDone = () => {
     const isEditing = entry.derivedStatus === "concluido";
-    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn, startedDate: startedOn || null }, isEditing);
+    onDone(entry.id, { responseText: responseText.trim(), eficacia, resolvedDate: resolvedOn, startedDate: startedOn || null, respostaTipoId, causaRaiz }, isEditing);
   };
 
   return (
@@ -1794,11 +1802,26 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
           <div style={{ marginBottom: 18 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ok, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
               Resposta dada à reclamação
+              {entry.causaRaiz ? ` · causa: ${nomeCausa(entry.causaRaiz)}` : ""}
             </div>
             <div style={{ fontSize: 13.5, padding: "10px 12px", background: COLORS.okBg, borderRadius: 4, border: `1px solid ${COLORS.ok}`, whiteSpace: "pre-wrap" }}>
               {entry.responseText}
             </div>
           </div>
+        )}
+
+        {entry.derivedStatus !== "concluido" && (
+          <SugestoesResposta
+            entry={entry}
+            biblioteca={biblioteca}
+            historico={historico}
+            onUsar={(texto, id, assunto) => {
+              setResponseText(texto);
+              setRespostaTipoId(id);
+              setAssuntoSugerido(assunto || "");
+              setConcluding(true);
+            }}
+          />
         )}
 
         <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
@@ -1851,13 +1874,28 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
             </div>
 
             <label style={labelStyle}>Resposta dada à reclamação</label>
+            {assuntoSugerido && (
+              <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 6 }}>
+                Assunto do e-mail: <strong>{assuntoSugerido}</strong>
+              </div>
+            )}
             <textarea
-              rows={3}
+              rows={responseText.length > 200 ? 9 : 3}
               placeholder="O que foi respondido / decidido..."
               value={responseText}
               onChange={(e) => setResponseText(e.target.value)}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
             />
+            {responseText.includes("[a preencher]") && (
+              <div style={{ fontSize: 12, color: COLORS.warn, marginTop: 4, fontWeight: 600 }}>
+                Substitui os campos “[a preencher]” antes de enviar.
+              </div>
+            )}
+            {respostaTipoId && (
+              <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
+                Baseada numa resposta-tipo. Podes adaptá-la: o texto final fica como exemplo para casos parecidos.
+              </div>
+            )}
             <label style={labelStyle}>Eficácia da resposta</label>
             <div style={{ display: "flex", gap: 6 }}>
               {Object.entries(EFICACIA_META).map(([key, meta]) => (
@@ -1879,6 +1917,9 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen 
                   {meta.label}
                 </button>
               ))}
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <SeletorCausa valor={causaRaiz} onChange={setCausaRaiz} onGerirLista={onGerirLista} />
             </div>
             <button
               onClick={() => {
@@ -1972,7 +2013,7 @@ const ANALYSIS_PARAMS = [
   { key: "escola", label: "Escolas mais recorrentes" },
 ];
 
-function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categoriaOptions }) {
+function AnalysisDashboard({ withStatus, audits = [], schoolOptions, categoryOptions, categoriaOptions }) {
   const [fSchool, setFSchool] = useState("todos");
   const [fTema, setFTema] = useState("todos");
   const [fCategoria, setFCategoria] = useState("todos");
@@ -2068,6 +2109,40 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
 
   return (
     <div>
+      <ComparacaoEpocas
+        titulo="Comparação entre épocas"
+        nota="Respeita os filtros de escola, tema, categoria, canal e gravidade."
+        epocas={withStatus.map((e) => e.epoca)}
+        metricas={[
+          { key: "n", label: "Reclamações recebidas", melhor: "baixo" },
+          { key: "alta", label: "De gravidade alta", melhor: "baixo" },
+          { key: "prazo", label: "Resolvidas no prazo", unidade: "%", melhor: "alto" },
+          { key: "resp", label: "Tempo médio de resposta", unidade: " dias", melhor: "baixo", dec: 1 },
+          { key: "resol", label: "Tempo médio de resolução", unidade: " dias", melhor: "baixo", dec: 1 },
+          { key: "efic", label: "Respostas eficazes", unidade: "%", melhor: "alto" },
+        ]}
+        calcular={(ep, lim) => {
+          const base = withStatus
+            .filter((e) => (fSchool === "todos" ? true : e.school === fSchool))
+            .filter((e) => (fTema === "todos" ? true : e.tema === fTema))
+            .filter((e) => (fCategoria === "todos" ? true : e.categoria === fCategoria))
+            .filter((e) => (fCanal === "todos" ? true : e.canal === fCanal))
+            .filter((e) => (fGravidade === "todos" ? true : e.severity === fGravidade));
+          const l = naEpoca(base, "receivedDate", ep, lim);
+          const res = l.filter((e) => e.status === "concluido" && e.resolvedDate);
+          const ini = l.filter((e) => e.startedDate);
+          const media = (xs, f) => (xs.length ? Math.round((xs.reduce((t, x) => t + f(x), 0) / xs.length) * 10) / 10 : null);
+          const dias = (a, b) => (new Date(b) - new Date(a + "T00:00:00")) / 86400000;
+          return {
+            n: l.length,
+            alta: l.filter((e) => e.severity === "alta").length,
+            prazo: res.length ? Math.round((res.filter((e) => new Date(e.resolvedDate) <= new Date(e.deadline)).length / res.length) * 100) : null,
+            resp: media(ini, (e) => dias(e.receivedDate, e.startedDate)),
+            resol: media(res, (e) => dias(e.receivedDate, e.resolvedDate)),
+            efic: res.filter((e) => e.eficacia).length ? Math.round((res.filter((e) => e.eficacia === "eficaz").length / res.filter((e) => e.eficacia).length) * 100) : null,
+          };
+        }}
+      />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <select value={fEpoca} onChange={(e) => setFEpoca(e.target.value)} style={filterSelectStyle}>
           <option value="todas">Todas as épocas</option>
@@ -2157,7 +2232,11 @@ function AnalysisDashboard({ withStatus, schoolOptions, categoryOptions, categor
         />
       ) : (
         <>
-          <Observacoes itens={observacoesReclamacoes(filtered)} />
+          <Observacoes itens={[...observacoesReclamacoes(filtered), ...observacoesCausas(itensCausa(filtered, audits.filter((a) => fSchool === "todos" || a.school === fSchool)))]} />
+          <PainelCausas
+            titulo="Causa raiz (reclamações e auditorias)"
+            itens={itensCausa(filtered, audits.filter((a) => (fSchool === "todos" || a.school === fSchool) && (fEpoca === "todas" || epocaDe(a.date) === fEpoca)))}
+          />
 
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Total de reclamações" value={total} />
@@ -2640,6 +2719,12 @@ function AuditDetail({
                       </>
                     )}
                   </div>
+
+                  {f.resolvida && (
+                    <div style={{ marginTop: 10 }}>
+                      <SeletorCausa compacto valor={f.causaRaiz || ""} onChange={(v) => onUpdateFinding(audit.id, f.id, { causaRaiz: v })} onGerirLista={onGerirLista} />
+                    </div>
+                  )}
 
                   {f.resolvida && (
                     <div style={{ marginTop: 9 }}>
@@ -3408,6 +3493,34 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
 
   return (
     <div>
+      <ComparacaoEpocas
+        titulo="Comparação entre épocas"
+        nota="Respeita o filtro de escola."
+        epocas={audits.map((a) => epocaDe(a.date))}
+        metricas={[
+          { key: "aud", label: "Auditorias realizadas" },
+          { key: "n", label: "Constatações", melhor: "baixo" },
+          { key: "ncm", label: "Não conformidades maiores", melhor: "baixo" },
+          { key: "nc", label: "Não conformidades", melhor: "baixo" },
+          { key: "om", label: "Oportunidades de melhoria" },
+          { key: "res", label: "Constatações resolvidas", unidade: "%", melhor: "alto" },
+          { key: "efic", label: "Resoluções eficazes", unidade: "%", melhor: "alto" },
+        ]}
+        calcular={(ep, lim) => {
+          const auds = naEpoca(audits.filter((a) => fEsc === "todas" || a.school === fEsc), "date", ep, lim);
+          const fs = auds.flatMap((a) => a.findings || []);
+          const resol = fs.filter((f) => f.resolvida);
+          return {
+            aud: auds.length,
+            n: fs.length,
+            ncm: fs.filter((f) => f.classification === "NCM").length,
+            nc: fs.filter((f) => f.classification === "NC").length,
+            om: fs.filter((f) => f.classification === "OM").length,
+            res: fs.length ? Math.round((resol.length / fs.length) * 100) : null,
+            efic: resol.length ? Math.round((resol.filter((f) => f.eficacia === "eficaz").length / resol.length) * 100) : null,
+          };
+        }}
+      />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={filterStyle}>
           <option value="todas">Todas as escolas</option>
@@ -3446,6 +3559,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
       ) : (
         <>
           <Observacoes itens={observacoesAuditorias(F)} />
+          <PainelCausas titulo="Causa raiz das constatações resolvidas" itens={itensCausa([], audits.filter((a) => fEsc === "todas" || a.school === fEsc))} />
 
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
             <StatCard label="Total de constatações" value={F.length} />
@@ -4331,6 +4445,27 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
 
   return (
     <div>
+      <ComparacaoEpocas
+        titulo="Comparação entre épocas"
+        epocas={sanctions.map((x) => epocaDe(x.date))}
+        metricas={[
+          { key: "n", label: "Ocorrências", melhor: "baixo" },
+          { key: "graves", label: "Ameaças e agressões", melhor: "baixo" },
+          { key: "familia", label: "Com pais / EE", melhor: "baixo" },
+          { key: "atletas", label: "Atletas envolvidos", melhor: "baixo" },
+          { key: "df", label: "Com elementos DF", melhor: "baixo" },
+        ]}
+        calcular={(ep, lim) => {
+          const l = naEpoca(sanctions, "date", ep, lim);
+          return {
+            n: l.length,
+            graves: l.filter((x) => x.motivo === "ameacas" || x.motivo === "agressao").length,
+            familia: l.filter((x) => x.personType === "familia").length,
+            atletas: l.filter((x) => x.personType === "atleta").reduce((t, x) => t + (Number(x.nAtletas) || 1), 0),
+            df: l.filter((x) => x.personType === "elemento_df").length,
+          };
+        }}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", flex: 1 }}>
           <StatCard label="Total de ocorrências" value={sanctions.length} />
@@ -5874,8 +6009,8 @@ function pareceColunaPessoal(titulo) {
 
 const COLUNAS_LISTA = [
   { chave: "escola", rotulo: "Escola", sinonimos: ["recintos do atleta", "recinto do atleta", "recintos", "recinto", "escola", "polo", "polo/escola", "centro", "school"] },
-  { chave: "escalao", rotulo: "Escalão / turma", sinonimos: ["escalao", "escalao/turma", "turma", "equipas do atleta", "equipa do atleta", "equipa", "equipas", "classe", "nivel"] },
-  { chave: "genero", rotulo: "Género", sinonimos: ["genero", "sexo", "gender", "m/f", "masc/fem"] },
+  { chave: "escalao", rotulo: "Escalão / turma", sinonimos: ["escalao", "escalao/turma", "equipa/turma", "turma/equipa", "equipa / turma", "turma / equipa", "turma", "equipas do atleta", "equipa do atleta", "equipa", "equipas", "classe", "nivel"] },
+  { chave: "genero", rotulo: "Género", sinonimos: ["genero", "genero (m ou f)", "genero (m/f)", "sexo", "gender", "m/f", "masc/fem"] },
   { chave: "nascimento", rotulo: "Nascimento (ano ou data)", sinonimos: ["ano de nascimento", "ano", "data de nascimento", "nascimento", "nasc", "data nasc", "data nasc.", "datanascimento", "dn", "aniversario"] },
   {
     chave: "periodo",
@@ -5972,6 +6107,8 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
   const [mapaEscalao, setMapaEscalao] = useState({});
   const [mapaEscola, setMapaEscola] = useState({});
   const [periodoEscolhido, setPeriodoEscolhido] = useState("");
+  // Ficheiro sem coluna de escola: todos os alunos são da escola escolhida aqui.
+  const [escolaUnica, setEscolaUnica] = useState("");
   const [erro, setErro] = useState("");
 
   const colunas = modo === "lista" ? COLUNAS_LISTA : COLUNAS_AGREGADO;
@@ -6202,7 +6339,7 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       }
       const escolaBruta = valorDe(l, "escola");
       const escalaoBruto = valorDe(l, "escalao");
-      const escola = mapaEscola[escolaBruta] || "";
+      const escola = mapaCol.escola === undefined ? escolaUnica : mapaEscola[escolaBruta] || "";
       const turma = mapaEscalao[escalaoBruto] || "";
       if (!escola) {
         ignoradas += 1;
@@ -6233,15 +6370,24 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       semAno,
       repetidos,
     };
-  }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas, periodoEscolhido]);
+  }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas, periodoEscolhido, escolaUnica]);
 
   const totalAtletas = resultado.linhas.reduce((t, l) => t + l.m + l.f, 0);
 
   const carregarFicheiro = (ev) => {
     const ficheiro = ev.target.files && ev.target.files[0];
     if (!ficheiro) return;
-    if (/\.xlsx?$/i.test(ficheiro.name)) {
-      setErro('Ficheiros .xls e .xlsx não são lidos diretamente. No Excel usa "Guardar como" → CSV, ou seleciona as células e cola na caixa abaixo.');
+    if (/\.xlsx$/i.test(ficheiro.name)) {
+      // Excel: lê a primeira folha e passa-a ao mesmo processo do texto colado.
+      setErro("");
+      lerExcelInq(ficheiro)
+        .then((linhas) => setTexto(linhas.map((l) => l.map((c) => String(c ?? "").replace(/[\t\n\r]+/g, " ")).join("\t")).join("\n")))
+        .catch((e) => setErro(`Não foi possível ler o Excel (${e?.message || e}). Guarda como CSV ou copia e cola as células.`));
+      ev.target.value = "";
+      return;
+    }
+    if (/\.xls$/i.test(ficheiro.name)) {
+      setErro('O formato .xls antigo não é lido. No Excel usa "Guardar como" → .xlsx ou CSV.');
       ev.target.value = "";
       return;
     }
@@ -6354,8 +6500,8 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
           <label className="press" style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 14px", display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
-            <input type="file" accept=".csv,.tsv,.txt,text/csv" onChange={carregarFicheiro} style={{ display: "none" }} />
-            Carregar CSV
+            <input type="file" accept=".xlsx,.csv,.tsv,.txt,text/csv" onChange={carregarFicheiro} style={{ display: "none" }} />
+            Carregar Excel ou CSV
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: COLORS.ink2 }}>
             <input type="checkbox" checked={temCabecalho} onChange={(e) => setCabecalhoManual(e.target.checked)} />
@@ -6522,6 +6668,22 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
           </div>
         )}
 
+        {modo === "lista" && linhasDados.length > 0 && mapaCol.escola === undefined && (
+          <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 10, background: escolaUnica ? COLORS.paperSunken : COLORS.warnBg }}>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="imp-escola-unica">
+              O ficheiro não tem coluna de escola. De que escola são estes alunos?
+            </label>
+            <select id="imp-escola-unica" value={escolaUnica} onChange={(e) => setEscolaUnica(e.target.value)} style={{ ...inputStyle, maxWidth: 320 }}>
+              <option value="">Escolher escola…</option>
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {modo === "lista" && escolasBrutas.length > 0 && escolasPorResolver > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
@@ -6668,6 +6830,7 @@ function TurmaChip({ label, onDelete }) {
 
 
 const INSC_PARAMS = [
+  { key: "previsao", label: "Previsão de fim de época" },
   { key: "classes", label: "Classificação de crescimento" },
   { key: "quad", label: "Matriz de quadrantes" },
   { key: "evolucao", label: "Evolução de inscritos" },
@@ -7489,6 +7652,39 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
 
   return (
     <div>
+      <ComparacaoEpocas
+        titulo="Comparação entre épocas: movimentos"
+        nota="Respeita o filtro de escola. Os inscritos totais comparam-se na Comparação homóloga."
+        epocas={[...desistencias.map((d) => epocaDe(d.data)), ...experiencias.map((x) => epocaDe(x.data))]}
+        metricas={[
+          { key: "des", label: "Desistências", melhor: "baixo" },
+          { key: "xp", label: "Experiências", melhor: "alto" },
+          { key: "conv", label: "Conversão de experiências", unidade: "%", melhor: "alto" },
+          { key: "sat", label: "Satisfação (inquérito da escola)", unidade: "%", melhor: "alto" },
+        ]}
+        calcular={(ep, lim) => {
+          const daEsc = (x) => todas || x.escola === fEsc;
+          const des = naEpoca(desistencias.filter(daEsc), "data", ep, lim);
+          const xps = naEpoca(experiencias.filter(daEsc), "data", ep, lim);
+          const suc = xps.filter((x) => x.resultado === "sucesso").reduce((t, x) => t + x.n, 0);
+          const aval = xps.filter((x) => x.resultado !== "pendente").reduce((t, x) => t + x.n, 0);
+          const sat = naEpoca(satisfacao.filter(daEsc), (s) => `${s.periodo}-15`, ep, lim);
+          let peso = 0;
+          let soma = 0;
+          sat.forEach((s) => {
+            const vs = Object.values(s.valores || {}).filter((v) => v !== null && !isNaN(v));
+            if (!vs.length) return;
+            soma += (vs.reduce((a, b) => a + b, 0) / vs.length) * (s.respostas || 1);
+            peso += s.respostas || 1;
+          });
+          return {
+            des: des.reduce((t, x) => t + x.n, 0),
+            xp: xps.reduce((t, x) => t + x.n, 0),
+            conv: aval ? Math.round((suc / aval) * 100) : null,
+            sat: peso ? Math.round(soma / peso) : null,
+          };
+        }}
+      />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={filterStyle}>
           <option value="todas">Todas as escolas</option>
@@ -7517,7 +7713,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
           satisfacao,
           niveis,
           limites,
-        })}
+        }).concat(observacoesPrevisao(previsoesEscolas({ escolas: alvo, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis }), limites))}
       />
 
       <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
@@ -7545,6 +7741,10 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
           subtitle={totEscolinha + totComp ? `${Math.round((totEscolinha / (totEscolinha + totComp)) * 100)}% · ${totComp} em competição` : ""}
         />
       </div>
+
+      {visible.has("previsao") && (
+        <PrevisaoFimEpoca escolas={escolas} inscritos={inscritos} epocaAnterior={epocaAnterior} experiencias={experiencias} turmasAlunos={turmasAlunos} niveis={niveis} limites={limites} fEsc={fEsc} />
+      )}
 
       {visible.has("classes") && (
         <div style={{ ...panelStyle, marginBottom: 16 }}>
@@ -8235,11 +8435,23 @@ const TIPOS_COLUNA_INQ = [
   ["ignorar", "Ignorar"],
 ];
 
-function ImportarInquerito({ tiposEvento, dimensoes, existentes, onGuardar, onFechar, onGerirLista, notificar }) {
-  const [tipoEvento, setTipoEvento] = useState(tiposEvento[0] || "");
-  const [edicao, setEdicao] = useState("");
-  const [data, setData] = useState("");
-  const [enviados, setEnviados] = useState("");
+function ImportarInquerito({ tiposEvento, dimensoes, existentes, onGuardar, onFechar, onGerirLista, notificar, plano = [], planoInicial = null }) {
+  const nomePlano = (p) => [p.evento, p.edicao].filter(Boolean).join(" · ");
+  const [planoId, setPlanoId] = useState(planoInicial ? planoInicial.id : "");
+  const [tipoEvento, setTipoEvento] = useState((planoInicial && tipoEventoDoPlano(planoInicial.evento, tiposEvento)) || tiposEvento[0] || "");
+  const [edicao, setEdicao] = useState(planoInicial ? nomePlano(planoInicial) : "");
+  const [data, setData] = useState(planoInicial ? planoInicial.fim || planoInicial.inicio || "" : "");
+  const [enviados, setEnviados] = useState(planoInicial && planoInicial.inscritos ? String(planoInicial.inscritos) : "");
+  const escolherPlano = (id) => {
+    setPlanoId(id);
+    const p = plano.find((x) => x.id === id);
+    if (!p) return;
+    const t = tipoEventoDoPlano(p.evento, tiposEvento);
+    if (t) setTipoEvento(t);
+    setEdicao(nomePlano(p));
+    setData(p.fim || p.inicio || "");
+    if (p.inscritos) setEnviados(String(p.inscritos));
+  };
   const [texto, setTexto] = useState("");
   const [tabela, setTabela] = useState(null);
   const [colunas, setColunas] = useState([]);
@@ -8365,7 +8577,8 @@ function ImportarInquerito({ tiposEvento, dimensoes, existentes, onGuardar, onFe
       comentarios,
       importadoEm: new Date().toISOString(),
     };
-    onGuardar(reg, !!duplicado);
+    if (planoId) reg.planoId = planoId;
+    onGuardar(reg, !!duplicado, planoId || null);
     notificar(`${reg.edicao}: ${respostas} respostas e ${perguntas.length} perguntas importadas.`, "ok");
     onFechar();
   };
@@ -8394,6 +8607,26 @@ function ImportarInquerito({ tiposEvento, dimensoes, existentes, onGuardar, onFe
           Exporta as respostas do Google Forms (CSV) ou do Microsoft Forms (Excel). A app só guarda contagens por pergunta; nomes, emails e respostas individuais não ficam gravados.
         </div>
 
+        {plano.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="imp-plano">
+              Envio do cronograma
+            </label>
+            <select id="imp-plano" value={planoId} onChange={(e) => escolherPlano(e.target.value)} style={inputStyle}>
+              <option value="">Nenhum (inquérito fora do cronograma)</option>
+              {[...plano]
+                .filter((p) => !p.inqueritoId || p.id === planoId)
+                .sort((a, b) => String(a.fim || a.inicio).localeCompare(String(b.fim || b.inicio)))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {nomePlano(p)}
+                    {p.fim ? ` · ${fmt(new Date(p.fim + "T00:00:00"))}` : ""} · {p.estado}
+                  </option>
+                ))}
+            </select>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>Ao guardar, esse envio passa a Analisado e fica com as respostas.</div>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -8851,6 +9084,30 @@ function InqueritosAnalise({ inqueritos, tiposEvento }) {
 
   return (
     <div>
+      <ComparacaoEpocas
+        titulo="Comparação entre épocas"
+        nota="Respeita o filtro de evento."
+        epocas={inqueritos.map((i) => i.epoca)}
+        metricas={[
+          { key: "n", label: "Inquéritos" },
+          { key: "resp", label: "Respostas", melhor: "alto" },
+          { key: "taxa", label: "Taxa de resposta", unidade: "%", melhor: "alto" },
+          { key: "sat", label: "Satisfação", unidade: "%", melhor: "alto" },
+          { key: "nps", label: "NPS", melhor: "alto" },
+        ]}
+        calcular={(ep, lim) => {
+          const l = naEpoca(inqueritos.filter((i) => fTipo === "todos" || i.tipoEvento === fTipo), "data", ep, lim);
+          const comEnv = l.filter((i) => i.enviados);
+          const n = npsDe(l);
+          return {
+            n: l.length,
+            resp: l.reduce((t, i) => t + (i.respostas || 0), 0),
+            taxa: comEnv.length ? Math.round((comEnv.reduce((t, i) => t + i.respostas, 0) / comEnv.reduce((t, i) => t + i.enviados, 0)) * 100) : null,
+            sat: satisfacaoInqueritos(l).pct,
+            nps: n ? n.valor : null,
+          };
+        }}
+      />
       <Filtros>
         <select value={fEpoca} onChange={(e) => setFEpoca(e.target.value)} style={selectFiltro}>
           <option value="todas">Todas as épocas</option>
@@ -9072,9 +9329,738 @@ function InqueritosAnalise({ inqueritos, tiposEvento }) {
   );
 }
 
+// ======================================================================
+// ---------- Planeamento dos inquéritos (cronograma anual) ----------
+// ======================================================================
+// Cada linha do cronograma é um envio planeado: evento, edição, datas,
+// público, responsável e estado. A data de envio calcula-se pela regra da
+// tipologia (dias depois do fim), recuando para o último dia do evento quando
+// cai num dia não útil, como no Excel original.
+
+const ESTADOS_PLANO = {
+  "Por enviar": { color: COLORS.slate, bg: COLORS.doneBg },
+  Enviado: { color: COLORS.progress, bg: COLORS.progressBg },
+  Fechado: { color: COLORS.warn, bg: COLORS.warnBg },
+  Analisado: { color: COLORS.ok, bg: COLORS.okBg },
+};
+const DEFAULT_TIPOLOGIAS_INQ = ["Evento 1 dia", "Camp"];
+const DEFAULT_REGRAS_ENVIO = { "Evento 1 dia": 1, Camp: 0 };
+const JANELA_ALERTA_DIAS = 21;
+
+// Além dos feriados nacionais, as tolerâncias que o cronograma considera.
+function diaNaoUtilPlano(d) {
+  if (!isBusinessDay(d)) return true;
+  const m = d.getMonth();
+  const dia = d.getDate();
+  if ((m === 11 && (dia === 24 || dia === 31)) || (m === 5 && dia === 24)) return true;
+  const carnaval = addDays(easterSunday(d.getFullYear()), -47);
+  return carnaval.toDateString() === d.toDateString();
+}
+
+const isoDe = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const dataLocal = (iso) => (iso ? new Date(iso + "T00:00:00") : null);
+
+function dataEnvioPlano(item, regras) {
+  if (item.envioManual) return item.envioManual;
+  if (!item.fim) return null;
+  const off = Number((regras || {})[item.tipologia] ?? 1);
+  if (!off) return item.fim;
+  const d = addDays(dataLocal(item.fim), off);
+  return diaNaoUtilPlano(d) ? item.fim : isoDe(d);
+}
+
+function hojeISO() {
+  return isoDe(new Date());
+}
+
+// Situação visível: o estado guardado, ou "Atrasado" se já devia ter saído.
+function situacaoPlano(item, envio) {
+  if (item.estado === "Por enviar" && envio && envio < hojeISO()) return { label: "Atrasado", color: COLORS.danger, bg: COLORS.dangerBg };
+  const m = ESTADOS_PLANO[item.estado] || ESTADOS_PLANO["Por enviar"];
+  return { label: item.estado || "Por enviar", ...m };
+}
+
+const MESES_PLANO = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+// Datas do Excel chegam como número de série (dias desde 1899-12-30).
+function dataDeCelula(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return "";
+  if (/^\d{5}(\.\d+)?$/.test(s)) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(s)) * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  return dataDeCarimbo(s) || "";
+}
+
+// Lê o Excel do cronograma: procura a linha com "Evento" e "Tipologia".
+function lerCronograma(linhas) {
+  const titulo = linhas.slice(0, 5).flat().join(" ");
+  const ep = (titulo.match(/(\d{4}\/\d{2})/) || [])[1] || null;
+  const iCab = linhas.findIndex((l) => l.some((c) => normChave(c) === "evento") && l.some((c) => normChave(c) === "tipologia"));
+  if (iCab < 0) throw new Error('não encontrei a linha de cabeçalho com "Evento" e "Tipologia"');
+  const cab = linhas[iCab].map(normChave);
+  const col = (...nomes) => cab.findIndex((c) => nomes.some((n) => c === n || c.startsWith(n)));
+  const C = {
+    evento: col("evento"),
+    edicao: col("edicao", "edição"),
+    tipologia: col("tipologia"),
+    publico: col("publico"),
+    inicio: col("inicio"),
+    fim: col("fim"),
+    responsavel: col("responsavel"),
+    estado: col("estado"),
+    inscritos: col("inscritos"),
+    respostas: col("respostas"),
+    obs: col("observacoes", "obs"),
+  };
+  const v = (l, k) => (C[k] >= 0 ? String(l[C[k]] ?? "").trim() : "");
+  const num = (s) => (s === "" || isNaN(Number(s)) ? null : Math.round(Number(s)));
+  const itens = [];
+  linhas.slice(iCab + 1).forEach((l, k) => {
+    const evento = v(l, "evento");
+    if (!evento) return;
+    const estado = Object.keys(ESTADOS_PLANO).find((e) => normChave(e) === normChave(v(l, "estado"))) || "Por enviar";
+    const inicio = dataDeCelula(v(l, "inicio"));
+    itens.push({
+      id: `pl_${Date.now()}_${k}`,
+      evento,
+      edicao: v(l, "edicao"),
+      tipologia: v(l, "tipologia") || "Evento 1 dia",
+      publico: v(l, "publico"),
+      inicio,
+      fim: dataDeCelula(v(l, "fim")) || inicio,
+      responsavel: v(l, "responsavel"),
+      estado,
+      inscritos: num(v(l, "inscritos")),
+      respostas: num(v(l, "respostas")),
+      obs: v(l, "obs"),
+      epoca: ep || (inicio ? epocaDe(inicio) : epocaDe(hojeISO())),
+    });
+  });
+  return { epoca: ep, itens };
+}
+
+// Associa o nome do evento do cronograma ao tipo de evento usado nos resultados.
+function tipoEventoDoPlano(evento, tiposEvento) {
+  const e = normChave(evento);
+  return tiposEvento.find((t) => {
+    const n = normChave(t).replace(/s$/, "");
+    return e.includes(n) || n.includes(e);
+  });
+}
+
+function PlanoForm({ inicial, epoca, tipologias, tiposEvento, eventosUsados, publicosUsados, regras, onGuardar, onRemover, onFechar, onGerirLista }) {
+  const [f, setF] = useState(
+    inicial || {
+      id: `pl_${Date.now()}`,
+      evento: "",
+      edicao: "",
+      tipologia: tipologias[0] || "Evento 1 dia",
+      publico: "",
+      inicio: "",
+      fim: "",
+      envioManual: "",
+      responsavel: "",
+      estado: "Por enviar",
+      inscritos: null,
+      respostas: null,
+      obs: "",
+      epoca,
+    }
+  );
+  const [confirmar, setConfirmar] = useState(false);
+  const [erro, setErro] = useState("");
+  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  const setNum = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value === "" ? null : Math.max(0, Math.round(Number(e.target.value))) }));
+  const calculada = dataEnvioPlano({ ...f, envioManual: "" }, regras);
+  const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 };
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(640px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{inicial ? "Editar envio" : "Novo envio no cronograma"}</h2>
+          <button onClick={onFechar} style={iconBtnStyle}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={grid}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-evento">Evento</label>
+            <input id="pl-evento" list="pl-eventos" value={f.evento} onChange={set("evento")} placeholder="Ex: Foot-Camp Natal" style={inputStyle} />
+            <datalist id="pl-eventos">
+              {[...new Set([...eventosUsados, ...tiposEvento])].map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-edicao">Edição / local</label>
+            <input id="pl-edicao" value={f.edicao} onChange={set("edicao")} placeholder="Ex: Semana 1 · New Balance Park" style={inputStyle} />
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-tipologia">Tipologia</label>
+              <button type="button" onClick={() => onGerirLista("tipologiasInq")} style={{ ...linkBtnStyle, marginTop: 0 }}>
+                Gerir lista
+              </button>
+            </div>
+            <select id="pl-tipologia" value={f.tipologia} onChange={set("tipologia")} style={inputStyle}>
+              {[...new Set([...tipologias, f.tipologia])].filter(Boolean).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-publico">Público</label>
+            <input id="pl-publico" list="pl-publicos" value={f.publico} onChange={set("publico")} placeholder="Ex: U7–U14 Outros Locais" style={inputStyle} />
+            <datalist id="pl-publicos">
+              {publicosUsados.map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-inicio">Início</label>
+            <input id="pl-inicio" type="date" value={f.inicio} onChange={(e) => setF((x) => ({ ...x, inicio: e.target.value, fim: x.fim && x.fim >= e.target.value ? x.fim : e.target.value }))} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-fim">Fim</label>
+            <input id="pl-fim" type="date" value={f.fim} min={f.inicio || undefined} onChange={set("fim")} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-envio">Envio do inquérito</label>
+            <input id="pl-envio" type="date" value={f.envioManual || ""} onChange={set("envioManual")} style={inputStyle} />
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
+              {calculada ? `Pela regra: ${fmt(dataLocal(calculada))}. Preenche só para mudar.` : "Calculada quando houver data de fim."}
+            </div>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-resp">Responsável</label>
+            <input id="pl-resp" value={f.responsavel} onChange={set("responsavel")} placeholder="Iniciais" style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-estado">Estado</label>
+            <select id="pl-estado" value={f.estado} onChange={set("estado")} style={inputStyle}>
+              {Object.keys(ESTADOS_PLANO).map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-inscritos">Inscritos</label>
+            <input id="pl-inscritos" type="number" min={0} value={f.inscritos ?? ""} onChange={setNum("inscritos")} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-respostas">Respostas</label>
+            <input id="pl-respostas" type="number" min={0} value={f.respostas ?? ""} onChange={setNum("respostas")} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-epoca">Época</label>
+            <select id="pl-epoca" value={f.epoca} onChange={set("epoca")} style={inputStyle}>
+              {epocasDisponiveis(f.epoca).map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <label style={labelStyle} htmlFor="pl-obs">Observações</label>
+        <textarea id="pl-obs" rows={2} value={f.obs} onChange={set("obs")} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.danger }}>{erro}</div>}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20, alignItems: "center", flexWrap: "wrap" }}>
+          {inicial && (
+            <button
+              onClick={() => (confirmar ? onRemover(f.id) : setConfirmar(true))}
+              style={{ ...secondaryBtnStyle, flex: "none", color: COLORS.danger, borderColor: confirmar ? COLORS.danger : COLORS.rule }}
+            >
+              {confirmar ? "Confirmar: apagar" : "Apagar"}
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: "none" }}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => {
+              if (!f.evento.trim()) return setErro("Indica o evento.");
+              if (f.inicio && f.fim && f.fim < f.inicio) return setErro("O fim não pode ser antes do início.");
+              onGuardar({ ...f, evento: f.evento.trim(), edicao: f.edicao.trim(), envioManual: f.envioManual || "" });
+            }}
+            style={{ ...primaryBtnStyle, flex: "none", padding: "10px 18px" }}
+          >
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RegrasEnvio({ tipologias, regras, onGuardar, onFechar }) {
+  const [r, setR] = useState({ ...DEFAULT_REGRAS_ENVIO, ...regras });
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(460px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Regras de envio</h2>
+          <button onClick={onFechar} style={iconBtnStyle}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
+          Quantos dias depois do fim do evento sai o inquérito. Com 0, sai no último dia. Se o dia calculado for fim de semana, feriado ou tolerância (24/12, 31/12, Carnaval, São João), sai no último dia do evento.
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {tipologias.map((t) => (
+            <div key={t} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ flex: 1, fontSize: 13.5 }}>{t}</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={r[t] ?? 1}
+                onChange={(e) => setR((x) => ({ ...x, [t]: Math.max(0, Math.round(Number(e.target.value || 0))) }))}
+                style={{ ...inputStyle, width: 80, textAlign: "center" }}
+                aria-label={`Dias depois do fim para ${t}`}
+              />
+              <span style={{ fontSize: 12.5, color: COLORS.slate, width: 40 }}>dias</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onFechar} style={secondaryBtnStyle}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => {
+              onGuardar(r);
+              onFechar();
+            }}
+            style={primaryBtnStyle}
+          >
+            Guardar regras
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImportarCronograma({ existentes, onImportar, onFechar, notificar }) {
+  const [res, setRes] = useState(null);
+  const [erro, setErro] = useState("");
+  const [aLer, setALer] = useState(false);
+
+  const carregar = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setALer(true);
+    setErro("");
+    try {
+      const linhas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f) : lerCSVInq(await f.text());
+      const r = lerCronograma(linhas);
+      if (!r.itens.length) throw new Error("não encontrei linhas com evento");
+      setRes(r);
+    } catch (err) {
+      setErro(`Não consegui ler o cronograma: ${err?.message || err}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+  const epocaRes = res && (res.epoca || res.itens[0]?.epoca);
+  const jaHa = res ? existentes.filter((p) => p.epoca === epocaRes).length : 0;
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(560px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Importar cronograma</h2>
+          <button onClick={onFechar} style={iconBtnStyle}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
+          Usa o Excel do cronograma anual (colunas Evento, Edição / Local, Tipologia, Público, Início, Fim, Responsável, Estado…). As linhas de mês são ignoradas e a data de envio é recalculada pelas regras da app.
+        </div>
+        <label style={{ ...primaryBtnStyle, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "10px 16px", width: "auto" }}>
+          <Plus size={15} /> {aLer ? "A ler…" : "Escolher ficheiro Excel"}
+          <input type="file" accept=".xlsx,.csv" onChange={carregar} style={{ display: "none" }} />
+        </label>
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.danger }}>{erro}</div>}
+        {res && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+              {res.itens.length} envios encontrados · Época {epocaRes}
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 4 }}>
+              {[...new Set(res.itens.map((i) => i.evento))].join(" · ")}
+            </div>
+            {jaHa > 0 && <div style={{ fontSize: 12.5, color: COLORS.warn, marginTop: 10 }}>Já tens {jaHa} envios planeados nesta época.</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+              {jaHa > 0 && (
+                <button
+                  onClick={() => {
+                    onImportar(res.itens, epocaRes, true);
+                    notificar(`Cronograma da época ${epocaRes} substituído: ${res.itens.length} envios.`);
+                    onFechar();
+                  }}
+                  style={{ ...secondaryBtnStyle, flex: "none" }}
+                >
+                  Substituir os da época
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  onImportar(res.itens, epocaRes, false);
+                  notificar(`${res.itens.length} envios importados para a época ${epocaRes}.`);
+                  onFechar();
+                }}
+                style={{ ...primaryBtnStyle, flex: "none", padding: "10px 18px" }}
+              >
+                {jaHa > 0 ? "Acrescentar" : "Importar"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueritos, onGuardarItem, onRemoverItem, onImportarPlano, onGuardarRegras, onImportarResultados, onAbrirInquerito, onGerirLista, notificar }) {
+  const epocas = [...new Set([epocaDe(hojeISO()), ...plano.map((p) => p.epoca).filter(Boolean)])].sort().reverse();
+  const comDados = epocas.find((e) => plano.some((p) => p.epoca === e));
+  const [epoca, setEpoca] = useState(plano.some((p) => p.epoca === epocaDe(hojeISO())) ? epocaDe(hojeISO()) : comDados || epocaDe(hojeISO()));
+  const [fEstado, setFEstado] = useState("todos");
+  const [fPublico, setFPublico] = useState("todos");
+  const [editar, setEditar] = useState(null);
+  const [verRegras, setVerRegras] = useState(false);
+  const [importar, setImportar] = useState(false);
+
+  const hoje = hojeISO();
+  const daEpoca = plano
+    .filter((p) => p.epoca === epoca)
+    .map((p) => ({ ...p, envio: dataEnvioPlano(p, regras) }))
+    .sort((a, b) => String(a.envio || a.inicio || "9999").localeCompare(String(b.envio || b.inicio || "9999")));
+
+  // Mesmo público com outro envio a menos de 21 dias: risco de cansar quem responde.
+  const proximos = (p) =>
+    p.envio
+      ? daEpoca.filter((o) => o.id !== p.id && o.publico && o.publico === p.publico && o.envio && Math.abs(dataLocal(o.envio) - dataLocal(p.envio)) / 86400000 <= JANELA_ALERTA_DIAS)
+      : [];
+
+  const lista = daEpoca
+    .filter((p) => fEstado === "todos" || (fEstado === "Atrasado" ? situacaoPlano(p, p.envio).label === "Atrasado" : p.estado === fEstado))
+    .filter((p) => fPublico === "todos" || p.publico === fPublico);
+
+  // Envios futuros do mesmo público a menos de 21 dias uns dos outros, agrupados.
+  const gruposSeguidos = [];
+  [...new Set(daEpoca.map((p) => p.publico).filter(Boolean))].forEach((pub) => {
+    const fut = daEpoca.filter((p) => p.publico === pub && p.envio && p.envio >= hoje && p.estado === "Por enviar").sort((a, b) => a.envio.localeCompare(b.envio));
+    let atual = [];
+    fut.forEach((p) => {
+      if (atual.length && (dataLocal(p.envio) - dataLocal(atual[atual.length - 1].envio)) / 86400000 > JANELA_ALERTA_DIAS) {
+        if (atual.length > 1) gruposSeguidos.push(atual);
+        atual = [];
+      }
+      atual.push(p);
+    });
+    if (atual.length > 1) gruposSeguidos.push(atual);
+  });
+  gruposSeguidos.sort((a, b) => a[0].envio.localeCompare(b[0].envio));
+
+  const enviados = daEpoca.filter((p) => p.estado !== "Por enviar").length;
+  const futuro = daEpoca.filter((p) => p.envio && p.envio >= hoje && p.estado === "Por enviar");
+  const prox = futuro[0];
+  const comResp = daEpoca.filter((p) => p.respostas !== null && p.respostas !== undefined && p.inscritos);
+  const taxa = comResp.length ? Math.round((comResp.reduce((n, p) => n + p.respostas, 0) / comResp.reduce((n, p) => n + p.inscritos, 0)) * 100) : null;
+  const atrasados = daEpoca.filter((p) => situacaoPlano(p, p.envio).label === "Atrasado");
+  const em14 = futuro.filter((p) => (dataLocal(p.envio) - dataLocal(hoje)) / 86400000 <= 14);
+  const porFechar = daEpoca.filter((p) => p.estado === "Enviado" && p.envio && (dataLocal(hoje) - dataLocal(p.envio)) / 86400000 > 14);
+  const semResultados = daEpoca.filter((p) => p.estado === "Fechado" && !p.inqueritoId);
+
+  // Agrupa por mês de envio (ou de início, se ainda não houver data).
+  const grupos = [];
+  lista.forEach((p) => {
+    const ref = p.envio || p.inicio;
+    const chave = ref ? ref.slice(0, 7) : "sem-data";
+    let g = grupos.find((x) => x.chave === chave);
+    if (!g) {
+      g = { chave, titulo: ref ? `${MESES_PLANO[Number(ref.slice(5, 7)) - 1]} ${ref.slice(0, 4)}` : "Data a definir", itens: [] };
+      grupos.push(g);
+    }
+    g.itens.push(p);
+  });
+  grupos.sort((a, b) => (a.chave === "sem-data" ? 1 : b.chave === "sem-data" ? -1 : a.chave.localeCompare(b.chave)));
+
+  // Ocupação por mês, para a faixa do topo.
+  const meses = [...new Set(daEpoca.map((p) => (p.envio || p.inicio || "").slice(0, 7)).filter(Boolean))].sort();
+
+  const publicos = [...new Set(daEpoca.map((p) => p.publico).filter(Boolean))].sort();
+  const selectFiltro = { ...inputStyle, width: "auto", minWidth: 150, padding: "8px 10px" };
+  const numeroDe = (p) => daEpoca.findIndex((x) => x.id === p.id) + 1;
+  const dataCurta = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short" }).format(dataLocal(iso)).replace(".", "") : "—");
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={selectFiltro} aria-label="Época">
+          {epocas.map((e) => (
+            <option key={e} value={e}>
+              Época {e}
+            </option>
+          ))}
+        </select>
+        <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={selectFiltro} aria-label="Estado">
+          <option value="todos">Todos os estados</option>
+          {["Atrasado", ...Object.keys(ESTADOS_PLANO)].map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+        <select value={fPublico} onChange={(e) => setFPublico(e.target.value)} style={selectFiltro} aria-label="Público">
+          <option value="todos">Todos os públicos</option>
+          {publicos.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setVerRegras(true)} style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 12px" }}>
+          Regras de envio
+        </button>
+        <button onClick={() => setImportar(true)} style={{ ...secondaryBtnStyle, flex: "none", padding: "8px 12px" }}>
+          Importar cronograma
+        </button>
+        <button
+          onClick={() => setEditar("novo")}
+          className="press"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: COLORS.navy, color: COLORS.onAccent, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}
+        >
+          <Plus size={15} /> Novo envio
+        </button>
+      </div>
+
+      {daEpoca.length === 0 ? (
+        <SemDados
+          icon={ClipboardList}
+          titulo={`Sem cronograma para ${epoca}`}
+          texto="Importa o Excel do cronograma anual ou acrescenta os envios um a um."
+          acao="Importar cronograma"
+          onAcao={() => setImportar(true)}
+        />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
+            <StatCard label="Inquéritos na época" value={daEpoca.length} subtitle={`${daEpoca.filter((p) => p.estado === "Analisado").length} já analisados`} />
+            <StatCard label="Já enviados" value={enviados} subtitle={`${pct(enviados, daEpoca.length)}% do plano`} anel={pct(enviados, daEpoca.length)} color={COLORS.progress} />
+            <StatCard
+              label="Próximo envio"
+              value={prox ? dataCurta(prox.envio) : "—"}
+              subtitle={prox ? `${prox.evento} · ${prox.edicao}` : "Nada por enviar"}
+              color={COLORS.navy}
+            />
+            <StatCard label="Taxa de resposta global" value={taxa ?? "—"} subtitle={taxa !== null ? `% · ${comResp.length} inquéritos com respostas` : "Preenche inscritos e respostas"} anel={taxa} color={COLORS.ok} />
+          </div>
+
+          <Observacoes
+            itens={[
+              ...atrasados.map((p) => ({ nivel: "alarme", titulo: `${p.evento} · ${p.edicao}: envio atrasado`, texto: `Devia ter saído a ${fmt(dataLocal(p.envio))} e continua por enviar.` })),
+              ...em14.map((p) => ({ nivel: "atencao", titulo: `Enviar a ${fmt(dataLocal(p.envio))}: ${p.evento} · ${p.edicao}`, texto: `${p.publico || "Público por definir"}${p.responsavel ? ` · responsável ${p.responsavel}` : " · sem responsável atribuído"}.` })),
+              ...porFechar.map((p) => ({ nivel: "atencao", titulo: `${p.evento} · ${p.edicao} enviado há mais de 2 semanas`, texto: "Fecha o inquérito e importa os resultados para entrarem na análise." })),
+              ...semResultados.map((p) => ({ nivel: "atencao", titulo: `${p.evento} · ${p.edicao} fechado sem resultados importados`, texto: "Usa “Importar resultados” na linha do cronograma." })),
+              ...gruposSeguidos.slice(0, 4).map((g) => ({
+                nivel: "atencao",
+                titulo: `${g[0].publico}: ${g.length} envios com menos de 3 semanas entre si`,
+                texto: `${g.map((o) => `${o.evento} · ${o.edicao} (${fmt(dataLocal(o.envio))})`).join(", ")}. Confirma se as mesmas famílias vão receber mais de um inquérito.`,
+              })),
+            ]}
+          />
+
+          {/* Faixa de meses: quantos envios em cada mês e em que estado. */}
+          <div style={{ ...panelStyle, marginBottom: 16, padding: "14px 16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${meses.length}, minmax(64px, 1fr))`, gap: 6, overflowX: "auto" }}>
+              {meses.map((mm) => {
+                const doMes = daEpoca.filter((p) => (p.envio || p.inicio || "").slice(0, 7) === mm);
+                const atual = mm === hoje.slice(0, 7);
+                return (
+                  <div key={mm} style={{ padding: "8px 8px 10px", borderRadius: 8, background: atual ? COLORS.navyWash : COLORS.paperSunken, border: `1px solid ${atual ? COLORS.navy : "transparent"}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: atual ? COLORS.navy : COLORS.ink2 }}>
+                      {MESES_PLANO[Number(mm.slice(5)) - 1].slice(0, 3)} {mm.slice(2, 4)}
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 600, margin: "2px 0 6px", fontVariantNumeric: "tabular-nums" }}>{doMes.length}</div>
+                    <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                      {doMes.map((p) => {
+                        const s = situacaoPlano(p, p.envio);
+                        return <span key={p.id} title={`${p.evento} · ${p.edicao} — ${s.label}`} style={{ width: 9, height: 9, borderRadius: 3, background: s.color }} />;
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: COLORS.ink2, marginTop: 10 }}>
+              {[["Por enviar", COLORS.slate], ["Enviado", COLORS.progress], ["Fechado", COLORS.warn], ["Analisado", COLORS.ok], ["Atrasado", COLORS.danger]].map(([l, c]) => (
+                <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 3, background: c }} />
+                  {l}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Cronograma agrupado por mês. */}
+          <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 980 }}>
+                <thead>
+                  <tr style={{ background: COLORS.paperSunken }}>
+                    {["Nº", "Evento", "Público", "Datas", "Envio", "Resp.", "Estado", "Inscritos", "Respostas", "Taxa", ""].map((c, i) => (
+                      <th key={i} style={{ textAlign: "left", fontSize: 11, fontWeight: 600, color: COLORS.slate, padding: "9px 10px", whiteSpace: "nowrap" }}>
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {grupos.map((g) => (
+                    <React.Fragment key={g.chave}>
+                      <tr>
+                        <td colSpan={11} style={{ padding: "12px 10px 6px", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.navy, borderTop: `1px solid ${COLORS.rule}` }}>
+                          {g.titulo}
+                        </td>
+                      </tr>
+                      {g.itens.map((p) => {
+                        const s = situacaoPlano(p, p.envio);
+                        const alerta = proximos(p);
+                        const tx = p.inscritos && p.respostas !== null && p.respostas !== undefined ? Math.round((p.respostas / p.inscritos) * 100) : null;
+                        const ligado = p.inqueritoId && inqueritos.find((i) => i.id === p.inqueritoId);
+                        return (
+                          <tr key={p.id} className="rowHover" style={{ borderTop: `1px solid ${COLORS.ruleSoft}` }}>
+                            <td style={{ padding: "9px 10px", color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{numeroDe(p)}</td>
+                            <td style={{ padding: "9px 10px", minWidth: 200 }}>
+                              <button onClick={() => setEditar(p)} style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: COLORS.ink, font: "inherit" }}>
+                                <div style={{ fontWeight: 600 }}>{p.evento}</div>
+                                <div style={{ fontSize: 12, color: COLORS.slate }}>
+                                  {p.edicao}
+                                  {p.tipologia ? ` · ${p.tipologia}` : ""}
+                                </div>
+                              </button>
+                              {p.obs && <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 3, maxWidth: 280 }}>{p.obs}</div>}
+                            </td>
+                            <td style={{ padding: "9px 10px", fontSize: 12.5 }}>{p.publico || "—"}</td>
+                            <td style={{ padding: "9px 10px", fontSize: 12.5, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                              {p.inicio ? (p.fim && p.fim !== p.inicio ? `${dataCurta(p.inicio)} – ${dataCurta(p.fim)}` : dataCurta(p.inicio)) : "a definir"}
+                            </td>
+                            <td style={{ padding: "9px 10px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                              <strong style={{ fontWeight: 600 }}>{p.envio ? dataCurta(p.envio) : "a definir"}</strong>
+                              {p.envioManual && <span title="Data definida à mão" style={{ fontSize: 10.5, color: COLORS.slate }}> · manual</span>}
+                              {alerta.length > 0 && (
+                                <div title={alerta.map((o) => `${o.evento} · ${o.edicao} (${fmt(dataLocal(o.envio))})`).join("\n")} style={{ fontSize: 11, color: COLORS.warn, fontWeight: 600, marginTop: 2 }}>
+                                  ⚠ {alerta.length} próx.
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: "9px 10px", fontSize: 12.5 }}>{p.responsavel || <span style={{ color: COLORS.slate }}>—</span>}</td>
+                            <td style={{ padding: "9px 10px" }}>
+                              <select
+                                value={p.estado}
+                                onChange={(e) => onGuardarItem({ ...p, estado: e.target.value, envio: undefined })}
+                                aria-label={`Estado de ${p.evento} ${p.edicao}`}
+                                style={{ border: `1.5px solid ${s.color}`, background: s.bg, color: s.color, borderRadius: 6, padding: "4px 6px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                              >
+                                {Object.keys(ESTADOS_PLANO).map((e) => (
+                                  <option key={e} value={e}>
+                                    {e}
+                                  </option>
+                                ))}
+                              </select>
+                              {s.label === "Atrasado" && <div style={{ fontSize: 11, color: COLORS.danger, fontWeight: 600, marginTop: 3 }}>Atrasado</div>}
+                            </td>
+                            <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums" }}>{p.inscritos ?? "—"}</td>
+                            <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums" }}>{p.respostas ?? "—"}</td>
+                            <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: tx === null ? COLORS.slate : tx < 20 ? COLORS.danger : tx < 35 ? COLORS.warn : COLORS.ok }}>{tx === null ? "—" : `${tx}%`}</td>
+                            <td style={{ padding: "9px 10px", whiteSpace: "nowrap", textAlign: "right" }}>
+                              {ligado ? (
+                                <button onClick={() => onAbrirInquerito(ligado.id)} style={{ ...linkBtnStyle, marginTop: 0 }}>
+                                  Ver resultados
+                                </button>
+                              ) : p.estado !== "Por enviar" ? (
+                                <button onClick={() => onImportarResultados(p)} style={{ ...linkBtnStyle, marginTop: 0 }}>
+                                  Importar resultados
+                                </button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {editar && (
+        <PlanoForm
+          inicial={editar === "novo" ? null : editar}
+          epoca={epoca}
+          tipologias={tipologias}
+          tiposEvento={tiposEvento}
+          eventosUsados={[...new Set(plano.map((p) => p.evento))]}
+          publicosUsados={[...new Set(plano.map((p) => p.publico).filter(Boolean))]}
+          regras={regras}
+          onGerirLista={onGerirLista}
+          onFechar={() => setEditar(null)}
+          onGuardar={(item) => {
+            const { envio, ...limpo } = item;
+            onGuardarItem(limpo);
+            setEditar(null);
+            notificar(editar === "novo" ? "Envio acrescentado ao cronograma." : "Envio atualizado.");
+          }}
+          onRemover={(id) => {
+            onRemoverItem(id);
+            setEditar(null);
+            notificar("Envio apagado do cronograma.", "aviso");
+          }}
+        />
+      )}
+      {verRegras && <RegrasEnvio tipologias={tipologias} regras={regras} onGuardar={onGuardarRegras} onFechar={() => setVerRegras(false)} />}
+      {importar && <ImportarCronograma existentes={plano} onImportar={onImportarPlano} onFechar={() => setImportar(false)} notificar={notificar} />}
+    </div>
+  );
+}
+
 // ---------- Página ----------
-function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtualizar, onRemover, onGerirLista, notificar }) {
-  const [view, setView] = useState("registo");
+function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtualizar, onRemover, onGerirLista, notificar, plano, regrasEnvio, tipologias, onGuardarItemPlano, onRemoverItemPlano, onImportarPlano, onGuardarRegras }) {
+  const [view, setView] = useState("planeamento");
   const [importar, setImportar] = useState(false);
   const [aberto, setAberto] = useState(null);
   const [fTipo, setFTipo] = useState("todos");
@@ -9089,7 +10075,8 @@ function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtual
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
         <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2 }}>
           {[
-            ["registo", "Registo"],
+            ["planeamento", "Planeamento"],
+            ["registo", "Resultados"],
             ["analise", "Análise"],
           ].map(([key, label]) => (
             <button
@@ -9112,17 +10099,33 @@ function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtual
             </button>
           ))}
         </div>
-        <button
+        {view !== "planeamento" && <button
           onClick={() => setImportar(true)}
           className="press"
           style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.navy, color: COLORS.onAccent, border: "none", borderRadius: 8, padding: "10px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}
         >
           <Plus size={16} /> Importar inquérito
-        </button>
+        </button>}
       </div>
 
       <div key={view} className="pageIn">
-        {view === "analise" ? (
+        {view === "planeamento" ? (
+          <PlaneamentoInqueritos
+            plano={plano}
+            regras={regrasEnvio}
+            tipologias={tipologias}
+            tiposEvento={tiposEvento}
+            inqueritos={inqueritos}
+            onGuardarItem={onGuardarItemPlano}
+            onRemoverItem={onRemoverItemPlano}
+            onImportarPlano={onImportarPlano}
+            onGuardarRegras={onGuardarRegras}
+            onImportarResultados={(p) => setImportar(p)}
+            onAbrirInquerito={(id) => setAberto(id)}
+            onGerirLista={onGerirLista}
+            notificar={notificar}
+          />
+        ) : view === "analise" ? (
           <InqueritosAnalise inqueritos={inqueritos} tiposEvento={tiposEvento} />
         ) : inqueritos.length === 0 ? (
           <SemDados
@@ -9186,6 +10189,8 @@ function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtual
           dimensoes={dimensoes}
           existentes={inqueritos}
           onGuardar={onGuardar}
+          plano={plano}
+          planoInicial={importar && importar !== true ? importar : null}
           onFechar={() => setImportar(false)}
           onGerirLista={onGerirLista}
           notificar={notificar}
@@ -9202,6 +10207,3077 @@ function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtual
             setAberto(null);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// ======================================================================
+// ---------- Relatório de escola ----------
+// ======================================================================
+// Junta, para uma escola e um período, tudo o que a app sabe: reclamações,
+// auditorias, inscritos, movimentos, satisfação e sanções. Compara sempre
+// com a média das restantes escolas e normaliza por cada 100 alunos.
+
+const SECCOES_RELATORIO = [
+  { key: "resumo", label: "Resumo e comparação" },
+  { key: "reclamacoes", label: "Reclamações" },
+  { key: "auditorias", label: "Auditorias" },
+  { key: "inscritos", label: "Inscritos e turmas" },
+  { key: "movimentos", label: "Desistências, experiências e desvinculações" },
+  { key: "satisfacao", label: "Satisfação e inquéritos" },
+  { key: "causas", label: "Causa raiz" },
+  { key: "sancoes", label: "Sanções" },
+  { key: "notas", label: "Notas e conclusões" },
+];
+
+const PERIODOS_FIXOS = [
+  ["dias:30", "Últimos 30 dias"],
+  ["dias:90", "Últimos 90 dias"],
+  ["dias:365", "Últimos 12 meses"],
+  ["tudo", "Todo o histórico"],
+];
+
+function dentroPeriodo(periodo, data) {
+  if (!data) return false;
+  const d = String(data).slice(0, 10);
+  if (periodo === "tudo") return true;
+  if (periodo.startsWith("epoca:")) return epocaDe(d) === periodo.slice(6);
+  if (periodo.startsWith("dias:")) {
+    const lim = new Date();
+    lim.setDate(lim.getDate() - Number(periodo.slice(5)));
+    return new Date(d + "T00:00:00") >= lim;
+  }
+  return true;
+}
+
+function nomePeriodo(periodo) {
+  if (periodo.startsWith("epoca:")) return `Época ${periodo.slice(6)}`;
+  const f = PERIODOS_FIXOS.find(([k]) => k === periodo);
+  return f ? f[1] : periodo;
+}
+
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+const por100 = (n, alunos) => (alunos ? Math.round((n / alunos) * 1000) / 10 : null);
+const fmtNum = (v, dec = 0) => (v === null || v === undefined || isNaN(v) ? "—" : Number(v).toLocaleString("pt-PT", { maximumFractionDigits: dec, minimumFractionDigits: 0 }));
+const ordinal = (n) => `${n}.º`;
+
+// Métricas de uma escola, usadas para o relatório e para a comparação com as outras.
+function metricasEscola(e, periodo, d) {
+  const turmas = d.turmasAlunos.filter((t) => t.escola === e);
+  const alunosTurmas = turmas.reduce((n, t) => n + t.m + t.f, 0);
+  const serie = [...(d.inscritos[e] || [])].sort((a, b) => a.semana.localeCompare(b.semana));
+  const alunos = alunosTurmas || (serie.length ? serie[serie.length - 1].total : 0);
+  const ant = (d.epocaAnterior[e] || {}).inscritos || null;
+
+  const recl = d.reclamacoes.filter((r) => r.school === e && dentroPeriodo(periodo, r.receivedDate));
+  const resolvidas = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
+  const noPrazo = resolvidas.filter((r) => new Date(r.resolvedDate) <= new Date(r.deadline)).length;
+
+  const constat = d.audits.filter((a) => a.school === e).flatMap((a) => a.findings || []);
+  const ncAbertas = constat.filter((f) => !f.resolvida && (f.classification === "NC" || f.classification === "NCM")).length;
+
+  const sat = d.satisfacao.filter((s) => s.escola === e && dentroPeriodo(periodo, `${s.periodo}-15`));
+  let pesoSat = 0;
+  let somaSat = 0;
+  sat.forEach((s) => {
+    const vs = Object.values(s.valores || {}).filter((v) => v !== null && !isNaN(v));
+    if (!vs.length) return;
+    const m = vs.reduce((a, b) => a + b, 0) / vs.length;
+    somaSat += m * (s.respostas || 1);
+    pesoSat += s.respostas || 1;
+  });
+  // Inquéritos de eventos com esta escola como segmento.
+  let nInq = 0;
+  let satInq = 0;
+  d.inqueritos
+    .filter((i) => dentroPeriodo(periodo, i.data) && i.segmentos && i.segmentos[e])
+    .forEach((i) => {
+      const s = satisfacaoDe(i.perguntas || [], e);
+      if (s.n) {
+        nInq += s.n;
+        satInq += (s.pct / 100) * s.n;
+      }
+    });
+  const satisfacaoPct = pesoSat ? Math.round(somaSat / pesoSat) : nInq ? Math.round((satInq / nInq) * 100) : null;
+
+  const desist = d.desistencias.filter((x) => x.escola === e && dentroPeriodo(periodo, x.data)).reduce((n, x) => n + x.n, 0);
+  const xp = d.experiencias.filter((x) => x.escola === e && dentroPeriodo(periodo, x.data));
+  const xpSuc = xp.filter((x) => x.resultado === "sucesso").reduce((n, x) => n + x.n, 0);
+  const xpAval = xp.filter((x) => x.resultado !== "pendente").reduce((n, x) => n + x.n, 0);
+
+  return {
+    alunos,
+    crescimento: ant && alunos ? Math.round(((alunos - ant) / ant) * 1000) / 10 : null,
+    reclamacoes: recl.length,
+    reclPor100: por100(recl.length, alunos),
+    prazo: pct(noPrazo, resolvidas.length),
+    ncAbertas,
+    satisfacao: satisfacaoPct,
+    desistPct: alunos ? Math.round((desist / alunos) * 1000) / 10 : null,
+    conversao: pct(xpSuc, xpAval),
+  };
+}
+
+// Que métricas entram na comparação e em que sentido é melhor.
+const METRICAS_COMP = [
+  { key: "crescimento", label: "Crescimento face à época passada", unidade: "%", melhor: "alto", limiar: 3 },
+  { key: "reclPor100", label: "Reclamações por 100 alunos", unidade: "", melhor: "baixo", limiar: 0.5, dec: 1 },
+  { key: "prazo", label: "Reclamações resolvidas no prazo", unidade: "%", melhor: "alto", limiar: 8 },
+  { key: "ncAbertas", label: "Não conformidades em aberto", unidade: "", melhor: "baixo", limiar: 1 },
+  { key: "satisfacao", label: "Satisfação", unidade: "%", melhor: "alto", limiar: 5 },
+  { key: "desistPct", label: "Taxa de desistência", unidade: "%", melhor: "baixo", limiar: 1, dec: 1 },
+  { key: "conversao", label: "Conversão de experiências", unidade: "%", melhor: "alto", limiar: 8 },
+];
+
+function KpiRel({ label, valor, unidade, comparacao, cor }) {
+  return (
+    <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.paperSunken, minWidth: 0 }}>
+      <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: cor || COLORS.ink, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+        {valor}
+        {valor !== "—" && unidade ? <span style={{ fontSize: 14, fontWeight: 500, marginLeft: 1 }}>{unidade}</span> : null}
+      </div>
+      {comparacao && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>{comparacao}</div>}
+    </div>
+  );
+}
+
+function SeccaoRel({ titulo, nota, children }) {
+  return (
+    <section className="relSeccao" style={{ paddingTop: 22, marginTop: 22, borderTop: `1px solid ${COLORS.rule}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: COLORS.navy, letterSpacing: "-0.01em" }}>{titulo}</h3>
+        {nota && <div style={{ fontSize: 11.5, color: COLORS.slate }}>{nota}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function BarrasRel({ dados, cor, largura = 150, sufixo = "" }) {
+  if (!dados.length) return <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem registos no período.</div>;
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(120, dados.length * 30)}>
+      <BarChart data={dados} layout="vertical" margin={{ left: 4, right: 18 }}>
+        <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="name" width={largura} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+        <Tooltip content={<DicaGrafico sufixo={sufixo} />} cursor={{ fill: COLORS.ruleSoft }} />
+        <Bar dataKey="value" name="Total" fill={cor || COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function TabelaRel({ colunas, linhas, vazio }) {
+  if (!linhas.length) return <div style={{ fontSize: 12.5, color: COLORS.slate }}>{vazio}</div>;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead>
+          <tr>
+            {colunas.map((c) => (
+              <th key={c} style={{ textAlign: "left", fontWeight: 600, color: COLORS.slate, fontSize: 11, padding: "6px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((l, i) => (
+            <tr key={i}>
+              {l.map((v, j) => (
+                <td key={j} style={{ padding: "7px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, verticalAlign: "top", fontVariantNumeric: "tabular-nums" }}>
+                  {v}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const contar = (lista, chave) => {
+  const c = {};
+  lista.forEach((x) => {
+    const k = typeof chave === "function" ? chave(x) : x[chave];
+    if (k) c[k] = (c[k] || 0) + (x.__peso || 1);
+  });
+  return Object.entries(c)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }));
+};
+
+const LS_RELATORIO = "df-relatorio-seccoes";
+
+function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
+  const epocaAtual = epocaDe(new Date().toISOString().slice(0, 10));
+  const epocasComDados = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaDe(a.date))].filter(Boolean))].sort().reverse();
+
+  const [escola, setEscola] = useState(escolas[0] || "");
+  const [periodo, setPeriodo] = useState(`epoca:${epocaAtual}`);
+  const [seccoes, setSeccoes] = useState(() => {
+    try {
+      const g = JSON.parse(window.localStorage.getItem(LS_RELATORIO) || "null");
+      if (Array.isArray(g)) return new Set(g);
+    } catch (e) {
+      // sem preferências guardadas
+    }
+    return new Set(SECCOES_RELATORIO.map((s) => s.key));
+  });
+  const [comparar, setComparar] = useState(true);
+  const chaveNota = `${escola}|${periodo}`;
+  const [nota, setNota] = useState(notas[chaveNota] || "");
+  useEffect(() => setNota(notas[chaveNota] || ""), [chaveNota]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (k) =>
+    setSeccoes((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      try {
+        window.localStorage.setItem(LS_RELATORIO, JSON.stringify([...n]));
+      } catch (e) {
+        // preferências só nesta sessão
+      }
+      return n;
+    });
+
+  if (!escola) return <SemDados icon={FileText} titulo="Sem escolas" texto="Adiciona escolas em Todas as listas para gerar relatórios." />;
+
+  const dados = { reclamacoes, audits, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, satisfacao, inqueritos };
+  const m = metricasEscola(escola, periodo, dados);
+  const outras = escolas.filter((e) => e !== escola).map((e) => ({ e, m: metricasEscola(e, periodo, dados) }));
+  const todas = [{ e: escola, m }, ...outras];
+
+  const mediaOutras = (k) => {
+    const vs = outras.map((o) => o.m[k]).filter((v) => v !== null && v !== undefined && !isNaN(v));
+    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : null;
+  };
+  const posicao = (k, melhor) => {
+    const vs = todas.filter((t) => t.m[k] !== null && t.m[k] !== undefined).sort((a, b) => (melhor === "alto" ? b.m[k] - a.m[k] : a.m[k] - b.m[k]));
+    const i = vs.findIndex((t) => t.e === escola);
+    return i >= 0 ? { pos: i + 1, de: vs.length } : null;
+  };
+
+  const comparacoes = METRICAS_COMP.map((c) => {
+    const v = m[c.key];
+    const med = mediaOutras(c.key);
+    const p = posicao(c.key, c.melhor);
+    let estado = null;
+    if (v !== null && v !== undefined && med !== null) {
+      const dif = c.melhor === "alto" ? v - med : med - v;
+      estado = dif >= c.limiar ? "melhor" : dif <= -c.limiar ? "pior" : "igual";
+    }
+    return { ...c, v, med, p, estado };
+  });
+  const fortes = comparacoes.filter((c) => c.estado === "melhor");
+  const fracos = comparacoes.filter((c) => c.estado === "pior");
+
+  // ---- Reclamações ----
+  const recl = reclamacoes.filter((r) => r.school === escola && dentroPeriodo(periodo, r.receivedDate));
+  const reclAbertas = recl.filter((r) => r.derivedStatus !== "concluido");
+  const reclRes = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
+  const tempoRes = reclRes.length ? Math.round(reclRes.reduce((s, r) => s + (new Date(r.resolvedDate) - new Date(r.receivedDate + "T00:00:00")) / 86400000, 0) / reclRes.length) : null;
+  const eficazes = pct(reclRes.filter((r) => r.eficacia === "eficaz").length, reclRes.filter((r) => r.eficacia).length);
+  const reclMes = contar(recl, (r) => mesDeData(r.receivedDate)).sort((a, b) => a.name.localeCompare(b.name));
+
+  // ---- Auditorias ----
+  const auds = audits.filter((a) => a.school === escola).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const audsPeriodo = auds.filter((a) => dentroPeriodo(periodo, a.date));
+  const constat = audsPeriodo.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
+  const porResolver = auds.flatMap((a) => (a.findings || []).filter((f) => !f.resolvida).map((f) => ({ ...f, data: a.date })));
+  const ordemCls = { NCM: 0, NC: 1, AS: 2, OM: 3 };
+
+  // ---- Inscritos ----
+  const turmas = turmasAlunos.filter((t) => t.escola === escola);
+  const masc = turmas.reduce((n, t) => n + t.m, 0);
+  const fem = turmas.reduce((n, t) => n + t.f, 0);
+  const escolinha = turmas.filter((t) => ehEscolinha(t.turma, niveis)).reduce((n, t) => n + t.m + t.f, 0);
+  const serie = [...(inscritos[escola] || [])].sort((a, b) => a.semana.localeCompare(b.semana)).map((s) => ({ name: semanaLabel(s.semana), Inscritos: s.total }));
+  const porEscalao = contar(turmas.map((t) => ({ ...t, __peso: t.m + t.f })), (t) => escalaoDaTurma(t.turma, niveis));
+  const lotacao = turmas
+    .map((t) => {
+      const cap = t.cap || capacidadeSugerida(t.turma, niveis);
+      return { turma: t.turma, n: t.m + t.f, cap, pct: cap ? Math.round(((t.m + t.f) / cap) * 100) : null };
+    })
+    .sort((a, b) => b.pct - a.pct);
+  const cheias = lotacao.filter((t) => t.pct >= 95);
+  const vazias = lotacao.filter((t) => t.pct < 50);
+  const cls = m.crescimento !== null ? classificarCrescimento(m.crescimento) : null;
+
+  // ---- Movimentos ----
+  const desist = desistencias.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
+  const nDesist = desist.reduce((n, x) => n + x.n, 0);
+  const xps = experiencias.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
+  const somaXp = (r) => xps.filter((x) => (r ? x.resultado === r : true)).reduce((n, x) => n + x.n, 0);
+  const desv = desvinculacoes.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
+
+  // ---- Satisfação ----
+  const satReg = satisfacao.filter((s) => s.escola === escola && dentroPeriodo(periodo, `${s.periodo}-15`));
+  const catSat = {};
+  satReg.forEach((s) =>
+    Object.entries(s.valores || {}).forEach(([c, v]) => {
+      catSat[c] = catSat[c] || { soma: 0, peso: 0 };
+      catSat[c].soma += v * (s.respostas || 1);
+      catSat[c].peso += s.respostas || 1;
+    })
+  );
+  const satCategorias = Object.entries(catSat)
+    .map(([name, x]) => ({ name, value: Math.round(x.soma / x.peso) }))
+    .sort((a, b) => b.value - a.value);
+  const inqEscola = inqueritos
+    .filter((i) => dentroPeriodo(periodo, i.data) && i.segmentos && i.segmentos[escola])
+    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const comentarios = inqEscola.flatMap((i) => (i.comentarios || []).filter((c) => c.segmento === escola).map((c) => ({ ...c, edicao: i.edicao })));
+
+  // ---- Sanções ----
+  const sanc = sanctions.filter((s) => s.school === escola && dentroPeriodo(periodo, s.date));
+
+  const ver = (k) => seccoes.has(k);
+  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const corEstado = (e) => (e === "melhor" ? COLORS.ok : e === "pior" ? COLORS.danger : COLORS.slate);
+  const txtComp = (c) => {
+    if (!comparar || c.med === null) return null;
+    const pos = c.p ? `${ordinal(c.p.pos)} de ${c.p.de}` : "";
+    return `${pos}${pos ? " · " : ""}média das outras ${fmtNum(c.med, c.dec ?? 0)}${c.unidade}`;
+  };
+  const kpi = (k) => comparacoes.find((c) => c.key === k);
+
+  const selectStyle = { ...inputStyle, width: "auto", minWidth: 190, padding: "8px 10px" };
+
+  return (
+    <div>
+      {/* ---- Controlo do relatório (não sai na impressão) ---- */}
+      <div className="relControlos" style={{ ...panelStyle, marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rel-escola">
+              Escola
+            </label>
+            <select id="rel-escola" value={escola} onChange={(e) => setEscola(e.target.value)} style={selectStyle}>
+              {escolas.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rel-periodo">
+              Período
+            </label>
+            <select id="rel-periodo" value={periodo} onChange={(e) => setPeriodo(e.target.value)} style={selectStyle}>
+              {epocasComDados.map((ep) => (
+                <option key={ep} value={`epoca:${ep}`}>
+                  Época {ep}
+                </option>
+              ))}
+              {PERIODOS_FIXOS.map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, paddingBottom: 9, cursor: "pointer" }}>
+            <input type="checkbox" checked={comparar} onChange={(e) => setComparar(e.target.checked)} />
+            Comparar com as outras escolas
+          </label>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                // O PDF sai sempre em tema claro; se estiver escuro, troca e repõe no fim.
+                const imprimir = () => {
+                  try {
+                    window.print();
+                  } catch (e) {
+                    notificar("Não foi possível abrir a impressão neste browser.", "erro");
+                  }
+                };
+                if (tema === "dark" && setTema) {
+                  setTema("light");
+                  setTimeout(() => {
+                    imprimir();
+                    setTema("dark");
+                  }, 350);
+                } else imprimir();
+              }}
+              className="press"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: COLORS.navy, color: COLORS.onAccent, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}
+            >
+              <Printer size={15} /> Descarregar PDF
+            </button>
+          </div>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 8px" }}>Secções do relatório</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {SECCOES_RELATORIO.map((s) => {
+            const on = seccoes.has(s.key);
+            return (
+              <button
+                key={s.key}
+                onClick={() => toggle(s.key)}
+                className="pill"
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 20,
+                  border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
+                  background: on ? COLORS.navy : "transparent",
+                  color: on ? COLORS.onAccent : COLORS.slate,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {on ? "✓ " : "+ "}
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ---- Folha do relatório ---- */}
+      <article className="relFolha" style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 14, padding: "28px 30px 34px", maxWidth: 1000, boxShadow: COLORS.shadow }}>
+        <header style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.08em" }}>Relatório de escola · {nomePeriodo(periodo)}</div>
+            <h2 style={{ margin: "6px 0 4px", fontSize: 26, color: COLORS.navy, letterSpacing: "-0.02em", textWrap: "balance" }}>{escola}</h2>
+            <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
+              {fmtNum(m.alunos)} alunos inscritos · gerado a {geradoEm}
+            </div>
+          </div>
+          {cls && (
+            <Tag label={`${cls.label} · ${m.crescimento > 0 ? "+" : ""}${fmtNum(m.crescimento, 1)}% face à época passada`} color={cls.color} bg={cls.bg} />
+          )}
+        </header>
+
+        {ver("resumo") && (
+          <SeccaoRel titulo="Resumo" nota={comparar ? `Comparação com as outras ${outras.length} escolas no mesmo período` : null}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+              {comparacoes.map((c) => (
+                <KpiRel key={c.key} label={c.label} valor={fmtNum(c.v, c.dec ?? 0)} unidade={c.unidade} comparacao={txtComp(c)} cor={comparar ? corEstado(c.estado) : COLORS.ink} />
+              ))}
+            </div>
+            {comparar && (fortes.length > 0 || fracos.length > 0) && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginTop: 16 }}>
+                {[
+                  ["Pontos fortes", fortes, COLORS.ok],
+                  ["A melhorar", fracos, COLORS.danger],
+                ].map(([t, lista, cor]) => (
+                  <div key={t}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: cor, marginBottom: 6 }}>{t}</div>
+                    {lista.length === 0 ? (
+                      <div style={{ fontSize: 12.5, color: COLORS.slate }}>Nada que se destaque da média.</div>
+                    ) : (
+                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
+                        {lista.map((c) => (
+                          <li key={c.key}>
+                            {c.label}: <strong>{fmtNum(c.v, c.dec ?? 0)}{c.unidade}</strong> contra {fmtNum(c.med, c.dec ?? 0)}
+                            {c.unidade} de média{c.p ? ` (${ordinal(c.p.pos)} de ${c.p.de})` : ""}.
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 16 }}>
+              <Observacoes
+                itens={[
+                  ...observacoesReclamacoes(recl),
+                  ...observacoesAuditorias(constat),
+                  ...inqEscola
+                    .map((i) => ({ i, s: satisfacaoDe(i.perguntas || [], escola) }))
+                    .filter((x) => x.s.pct !== null && x.s.pct < 70)
+                    .map((x) => ({ nivel: "alarme", titulo: `${x.i.edicao}: ${x.s.pct}% de satisfação nesta escola`, texto: `Abaixo dos 70%, com ${x.i.segmentos[escola]} respostas de encarregados da escola.` })),
+                ].slice(0, 8)}
+              />
+            </div>
+          </SeccaoRel>
+        )}
+
+        {ver("reclamacoes") && (
+          <SeccaoRel titulo="Reclamações" nota={`${recl.length} no período`}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+              <KpiRel label="Recebidas" valor={fmtNum(recl.length)} comparacao={`${fmtNum(m.reclPor100, 1)} por 100 alunos`} />
+              <KpiRel label="Em aberto" valor={fmtNum(reclAbertas.length)} cor={reclAbertas.some((r) => r.derivedStatus === "atrasado") ? COLORS.danger : COLORS.ink} comparacao={`${reclAbertas.filter((r) => r.derivedStatus === "atrasado").length} fora do prazo`} />
+              <KpiRel label="Resolvidas no prazo" valor={fmtNum(m.prazo)} unidade="%" comparacao={txtComp(kpi("prazo"))} />
+              <KpiRel label="Tempo médio de resolução" valor={fmtNum(tempoRes)} unidade=" dias" />
+              <KpiRel label="Respostas eficazes" valor={fmtNum(eficazes)} unidade="%" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Por tema</div>
+                <BarrasRel dados={contar(recl, "tema").slice(0, 8)} largura={180} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Por mês</div>
+                {reclMes.length ? (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={reclMes.map((x) => ({ ...x, name: x.name.slice(5) + "/" + x.name.slice(2, 4) }))} margin={{ left: -20, right: 8 }}>
+                      <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                      <Bar dataKey="value" name="Reclamações" fill={COLORS.navySoft} radius={[4, 4, 0, 0]} barSize={18} isAnimationActive={false} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem registos no período.</div>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, margin: "14px 0 6px" }}>Em aberto</div>
+            <TabelaRel
+              colunas={["Nº", "Receção", "Tema", "Gravidade", "Estado", "Prazo"]}
+              vazio="Nenhuma reclamação em aberto."
+              linhas={reclAbertas
+                .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
+                .map((r) => [
+                  String(r.entryNumber).padStart(4, "0"),
+                  fmt(new Date(r.receivedDate + "T00:00:00")),
+                  r.tema || "—",
+                  SEVERITY_META[r.severity]?.label || "—",
+                  <span style={{ color: STATUS_META[r.derivedStatus]?.color, fontWeight: 600 }}>{STATUS_META[r.derivedStatus]?.label}</span>,
+                  fmt(new Date(r.deadline)),
+                ])}
+            />
+          </SeccaoRel>
+        )}
+
+        {ver("auditorias") && (
+          <SeccaoRel titulo="Auditorias" nota={auds[0] ? `Última auditoria a ${fmt(new Date(auds[0].date + "T00:00:00"))}` : "Sem auditorias registadas"}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 14 }}>
+              <KpiRel label="Auditorias no período" valor={fmtNum(audsPeriodo.length)} />
+              {["NCM", "NC", "OM", "AS"].map((c) => (
+                <KpiRel key={c} label={CLASSIFICATION_META[c].label} valor={fmtNum(constat.filter((f) => f.classification === c).length)} cor={c === "NCM" && constat.some((f) => f.classification === "NCM") ? COLORS.danger : COLORS.ink} />
+              ))}
+              <KpiRel label="Resolvidas" valor={fmtNum(pct(constat.filter((f) => f.resolvida).length, constat.length))} unidade="%" comparacao={`eficazes ${fmtNum(pct(constat.filter((f) => f.eficacia === "eficaz").length, constat.filter((f) => f.resolvida).length))}%`} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Constatações por área</div>
+                <BarrasRel dados={contar(constat, "area")} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Por resolver (todas as auditorias)</div>
+                <TabelaRel
+                  colunas={["Classificação", "Área", "Constatação"]}
+                  vazio="Todas as constatações estão resolvidas."
+                  linhas={porResolver
+                    .sort((a, b) => (ordemCls[a.classification] ?? 9) - (ordemCls[b.classification] ?? 9))
+                    .slice(0, 10)
+                    .map((f) => [<strong style={{ color: CLASSIFICATION_META[f.classification]?.color }}>{f.classification}</strong>, f.area || "—", f.description])}
+                />
+              </div>
+            </div>
+          </SeccaoRel>
+        )}
+
+        {ver("inscritos") && (
+          <SeccaoRel titulo="Inscritos e turmas" nota={`${turmas.length} turmas`}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+              <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={epocaAnterior[escola]?.inscritos ? `${fmtNum(epocaAnterior[escola].inscritos)} na época passada` : null} />
+              <KpiRel label="Escolinha" valor={fmtNum(pct(escolinha, masc + fem))} unidade="%" comparacao={`${fmtNum(escolinha)} alunos · ${fmtNum(masc + fem - escolinha)} em competição`} />
+              <KpiRel label="Raparigas" valor={fmtNum(pct(fem, masc + fem))} unidade="%" comparacao={`${fmtNum(fem)} de ${fmtNum(masc + fem)}`} />
+              <KpiRel label="Turmas cheias" valor={fmtNum(cheias.length)} comparacao="95% ou mais da capacidade" cor={cheias.length ? COLORS.warn : COLORS.ink} />
+              <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} cor={vazias.length ? COLORS.warn : COLORS.ink} />
+              {(() => {
+                const pv = preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis: niveis || DEFAULT_NIVEIS, hoje: isoDe(new Date()) });
+                if (pv.insuficiente) return <KpiRel label="Previsão para junho" valor="—" comparacao="Faltam retratos semanais" />;
+                return (
+                  <KpiRel
+                    label="Previsão para junho"
+                    valor={fmtNum(pv.previsao)}
+                    cor={pv.variacao === null ? COLORS.ink : pv.variacao >= 0 ? COLORS.ok : COLORS.danger}
+                    comparacao={`entre ${pv.baixo} e ${pv.alto}${pv.variacao !== null ? ` · ${pv.variacao > 0 ? "+" : ""}${fmtNum(pv.variacao, 1)}% vs época passada` : ""}`}
+                  />
+                );
+              })()}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Evolução semanal</div>
+                {serie.length > 1 ? (
+                  <ResponsiveContainer width="100%" height={190}>
+                    <AreaChart data={serie} margin={{ left: -14, right: 10, top: 6 }}>
+                      <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={Math.max(0, Math.ceil(serie.length / 6) - 1)} />
+                      <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                      <Tooltip content={<DicaGrafico />} />
+                      {epocaAnterior[escola]?.inscritos && <ReferenceLine y={epocaAnterior[escola].inscritos} stroke={COLORS.slate} strokeDasharray="4 4" label={{ value: "Época passada", position: "insideTopLeft", fontSize: 10, fill: COLORS.slate }} />}
+                      <Area type="monotone" dataKey="Inscritos" stroke={COLORS.navy} strokeWidth={2} fill={COLORS.navy} fillOpacity={0.08} isAnimationActive={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: COLORS.slate }}>Faz retratos semanais em Inscritos para ver a evolução.</div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Alunos por escalão</div>
+                <BarrasRel dados={porEscalao} largura={90} />
+              </div>
+            </div>
+            {(cheias.length > 0 || vazias.length > 0) && (
+              <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 10, lineHeight: 1.6 }}>
+                {cheias.length > 0 && (
+                  <div>
+                    <strong>Sem vagas:</strong> {cheias.map((t) => `${t.turma} (${t.n}/${t.cap})`).join(", ")}
+                  </div>
+                )}
+                {vazias.length > 0 && (
+                  <div>
+                    <strong>Com muitas vagas:</strong> {vazias.map((t) => `${t.turma} (${t.n}/${t.cap})`).join(", ")}
+                  </div>
+                )}
+              </div>
+            )}
+          </SeccaoRel>
+        )}
+
+        {ver("movimentos") && (
+          <SeccaoRel titulo="Desistências, experiências e desvinculações">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 14 }}>
+              <KpiRel label="Desistências" valor={fmtNum(nDesist)} comparacao={`${fmtNum(m.desistPct, 1)}% dos alunos`} cor={kpi("desistPct").estado === "pior" && comparar ? COLORS.danger : COLORS.ink} />
+              <KpiRel label="Experiências" valor={fmtNum(somaXp())} comparacao={`${somaXp("sucesso")} converteram · ${somaXp("pendente")} por avaliar`} />
+              <KpiRel label="Conversão" valor={fmtNum(m.conversao)} unidade="%" comparacao={txtComp(kpi("conversao"))} />
+              <KpiRel label="Pedidos de desvinculação" valor={fmtNum(desv.length)} comparacao={`${desv.filter((v) => v.aceite === true).length} aceites · ${desv.filter((v) => v.cedida).length} cedidos`} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Motivos de desistência</div>
+                <BarrasRel dados={contar(desist.map((x) => ({ ...x, __peso: x.n })), "motivo")} largura={190} cor={COLORS.warn} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Clubes de destino</div>
+                <BarrasRel dados={contar(desv, "clubeDestino")} largura={120} />
+              </div>
+            </div>
+          </SeccaoRel>
+        )}
+
+        {ver("satisfacao") && (
+          <SeccaoRel titulo="Satisfação e inquéritos" nota={m.satisfacao !== null ? `Satisfação média de ${m.satisfacao}%` : null}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 4 }}>Inquérito da escola, por categoria</div>
+                <BarrasRel dados={satCategorias} largura={190} sufixo="%" />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Eventos com participantes da escola</div>
+                <TabelaRel
+                  colunas={["Evento", "Respostas", "Satisfação", "NPS"]}
+                  vazio="Nenhum inquérito de evento com esta escola no período."
+                  linhas={inqEscola.map((i) => {
+                    const s = satisfacaoDe(i.perguntas || [], escola);
+                    const n = npsDe([{ perguntas: (i.perguntas || []).map((q) => ({ ...q, contagens: (q.porSegmento || {})[escola] || {} })) }]);
+                    return [i.edicao, i.segmentos[escola], <strong style={{ color: corSatisfacao(s.pct) }}>{s.pct ?? "—"}%</strong>, n ? n.valor : "—"];
+                  })}
+                />
+              </div>
+            </div>
+            {comentarios.length > 0 && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, margin: "14px 0 6px" }}>O que disseram os encarregados ({comentarios.length})</div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {comentarios.slice(0, 8).map((c, i) => (
+                    <div key={i} style={{ fontSize: 12.5, padding: "7px 10px", background: COLORS.paperSunken, borderRadius: 8 }}>
+                      “{c.texto}” <span style={{ color: COLORS.slate, fontSize: 11 }}>· {c.edicao}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </SeccaoRel>
+        )}
+
+        {ver("causas") && (
+          <SeccaoRel titulo="Causa raiz" nota="Reclamações concluídas e constatações resolvidas no período">
+            <PainelCausas titulo=" " itens={itensCausa(recl, audsPeriodo)} />
+          </SeccaoRel>
+        )}
+
+        {ver("sancoes") && (
+          <SeccaoRel titulo="Sanções" nota={`${sanc.length} ocorrência${sanc.length === 1 ? "" : "s"} no período`}>
+            <TabelaRel
+              colunas={["Data", "Envolvido", "Motivo", "Situação"]}
+              vazio="Sem ocorrências disciplinares no período."
+              linhas={sanc
+                .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+                .map((s) => [
+                  fmt(new Date(s.date + "T00:00:00")),
+                  `${(PERSON_TYPE_META[s.personType] || PERSON_TYPE_META.familia).label}: ${nomeOcorrencia(s)}`,
+                  (MOTIVO_META[s.motivo] || MOTIVO_META.outro).label,
+                  s.personType === "elemento_df" ? DF_STAGE_META[s.stage]?.label || "Ocorrência registada" : s.sanctionApplied === true ? s.sanctionType || "Sanção aplicada" : s.sanctionApplied === false ? "Sem sanção" : "Por decidir",
+                ])}
+            />
+          </SeccaoRel>
+        )}
+
+        {ver("notas") && (
+          <SeccaoRel titulo="Notas e conclusões" nota="Ficam guardadas para esta escola e este período">
+            <textarea
+              id="rel-notas"
+              className="relSoEcra"
+              rows={5}
+              value={nota}
+              placeholder="Conclusões, próximos passos, responsáveis…"
+              onChange={(e) => setNota(e.target.value)}
+              onBlur={() => {
+                if ((notas[chaveNota] || "") !== nota) onGuardarNota(chaveNota, nota);
+              }}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.55 }}
+            />
+            <div className="relSoImpressao" style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+              {nota || "—"}
+            </div>
+          </SeccaoRel>
+        )}
+      </article>
+    </div>
+  );
+}
+
+// Banco de Respostas Institucionais por E-mail (Anexo ao Manual de Atendimento).
+// Os campos "[a preencher]" vêm dos espaços em branco do modelo original.
+const RESPOSTAS_ANEXO = [
+  {
+    "id": "a1",
+    "situacao": "O meu filho joga pouco",
+    "assunto": "Esclarecimento sobre a participação desportiva do atleta",
+    "texto": "Antes de mais, agradecemos o seu contacto e a confiança que deposita na Dragon Force e na equipa técnica que acompanha o seu educando.\n\nCompreendemos a preocupação manifestada relativamente ao tempo de utilização do seu filho nas competições, sendo natural que todos os encarregados de educação desejem vê-los participar o maior número de minutos possível.\n\nGostaríamos, contudo, de esclarecer que as decisões relativas à constituição das equipas, convocatórias, tempo de jogo, posições ocupadas em campo e restantes opções técnicas são da exclusiva responsabilidade da equipa técnica, sendo tomadas com base em diversos fatores, designadamente o processo de desenvolvimento do atleta, o seu empenho, assiduidade, evolução técnica, necessidades pedagógicas e objetivos definidos para cada momento da época.\n\nA Dragon Force privilegia uma formação sustentada e equilibrada, procurando que cada atleta evolua ao seu ritmo, num ambiente de aprendizagem, responsabilidade e respeito.\n\nEstamos certos de que o seu educando continuará a beneficiar do trabalho desenvolvido pelos nossos treinadores e que a sua evolução será acompanhada de forma permanente.\n\nPermanecemos naturalmente disponíveis para qualquer esclarecimento adicional relacionado com o seu percurso formativo.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "joga pouco",
+      "tempo de jogo",
+      "minutos",
+      "nao joga",
+      "pouco tempo",
+      "entra pouco"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 1
+  },
+  {
+    "id": "a2",
+    "situacao": "O meu filho foi enquadrado na equipa B",
+    "assunto": "Esclarecimento sobre o enquadramento desportivo do atleta",
+    "texto": "A constituição das equipas é definida pela Coordenação Técnica da Dragon Force, com base em critérios técnicos, pedagógicos e organizacionais. Este processo tem sempre como principais objetivos o desenvolvimento individual de cada atleta e o equilíbrio dos respetivos grupos.\n\nA integração numa equipa A ou B não deve ser entendida como uma avaliação definitiva, nem como uma desvalorização do atleta. Trata-se do enquadramento que a Coordenação Técnica considera mais adequado neste momento, tendo em conta o seu perfil, evolução, necessidades formativas e o contexto competitivo.\n\nImporta ainda esclarecer que estas decisões não são permanentes e podem ser revistas ao longo da época, sempre que a Coordenação Técnica identifique benefícios para o desenvolvimento do atleta.\n\nContinuaremos, naturalmente, a acompanhar de perto a sua evolução, adaptação e bem-estar, mantendo- nos disponíveis para qualquer esclarecimento adicional.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "equipa b",
+      "equipa a",
+      "enquadrado",
+      "enquadramento",
+      "segunda equipa",
+      "descido"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 2
+  },
+  {
+    "id": "a3",
+    "situacao": "O treinador não gosta do meu filho",
+    "assunto": "Esclarecimento relativamente à situação comunicada",
+    "texto": "Agradecemos a mensagem que nos dirigiu.\n\nCompreendemos a preocupação demonstrada relativamente ao acompanhamento do seu educando.\n\nA Dragon Force pauta toda a sua atuação pelos princípios da igualdade de tratamento, imparcialidade, respeito e promoção do desenvolvimento individual de cada atleta.\n\nOs treinadores são orientados para fundamentar todas as decisões em critérios exclusivamente técnicos, pedagógicos e comportamentais, não sendo admissíveis decisões baseadas em preferências pessoais.\n\nCaso considere existirem factos concretos que justifiquem uma análise mais aprofundada, teremos todo o gosto em recolher a informação necessária junto dos intervenientes, garantindo uma apreciação objetiva e imparcial da situação.\n\nA nossa prioridade será sempre assegurar o bem-estar do atleta e a qualidade do processo formativo.\n\nContinuaremos inteiramente disponíveis para prestar qualquer esclarecimento que considere necessário.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "nao gosta",
+      "perseguido",
+      "implica",
+      "antipatia",
+      "trata diferente"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 3
+  },
+  {
+    "id": "a4",
+    "situacao": "Não concordo com a convocatória",
+    "assunto": "Convocatória para competição",
+    "texto": "Agradecemos o seu contacto.\n\nRelativamente à situação apresentada, importa esclarecer que as convocatórias para jogos e torneios constituem uma competência exclusiva da equipa técnica.\n\nNa definição das convocatórias são considerados diversos fatores, nomeadamente a gestão do processo de formação, os objetivos pedagógicos, a evolução individual dos atletas, a assiduidade, o empenho demonstrado, o equilíbrio da equipa e as necessidades específicas de cada competição.\n\nEstas decisões inserem-se na autonomia técnica atribuída aos treinadores, pelo que não são objeto de reapreciação administrativa.\n\nAgradecemos a compreensão e reiteramos o compromisso da Dragon Force em proporcionar um ambiente de aprendizagem justo, equilibrado e orientado para o desenvolvimento de todos os atletas.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "convocatoria",
+      "nao concordo com a convocatoria",
+      "lista de convocados"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 4
+  },
+  {
+    "id": "a5",
+    "situacao": "O treinador gritou com o meu filho",
+    "assunto": "Situação reportada em contexto de treino",
+    "texto": "Agradecemos a confiança demonstrada ao comunicar a situação ocorrida.\n\nA Dragon Force considera que o respeito pela dignidade dos atletas constitui um princípio fundamental da sua missão educativa.\n\nTodos os treinadores são incentivados a manter uma comunicação exigente, mas sempre respeitadora, pedagógica e adequada à idade dos alunos.\n\nPerante a situação descrita, iremos proceder à respetiva análise, ouvindo os intervenientes e recolhendo toda a informação necessária, de forma a compreender o contexto em que ocorreu.\n\nCaso sejam identificadas oportunidades de melhoria ou a necessidade de adoção de medidas internas, as mesmas serão implementadas de acordo com os procedimentos da instituição.\n\nAgradecemos novamente o seu contacto e reiteramos a nossa total disponibilidade.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "gritou",
+      "grita",
+      "berrou",
+      "humilhou",
+      "falou mal",
+      "tom de voz",
+      "agressivo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 5
+  },
+  {
+    "id": "a6",
+    "situacao": "Pedido de reunião porque o atleta joga pouco",
+    "assunto": "Pedido de reunião",
+    "texto": "Agradecemos o seu contacto.\n\nRelativamente ao pedido de reunião apresentado, informamos que as decisões relativas ao tempo de jogo, convocatórias, posições em campo e restantes opções técnicas são da responsabilidade da equipa técnica, integrando o processo pedagógico e formativo desenvolvido pela Dragon Force.\n\nPor esse motivo, estas matérias não são, por norma, objeto de reunião para reapreciação de decisões técnicas.\n\nCaso existam outras situações relacionadas com o bem-estar, integração, comportamento ou desenvolvimento global do atleta, teremos todo o gosto em analisar a situação consigo e, se necessário, agendar uma reunião com o responsável competente.\n\nAgradecemos a compreensão e permanecemos ao dispor.",
+    "capitulo": "Desportivo",
+    "palavras": [
+      "reuniao",
+      "falar com o treinador",
+      "marcar reuniao",
+      "joga pouco"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 6
+  },
+  {
+    "id": "a7",
+    "situacao": "Não existem vagas",
+    "assunto": "Pedido de inscrição",
+    "texto": "Agradecemos o interesse demonstrado na Dragon Force e a confiança que deposita no nosso projeto de formação desportiva.\n\nInformamos que, de momento, o escalão pretendido atingiu o limite de vagas definido para garantir a qualidade do acompanhamento técnico e pedagógico dos atletas.\n\nSempre que exista disponibilidade futura, ou caso seja criada uma vaga, entraremos em contacto pela ordem da lista de espera.\n\nAgradecemos a compreensão e esperamos poder receber o seu educando numa próxima oportunidade.",
+    "capitulo": "Inscrições",
+    "palavras": [
+      "vaga",
+      "vagas",
+      "lista de espera",
+      "turma cheia",
+      "nao ha lugar",
+      "inscricao"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 7
+  },
+  {
+    "id": "a8",
+    "situacao": "Documentação incompleta",
+    "assunto": "Documentação em falta",
+    "texto": "No seguimento do processo de inscrição do seu educando, verificámos que ainda se encontra em falta alguma documentação necessária para concluir o processo administrativo.\n\nSolicitamos, sempre que possível, o envio ou entrega dos seguintes documentos:\n\n• [a preencher]\n\n• [a preencher]\n\nAssim que a documentação estiver completa, procederemos à validação definitiva da inscrição.\n\nPermanecemos inteiramente disponíveis para qualquer esclarecimento.",
+    "capitulo": "Inscrições",
+    "palavras": [
+      "documentacao",
+      "documentos",
+      "documento em falta",
+      "atestado",
+      "cartao de cidadao",
+      "ficha"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 8
+  },
+  {
+    "id": "a9",
+    "situacao": "Pedido de período experimental",
+    "assunto": "Pedido de treino experimental",
+    "texto": "Agradecemos o interesse demonstrado pela Dragon Force.\n\nSempre que existam condições organizativas e técnicas, poderá ser autorizado um período experimental, permitindo ao atleta conhecer a metodologia de treino e integrar temporariamente a equipa.\n\nA data será comunicada oportunamente pela Secretaria em articulação com a Coordenação Técnica.\n\nFicamos ao dispor para qualquer esclarecimento adicional.",
+    "capitulo": "Inscrições",
+    "palavras": [
+      "experimental",
+      "treino experimental",
+      "experimentar",
+      "aula experimental",
+      "treino de experiencia"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 9
+  },
+  {
+    "id": "a10",
+    "situacao": "Mensalidade em atraso",
+    "assunto": "Regularização de mensalidade",
+    "texto": "Esperamos que se encontre bem.\n\nVerificámos que, até à presente data, continua pendente a regularização da mensalidade referente ao mês de [a preencher].\n\nCaso o pagamento já tenha sido efetuado, agradecemos que desconsidere esta comunicação.\n\nCaso contrário, solicitamos a sua regularização logo que possível, evitando eventuais constrangimentos administrativos.\n\nSe existir alguma dificuldade temporária, agradecemos que entre em contacto connosco para podermos analisar a situação.\n\nAgradecemos a colaboração.",
+    "capitulo": "Pagamentos",
+    "palavras": [
+      "mensalidade em atraso",
+      "em atraso",
+      "divida",
+      "pagamento em falta",
+      "regularizar"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 10
+  },
+  {
+    "id": "a11",
+    "situacao": "Pedido de pagamento em prestações",
+    "assunto": "Pedido de plano de pagamento",
+    "texto": "Agradecemos o seu contacto.\n\nCompreendemos a situação exposta e informamos que o seu pedido será analisado pela Direção, tendo em consideração as normas internas da Dragon Force e as circunstâncias apresentadas.\n\nAssim que a análise estiver concluída, entraremos novamente em contacto.\n\nAgradecemos a confiança.",
+    "capitulo": "Pagamentos",
+    "palavras": ["prestacoes", "plano de pagamento", "pagar em partes", "fasear", "faseado", "em tres vezes", "em duas vezes", "em vezes", "dificuldades financeiras", "dificuldades economicas"],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 11
+  },
+  {
+    "id": "a12",
+    "situacao": "Pedido de isenção de mensalidade",
+    "assunto": "Pedido de isenção",
+    "texto": "Agradecemos a mensagem enviada.\n\nTodos os pedidos relacionados com reduções ou isenções de pagamentos são analisados individualmente, tendo em consideração os critérios definidos pela Direção da Dragon Force.\n\nO seu pedido será apreciado e posteriormente comunicaremos a decisão.\n\nAgradecemos a compreensão.",
+    "capitulo": "Pagamentos",
+    "palavras": [
+      "isencao",
+      "isento",
+      "nao pagar",
+      "dispensa de pagamento",
+      "desconto"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 12
+  },
+  {
+    "id": "a13",
+    "situacao": "Pedido de devolução de valores pagos",
+    "assunto": "Pedido de reembolso",
+    "texto": "Acusamos a receção do seu pedido.\n\nO mesmo será analisado de acordo com o Regulamento da Dragon Force e com as condições aplicáveis ao serviço em causa.\n\nApós conclusão da análise, comunicaremos a decisão fundamentada.\n\nPermanecemos ao dispor.",
+    "capitulo": "Pagamentos",
+    "palavras": [
+      "devolucao",
+      "reembolso",
+      "devolver",
+      "valores pagos",
+      "restituicao"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 13
+  },
+  {
+    "id": "a14",
+    "situacao": "Equipamento ainda não chegou",
+    "assunto": "Estado da encomenda do equipamento",
+    "texto": "Agradecemos o seu contacto.\n\nInformamos que a encomenda do equipamento do seu educando se encontra em processamento.\n\nAssim que o material for rececionado nas nossas instalações, entraremos imediatamente em contacto para proceder à respetiva entrega.\n\nPedimos desculpa por qualquer demora que possa ocorrer e agradecemos a compreensão.",
+    "capitulo": "Equipamentos",
+    "palavras": [
+      "equipamento nao chegou",
+      "encomenda",
+      "ainda nao recebeu",
+      "kit",
+      "atraso na entrega",
+      "equipamento de jogo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 14
+  },
+  {
+    "id": "a15",
+    "situacao": "Pedido de troca de tamanho",
+    "assunto": "Troca de equipamento",
+    "texto": "Agradecemos o seu contacto.\n\nIremos verificar a disponibilidade do tamanho solicitado e as condições previstas para a respetiva substituição.\n\nAssim que tivermos essa confirmação, entraremos novamente em contacto.",
+    "capitulo": "Equipamentos",
+    "palavras": [
+      "troca",
+      "tamanho",
+      "trocar",
+      "tamanho errado",
+      "nao serve"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 15
+  },
+  {
+    "id": "a16",
+    "situacao": "Equipamento danificado",
+    "assunto": "Equipamento",
+    "texto": "Lamentamos a situação comunicada.\n\nSolicitamos, sempre que possível, o envio de fotografias do equipamento ou a sua apresentação na Secretaria para que possamos avaliar a situação e verificar a melhor solução.\n\nAssim que a análise estiver concluída, entraremos em contacto.",
+    "capitulo": "Equipamentos",
+    "palavras": ["danificad", "rasgad", "defeito", "estragad", "descos", "furad", "partid"],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 16
+  },
+  {
+    "id": "a17",
+    "situacao": "Cancelamento de treino",
+    "assunto": "Cancelamento de treino",
+    "texto": "Informamos que, por motivos de [a preencher], o treino previsto para o dia [a preencher] não poderá realizar-se.\n\nLamentamos qualquer inconveniente que esta alteração possa causar e agradecemos a compreensão.\n\nQualquer informação adicional será comunicada através dos canais oficiais da Dragon Force.",
+    "capitulo": "Treinos",
+    "palavras": [
+      "cancelamento",
+      "treino cancelado",
+      "cancelaram",
+      "nao houve treino",
+      "chuva"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 17
+  },
+  {
+    "id": "a18",
+    "situacao": "Alteração de horário",
+    "assunto": "Alteração de horário de treino",
+    "texto": "Informamos que, por razões organizativas, o horário do treino do escalão [a preencher] será alterado a partir de [a preencher].\n\nNovo horário:\n\nAgradecemos a compreensão e permanecemos disponíveis para qualquer esclarecimento.",
+    "capitulo": "Treinos",
+    "palavras": [
+      "alteracao de horario",
+      "mudanca de horario",
+      "horario",
+      "mudaram o horario",
+      "sem aviso"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 18
+  },
+  {
+    "id": "a19",
+    "situacao": "Faltas frequentes",
+    "assunto": "Assiduidade aos treinos",
+    "texto": "Esperamos que se encontre bem.\n\nVerificámos que o seu educando tem registado algumas ausências aos treinos.\n\nA assiduidade constitui um fator importante para o processo de aprendizagem, integração no grupo e evolução desportiva.\n\nCaso exista algum motivo que esteja a dificultar a participação, estaremos inteiramente disponíveis para o analisar consigo.\n\nAgradecemos a colaboração.",
+    "capitulo": "Treinos",
+    "palavras": [
+      "faltas",
+      "falta muito",
+      "assiduidade",
+      "faltas frequentes",
+      "nao aparece"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 19
+  },
+  {
+    "id": "a20",
+    "situacao": "O meu filho não foi convocado",
+    "assunto": "Esclarecimento sobre convocatória",
+    "texto": "Agradecemos o seu contacto e a confiança demonstrada ao partilhar a sua preocupação.\n\nCompreendemos que a não convocatória do seu educando possa gerar alguma desilusão, quer para o atleta, quer para a família.\n\nGostaríamos de esclarecer que as convocatórias são definidas pela equipa técnica, tendo em consideração diversos fatores relacionados com o processo de formação, nomeadamente a assiduidade, empenho, evolução, gestão do grupo, objetivos pedagógicos e características da competição.\n\nEstas decisões inserem-se na autonomia técnica dos treinadores e pretendem contribuir para o desenvolvimento global de todos os atletas.\n\nEstamos certos de que o seu educando continuará a trabalhar com dedicação e que surgirão novas oportunidades de participação.\n\nAgradecemos a compreensão e permanecemos disponíveis para qualquer esclarecimento adicional.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "nao foi convocado",
+      "nao convocou",
+      "ficou de fora",
+      "nao foi chamado"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 20
+  },
+  {
+    "id": "a21",
+    "situacao": "O meu filho foi suplente",
+    "assunto": "Participação do atleta em competição",
+    "texto": "Agradecemos o seu contacto.\n\nCompreendemos a preocupação manifestada relativamente à utilização do seu educando.\n\nA definição dos atletas que iniciam cada jogo resulta de uma avaliação técnica efetuada pelo treinador, considerando o momento de desenvolvimento dos atletas, os objetivos pedagógicos e as necessidades específicas da equipa.\n\nAo longo da época, todos os atletas são acompanhados de forma individualizada, procurando proporcionar experiências diversificadas que contribuam para a sua evolução.\n\nAgradecemos a confiança na metodologia de formação da Dragon Force.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "suplente",
+      "banco",
+      "titular",
+      "nao foi titular",
+      "onze inicial"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 21
+  },
+  {
+    "id": "a22",
+    "situacao": "O treinador mudou o meu filho de posição",
+    "assunto": "Esclarecimento sobre posição em campo",
+    "texto": "Agradecemos a sua mensagem.\n\nDurante a formação desportiva é frequente que os atletas sejam utilizados em diferentes posições, permitindo-lhes desenvolver competências técnicas, táticas e cognitivas mais abrangentes.\n\nEstas decisões fazem parte da metodologia de formação da Dragon Force e são tomadas pela equipa técnica em função das características e necessidades de desenvolvimento de cada atleta.\n\nAgradecemos a compreensão e a confiança depositada na nossa equipa técnica.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "posicao",
+      "mudou de posicao",
+      "defesa",
+      "avancado",
+      "lateral",
+      "guarda-redes"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 22
+  },
+  {
+    "id": "a23",
+    "situacao": "O treinador favorece determinados atletas",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos o contacto efetuado.\n\nA Dragon Force rege-se por princípios de igualdade, respeito e imparcialidade.\n\nAs decisões técnicas são tomadas procurando assegurar o desenvolvimento equilibrado dos atletas e não assentam em critérios de natureza pessoal.\n\nA situação comunicada será analisada internamente junto da equipa técnica, garantindo uma apreciação objetiva e imparcial.\n\nAgradecemos a confiança demonstrada ao partilhar esta preocupação.",
+    "capitulo": "Jogos e competição",
+    "palavras": ["favorece", "favoritos", "preferidos", "privilegia", "so joga quem", "so poe a jogar", "filhos dos amigos", "sempre os mesmos", "cunha"],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 23
+  },
+  {
+    "id": "a24",
+    "situacao": "O treinador não cumprimentou os pais",
+    "assunto": "Atendimento da equipa técnica",
+    "texto": "Agradecemos a sua mensagem.\n\nA Dragon Force incentiva todos os colaboradores a manterem uma relação cordial e respeitadora com os Encarregados de Educação.\n\nIremos transmitir a observação efetuada à equipa técnica, reforçando a importância da comunicação e do relacionamento institucional com as famílias.\n\nAgradecemos o contributo para a melhoria contínua dos nossos serviços.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "nao cumprimentou",
+      "cumprimentar",
+      "antipatico",
+      "mal-educado",
+      "nao fala com os pais"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 24
+  },
+  {
+    "id": "a25",
+    "situacao": "O treinador não respondeu ao cumprimento",
+    "assunto": "Comunicação com a equipa técnica",
+    "texto": "Agradecemos a informação transmitida.\n\nÉ possível que, no momento referido, o treinador estivesse concentrado na preparação ou acompanhamento da atividade desportiva.\n\nAinda assim, reforçaremos junto da equipa técnica a importância de manter uma comunicação cordial e próxima com todas as famílias.\n\nObrigado pelo seu contributo.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "nao respondeu ao cumprimento",
+      "ignorou",
+      "cumprimento",
+      "bom dia"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 25
+  },
+  {
+    "id": "a26",
+    "situacao": "Não concordo com as substituições",
+    "assunto": "Esclarecimento sobre decisões técnicas",
+    "texto": "Agradecemos o seu contacto.\n\nAs substituições efetuadas durante uma competição constituem decisões técnicas tomadas em função do desenvolvimento do jogo, dos objetivos pedagógicos definidos e das necessidades da equipa.\n\nA Dragon Force respeita a autonomia dos seus treinadores na gestão destes momentos competitivos.\n\nAgradecemos a compreensão.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "substituicoes",
+      "substituiu",
+      "tirou do jogo",
+      "substituicao",
+      "mudancas no jogo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 26
+  },
+  {
+    "id": "a27",
+    "situacao": "O árbitro prejudicou a equipa",
+    "assunto": "Situação ocorrida durante o jogo",
+    "texto": "Compreendemos a frustração que determinadas decisões de arbitragem possam gerar.\n\nContudo, a Dragon Force promove uma cultura de respeito por todos os agentes desportivos, incluindo árbitros, adversários e dirigentes.\n\nProcuramos transmitir aos nossos atletas que o respeito pelas decisões de arbitragem constitui um valor essencial da prática desportiva.\n\nAgradecemos a compreensão.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "arbitro",
+      "arbitragem",
+      "prejudicou",
+      "penalti mal marcado",
+      "roubados"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 27
+  },
+  {
+    "id": "a28",
+    "situacao": "O treinador discutiu com o árbitro",
+    "assunto": "Situação reportada",
+    "texto": "Agradecemos o seu contacto.\n\nTodas as situações relacionadas com o comportamento dos nossos colaboradores são analisadas internamente.\n\nCaso se confirme qualquer comportamento desconforme com os princípios da Dragon Force, serão adotadas as medidas consideradas adequadas.\n\nObrigado por nos transmitir a situação.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "discutiu com o arbitro",
+      "treinador discutiu",
+      "expulso",
+      "protestou"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 28
+  },
+  {
+    "id": "a29",
+    "situacao": "Não gostei da atitude dos pais da outra equipa",
+    "assunto": "Comportamento do público",
+    "texto": "Lamentamos a situação descrita.\n\nA Dragon Force promove um ambiente de respeito entre todos os intervenientes na atividade desportiva.\n\nSempre que ocorram comportamentos inadequados, procuramos comunicar os factos à organização da competição e às entidades competentes, quando tal se justifique.\n\nAgradecemos a informação prestada.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "pais da outra equipa",
+      "adversario",
+      "bancada",
+      "atitude dos pais",
+      "insultaram",
+      "publico"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 29
+  },
+  {
+    "id": "a30",
+    "situacao": "O jogo terminou muito tarde",
+    "assunto": "Horário da competição",
+    "texto": "Agradecemos o seu contacto.\n\nOs horários das competições são definidos pelas entidades organizadoras, podendo sofrer alterações por motivos alheios à Dragon Force.\n\nSempre que possível, procuramos comunicar antecipadamente qualquer alteração e minimizar os inconvenientes causados às famílias.\n\nAgradecemos a compreensão.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "terminou tarde",
+      "muito tarde",
+      "horario do jogo",
+      "acabou tarde",
+      "hora do jogo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 30
+  },
+  {
+    "id": "a31",
+    "situacao": "O meu filho não teve oportunidade de marcar um penálti",
+    "assunto": "Decisões durante a competição",
+    "texto": "Agradecemos a sua mensagem.\n\nAs decisões tomadas durante o decorrer de um jogo, incluindo a escolha dos atletas para executar bolas paradas ou grandes penalidades, inserem-se na gestão técnica da equipa e são da responsabilidade do treinador.\n\nEstas opções são efetuadas em função do contexto competitivo e dos objetivos definidos para cada momento.\n\nAgradecemos a compreensão e a confiança no trabalho desenvolvido pela nossa equipa técnica.",
+    "capitulo": "Jogos e competição",
+    "palavras": [
+      "penalti",
+      "penalty",
+      "marcar",
+      "grande penalidade",
+      "nao deixaram marcar"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 31
+  },
+  {
+    "id": "a32",
+    "situacao": "Vou escrever nas redes sociais",
+    "assunto": "Acompanhamento da situação comunicada",
+    "texto": "Agradecemos o seu contacto e lamentamos que a situação vivida tenha motivado a sua insatisfação.\n\nA Dragon Force respeita plenamente o direito de todos os Encarregados de Educação expressarem a sua opinião.\n\nNo entanto, acreditamos que as situações são mais eficazmente resolvidas através do diálogo direto e dos canais institucionais, permitindo uma análise rigorosa dos factos e a identificação de soluções adequadas.\n\nPermanecemos inteiramente disponíveis para esclarecer qualquer questão ou analisar consigo a situação apresentada.\n\nO nosso objetivo é sempre encontrar soluções construtivas que contribuam para o bem-estar dos atletas e para uma relação de confiança com as famílias.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "redes sociais",
+      "facebook",
+      "instagram",
+      "publicacao",
+      "expor",
+      "publicar"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 32
+  },
+  {
+    "id": "a33",
+    "situacao": "Vou apresentar uma queixa na Federação",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a sua mensagem.\n\nNaturalmente, qualquer cidadão pode recorrer às entidades que considere competentes.\n\nDa nossa parte, reiteramos a total disponibilidade para prestar todos os esclarecimentos que sejam necessários, colaborando de forma transparente e responsável com qualquer entidade que venha a solicitar informação.\n\nEntretanto, mantemo-nos igualmente disponíveis para analisar diretamente consigo a situação apresentada, procurando um esclarecimento adequado.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "federacao",
+      "fpf",
+      "associacao de futebol",
+      "queixa na federacao"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 33
+  },
+  {
+    "id": "a34",
+    "situacao": "Vou apresentar uma reclamação no Livro de Reclamações",
+    "assunto": "Reclamação apresentada",
+    "texto": "A Dragon Force respeita plenamente o direito dos utentes à apresentação de reclamações através dos mecanismos legalmente previstos.\n\nParalelamente, gostaríamos de manifestar a nossa total disponibilidade para analisar a situação diretamente consigo, procurando esclarecer os factos e, sempre que possível, encontrar uma solução adequada.\n\nTodas as reclamações são objeto de análise cuidada e constituem uma oportunidade para melhorar continuamente os nossos serviços.\n\nAgradecemos o seu contacto.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "livro de reclamacoes",
+      "livro amarelo",
+      "reclamacao formal",
+      "livro"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 34
+  },
+  {
+    "id": "a35",
+    "situacao": "Vou processar a Dragon Force",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a sua comunicação.\n\nA Dragon Force pauta toda a sua atuação pelo cumprimento da legislação aplicável, dos seus regulamentos internos e dos princípios de transparência e boa-fé.\n\nRespeitamos naturalmente todas as decisões que entenda tomar relativamente aos mecanismos legais disponíveis.\n\nContinuamos, contudo, totalmente disponíveis para prestar os esclarecimentos necessários e analisar consigo a situação apresentada, procurando uma solução através do diálogo institucional.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "processar",
+      "tribunal",
+      "advogado",
+      "acao judicial",
+      "processo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 35
+  },
+  {
+    "id": "a36",
+    "situacao": "Vou chamar a Polícia",
+    "assunto": "Situação reportada",
+    "texto": "Lamentamos que a situação descrita tenha originado essa preocupação.\n\nSempre que ocorram factos suscetíveis de intervenção das autoridades competentes, a Dragon Force colaborará integralmente com as mesmas, disponibilizando toda a informação necessária ao respetivo esclarecimento.\n\nMantemo-nos igualmente disponíveis para analisar a situação internamente e prestar todos os esclarecimentos que considere necessários.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "policia",
+      "psp",
+      "gnr",
+      "autoridades",
+      "chamar a policia"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 36
+  },
+  {
+    "id": "a37",
+    "situacao": "Vou retirar o meu filho",
+    "assunto": "Pedido de cancelamento da inscrição",
+    "texto": "Recebemos com pesar a informação relativa à intenção de retirar o seu educando da Dragon Force.\n\nAntes de qualquer decisão definitiva, gostaríamos de manifestar a nossa disponibilidade para analisar consigo as razões que motivam essa intenção, procurando esclarecer eventuais dúvidas ou encontrar soluções que possam corresponder às suas expectativas.\n\nCaso mantenha a decisão, a Secretaria prestará todo o apoio necessário ao cumprimento dos procedimentos administrativos aplicáveis.\n\nAgradecemos a confiança que depositou na Dragon Force durante o período em que integrou o nosso projeto.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "retirar o meu filho",
+      "tirar o filho",
+      "desistir",
+      "sair da dragon force",
+      "cancelar a inscricao",
+      "anular"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 37
+  },
+  {
+    "id": "a38",
+    "situacao": "O treinador é incompetente",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a sua mensagem.\n\nA Dragon Force valoriza o trabalho desenvolvido pelos seus treinadores, os quais exercem funções de acordo com a metodologia definida pela Coordenação Técnica e beneficiam de acompanhamento contínuo.\n\nSempre que sejam comunicadas preocupações relativas ao desempenho de um colaborador, as mesmas são analisadas internamente de forma objetiva e imparcial.\n\nAgradecemos o seu contributo e garantimos que a situação será devidamente apreciada.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "incompetente",
+      "nao sabe treinar",
+      "mau treinador",
+      "incapaz"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 38
+  },
+  {
+    "id": "a39",
+    "situacao": "O Coordenador não faz nada",
+    "assunto": "Situação apresentada",
+    "texto": "Agradecemos a partilha da sua preocupação.\n\nA Coordenação Técnica acompanha regularmente a atividade desenvolvida pelos treinadores e assegura a implementação da metodologia da Dragon Force.\n\nA situação comunicada será analisada de acordo com os procedimentos internos, garantindo uma apreciação rigorosa dos factos apresentados.\n\nAgradecemos a confiança e permanecemos disponíveis para qualquer esclarecimento.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "coordenador nao faz nada",
+      "coordenador",
+      "coordenacao",
+      "ninguem faz nada"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 39
+  },
+  {
+    "id": "a40",
+    "situacao": "Vocês só querem receber mensalidades",
+    "assunto": "Esclarecimento",
+    "texto": "Lamentamos que tenha ficado com essa perceção.\n\nA missão da Dragon Force centra-se na formação desportiva e humana dos seus atletas, procurando proporcionar um serviço de qualidade através de uma equipa técnica qualificada, instalações adequadas e acompanhamento permanente.\n\nAs mensalidades destinam-se a assegurar a continuidade deste projeto educativo e desportivo, permitindo manter as condições necessárias ao seu funcionamento.\n\nPermanecemos naturalmente disponíveis para esclarecer qualquer questão relacionada com este tema.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "so querem receber",
+      "dinheiro",
+      "mensalidades",
+      "negocio",
+      "so pensam no dinheiro"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 40
+  },
+  {
+    "id": "a41",
+    "situacao": "Exijo falar hoje com a Direção",
+    "assunto": "Pedido de reunião",
+    "texto": "Agradecemos o seu contacto.\n\nA Direção procura estar disponível para todos os Encarregados de Educação, conciliando essa disponibilidade com as responsabilidades de gestão da instituição.\n\nSempre que a natureza da situação o justifique, será agendada uma reunião com a maior brevidade possível.\n\nEntretanto, caso seja possível prestar algum esclarecimento através da Secretaria ou da Coordenação Técnica, teremos todo o gosto em fazê-lo.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "direcao",
+      "falar hoje",
+      "exijo",
+      "diretor",
+      "administracao"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 41
+  },
+  {
+    "id": "a42",
+    "situacao": "Quero o contacto pessoal do Diretor",
+    "assunto": "Pedido de contacto",
+    "texto": "Agradecemos o seu contacto.\n\nPor razões de organização interna, proteção de dados e igualdade de tratamento entre todos os Encarregados de Educação, os contactos pessoais dos colaboradores e dirigentes da Dragon Force não são divulgados.\n\nSempre que seja necessária a intervenção da Direção, a Secretaria assegurará o respetivo encaminhamento e o agendamento de uma reunião ou contacto pelos meios institucionais.\n\nAgradecemos a compreensão.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "contacto pessoal",
+      "numero do diretor",
+      "telemovel do diretor",
+      "contacto direto"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 42
+  },
+  {
+    "id": "a43",
+    "situacao": "O meu filho vai mudar para outro clube",
+    "assunto": "Acompanhamento do atleta",
+    "texto": "Recebemos a sua comunicação com respeito pela decisão que entende ser a mais adequada para o percurso do seu educando.\n\nGostaríamos de agradecer a confiança depositada na Dragon Force durante o período em que integrou a nossa Escola.\n\nCaso considere útil, teremos todo o gosto em reunir consigo para recolher o seu feedback, identificar eventuais oportunidades de melhoria e prestar qualquer esclarecimento adicional.\n\nDesejamos ao seu educando os maiores sucessos pessoais, académicos e desportivos.",
+    "capitulo": "Reclamações complexas",
+    "palavras": [
+      "outro clube",
+      "mudar de clube",
+      "vai sair",
+      "transferencia",
+      "sporting",
+      "benfica",
+      "boavista"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 43
+  },
+  {
+    "id": "a44",
+    "situacao": "Alegado comentário racista entre atletas",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos o seu contacto e a confiança demonstrada ao comunicar esta situação.\n\nA Dragon Force encara com a máxima seriedade qualquer alegação relacionada com comportamentos discriminatórios, incluindo comentários de natureza racista, xenófoba ou ofensiva.\n\nA nossa Escola promove um ambiente assente no respeito pela dignidade de todas as pessoas, na igualdade de oportunidades e na inclusão, não tolerando qualquer comportamento que possa colocar em causa estes princípios.\n\nNa sequência da informação recebida, será realizada uma análise interna, ouvindo os intervenientes e recolhendo os elementos necessários para o adequado esclarecimento dos factos.\n\nCaso se confirmem comportamentos incompatíveis com os valores da Dragon Force, serão adotadas as medidas educativas e disciplinares consideradas adequadas, de acordo com o Regulamento Interno e o Código de Conduta.\n\nAgradecemos novamente a comunicação desta situação e permanecemos inteiramente disponíveis para qualquer esclarecimento adicional.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "racista",
+      "racismo",
+      "comentario racista",
+      "cor da pele",
+      "preto"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 44
+  },
+  {
+    "id": "a45",
+    "situacao": "Pai acusa outro Encarregado de Educação de racismo",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a informação que nos transmitiu.\n\nA Dragon Force rejeita qualquer forma de discriminação, incluindo comportamentos relacionados com origem étnica, nacionalidade, cor da pele, religião, sexo, deficiência, orientação sexual ou qualquer outra característica pessoal.\n\nA situação será analisada com imparcialidade, ouvindo todas as partes envolvidas e garantindo o respeito pelos direitos de todos os intervenientes.\n\nO nosso objetivo será sempre promover um ambiente seguro, respeitador e adequado ao desenvolvimento dos atletas.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "acusa de racismo",
+      "outro encarregado",
+      "pai racista",
+      "racismo"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 45
+  },
+  {
+    "id": "a46",
+    "situacao": "Comentários racistas vindos da bancada",
+    "assunto": "Situação ocorrida durante a competição",
+    "texto": "Lamentamos profundamente a situação descrita.\n\nA Dragon Force condena de forma inequívoca qualquer manifestação de racismo, discriminação ou discurso de ódio.\n\nSempre que ocorram comportamentos desta natureza durante atividades desportivas, serão analisados os factos e, quando aplicável, comunicados às entidades organizadoras da competição e às autoridades competentes.\n\nContinuaremos empenhados em promover um ambiente de respeito, inclusão e fair play para todos os participantes.\n\nAgradecemos o seu contacto.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "bancada",
+      "comentarios racistas",
+      "adeptos",
+      "insultos racistas",
+      "publico"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 46
+  },
+  {
+    "id": "a47",
+    "situacao": "Atleta sente-se discriminado por ser estrangeiro",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a confiança demonstrada ao partilhar esta preocupação.\n\nA Dragon Force promove um ambiente inclusivo, onde todos os atletas são tratados com igualdade, respeito e dignidade, independentemente da sua nacionalidade, origem, língua ou cultura.\n\nA situação comunicada será analisada cuidadosamente, procurando compreender o contexto e assegurar que todos os atletas beneficiam de um ambiente seguro e acolhedor.\n\nCaso sejam identificadas situações inadequadas, serão adotadas as medidas educativas e disciplinares previstas nas normas internas da instituição.\n\nPermanecemos inteiramente disponíveis para acompanhar esta situação.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "estrangeiro",
+      "nacionalidade",
+      "imigrante",
+      "brasileiro",
+      "sotaque",
+      "discriminado"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 47
+  },
+  {
+    "id": "a48",
+    "situacao": "Alegação de discriminação por deficiência",
+    "assunto": "Esclarecimento sobre a situação comunicada",
+    "texto": "A Dragon Force agradece o seu contacto.\n\nA nossa Escola compromete-se a promover uma prática desportiva inclusiva e respeitadora das características individuais de cada atleta.\n\nQualquer alegação de tratamento discriminatório é analisada com a máxima atenção, procurando assegurar que todos os alunos beneficiam das mesmas oportunidades de participação e desenvolvimento, dentro das condições técnicas e de segurança aplicáveis.\n\nIremos analisar cuidadosamente a situação comunicada e manteremos o contacto consigo sempre que se revele necessário.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "deficiencia",
+      "necessidades especiais",
+      "autismo",
+      "limitacao",
+      "incapacidade",
+      "inclusao"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 48
+  },
+  {
+    "id": "a49",
+    "situacao": "Alegação de discriminação por religião",
+    "assunto": "Situação comunicada",
+    "texto": "Agradecemos a informação transmitida.\n\nA Dragon Force respeita plenamente a liberdade religiosa e de consciência de todos os seus atletas, colaboradores e famílias.\n\nQualquer situação suscetível de constituir discriminação por motivos religiosos será objeto de análise rigorosa e imparcial, sendo adotadas as medidas adequadas caso se confirmem comportamentos incompatíveis com os valores da instituição.\n\nAgradecemos a confiança demonstrada ao comunicar esta situação.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "religiao",
+      "religioso",
+      "crenca",
+      "muculmano",
+      "ramadao",
+      "fe"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 49
+  },
+  {
+    "id": "a50",
+    "situacao": "Política Institucional de Igualdade",
+    "assunto": "Princípios de Igualdade e Inclusão da Dragon Force",
+    "texto": "A Dragon Force assume o compromisso de proporcionar um ambiente seguro, inclusivo e respeitador para todos os atletas, colaboradores e famílias.\n\nNão é tolerada qualquer forma de discriminação, assédio, intimidação ou violência baseada, entre outros fatores, na origem étnica, cor da pele, nacionalidade, sexo, identidade ou expressão de género, orientação\n\nsexual, religião, deficiência, condição socioeconómica ou qualquer outra característica pessoal protegida pela lei.\n\nSempre que seja comunicada uma situação desta natureza, a mesma será analisada com imparcialidade, confidencialidade e respeito pelos direitos de todos os intervenientes, sendo adotadas as medidas consideradas adequadas.\n\nAcreditamos que o desporto deve constituir um espaço de aprendizagem, respeito, inclusão e desenvolvimento humano.",
+    "capitulo": "Discriminação e inclusão",
+    "palavras": [
+      "igualdade",
+      "discriminacao",
+      "inclusao",
+      "politica",
+      "tratamento igual"
+    ],
+    "temas": [],
+    "origem": "anexo",
+    "modelo": 50
+  }
+];
+
+// Só os modelos do Anexo; o resto a app aprende com as respostas dadas.
+const RESPOSTAS_PADRAO = RESPOSTAS_ANEXO;
+
+// Junta à biblioteca guardada as respostas-padrão que ainda não lá estão
+// (ex.: modelos novos), sem repor as que foram arquivadas.
+function juntarRespostasPadrao(guardadas) {
+  const lista = (Array.isArray(guardadas) ? guardadas : []).filter((x) => x.origem !== "manual");
+  return [...lista, ...RESPOSTAS_PADRAO.filter((d) => !lista.some((x) => x.id === d.id))];
+}
+
+// ======================================================================
+// ---------- Respostas-tipo às reclamações ----------
+// ======================================================================
+// Sugere respostas para uma reclamação aberta a partir de duas fontes:
+// 1) a biblioteca (respostas do Manual e as que forem acrescentadas);
+// 2) respostas dadas no passado a reclamações parecidas.
+// Aprende: cada vez que uma resposta-tipo é usada, o texto dessa reclamação
+// passa a contar como exemplo daquela resposta nas sugestões seguintes.
+
+const PALAVRAS_VAZIAS = new Set(
+  "a o as os um uma uns umas de do da dos das em no na nos nas por pelo pela pelos pelas para com sem sob sobre que se nao sim e ou mas como mais menos muito muita muitos muitas ja ainda so tambem foi era ser esta estao estava este esta isso isto aquele aquela ao aos me mim te ti lhe lhes nos vos eu tu ele ela eles elas meu minha meus minhas seu sua seus suas nosso nossa filho filha educando atleta dragon force porque quando onde qual quais ha tem tinha ter fazer feito fez dia dias vez vezes ter".split(" ")
+);
+
+function tokensResposta(texto) {
+  return normChave(texto)
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 2 && !PALAVRAS_VAZIAS.has(t))
+    .map((t) => t.slice(0, 6));
+}
+
+function vetor(tokens) {
+  const v = {};
+  tokens.forEach((t) => (v[t] = (v[t] || 0) + 1));
+  return v;
+}
+
+function cosseno(a, b) {
+  let num = 0;
+  let na = 0;
+  let nb = 0;
+  Object.entries(a).forEach(([k, x]) => {
+    na += x * x;
+    if (b[k]) num += x * b[k];
+  });
+  Object.values(b).forEach((x) => (nb += x * x));
+  return na && nb ? num / Math.sqrt(na * nb) : 0;
+}
+
+const textoReclamacao = (e) => [e.description, e.context, e.tema].filter(Boolean).join(" ");
+
+function sugerirRespostas(entry, biblioteca, historico) {
+  const texto = normChave(textoReclamacao(entry));
+  const v = vetor(tokensResposta(textoReclamacao(entry)));
+  if (!Object.keys(v).length) return [];
+
+  const daBiblioteca = biblioteca.map((r) => {
+    const palavras = (r.palavras || []).filter((p) => texto.includes(normChave(p)));
+    // Exemplos aprendidos: reclamações a que esta resposta já foi dada.
+    const exemplos = historico.filter((h) => h.respostaTipoId === r.id && h.id !== entry.id);
+    const corpus = [r.situacao, (r.palavras || []).join(" "), ...exemplos.map(textoReclamacao)].join(" ");
+    const sim = cosseno(v, vetor(tokensResposta(corpus)));
+    const temaBonus = entry.tema && (r.temas || []).includes(entry.tema) ? 0.08 : 0;
+    const score = palavras.length * 0.22 + sim * 0.9 + temaBonus + Math.min(exemplos.length, 5) * 0.02;
+    return {
+      tipo: "biblioteca",
+      id: r.id,
+      score,
+      titulo: r.situacao,
+      texto: r.texto,
+      fonte: r.origem === "anexo" ? `Anexo · Modelo ${r.modelo}` : r.origem === "manual" ? `Manual · ${String(r.capitulo || "").split(",")[0]}` : "Biblioteca",
+      assunto: r.assunto || "",
+      origem: r.origem,
+      motivo: palavras.length ? `Reconheceu: ${palavras.slice(0, 3).join(", ")}` : exemplos.length ? `Usada em ${exemplos.length} reclamação(ões) parecida(s)` : "Texto parecido",
+      usos: exemplos.length,
+    };
+  });
+
+  const passadas = historico
+    .filter((h) => h.id !== entry.id && h.status === "concluido" && (h.responseText || "").trim().length >= 40 && h.eficacia !== "ineficaz")
+    .map((h) => {
+      const sim = cosseno(v, vetor(tokensResposta(textoReclamacao(h))));
+      const bonus = (h.tema && h.tema === entry.tema ? 0.1 : 0) + (h.categoria && h.categoria === entry.categoria ? 0.04 : 0) + (h.eficacia === "eficaz" ? 0.05 : 0);
+      return {
+        tipo: "historico",
+        id: h.id,
+        score: sim + bonus,
+        sim,
+        titulo: `Resposta à nº ${String(h.entryNumber).padStart(4, "0")}${h.tema ? ` · ${h.tema}` : ""}`,
+        texto: desembrulharResposta(h.responseText),
+        original: h.responseText,
+        fonte: `Resposta tua anterior${h.eficacia ? ` · ${EFICACIA_META[h.eficacia]?.label.toLowerCase()}` : ""}`,
+        motivo: h.description ? `“${h.description.slice(0, 90)}${h.description.length > 90 ? "…" : ""}”` : "Reclamação parecida",
+        respostaTipoId: h.respostaTipoId || null,
+      };
+    });
+
+  const bib = daBiblioteca.filter((s) => s.score >= 0.3).sort((a, b) => b.score - a.score).slice(0, 3);
+  // Sem repetir: uma resposta antiga que é a mesma resposta-tipo já sugerida não aparece outra vez.
+  const vistos = new Set(bib.map((x) => x.id));
+  const textos = new Set(bib.map((x) => normChave(x.texto)));
+  const hist = passadas
+    .filter((s) => s.sim >= 0.32 && s.score >= 0.35 && !(s.respostaTipoId && vistos.has(s.respostaTipoId)) && !textos.has(normChave(s.texto)))
+    .sort((a, b) => b.score - a.score)
+    .filter((s, i, arr) => arr.findIndex((o) => normChave(o.texto) === normChave(s.texto)) === i)
+    .slice(0, 2);
+  return [...bib, ...hist].sort((a, b) => b.score - a.score);
+}
+
+// Tira a saudação e a despedida de uma resposta antiga, para a reutilizar
+// com o nome e a escola da reclamação atual.
+function desembrulharResposta(texto) {
+  let linhas = String(texto || "").split("\n");
+  if (/^exm[oa]/i.test((linhas[0] || "").trim())) linhas = linhas.slice(1);
+  while (linhas.length && (!linhas[0].trim() || /^agradecemos o seu contacto\.?$/i.test(linhas[0].trim()))) linhas = linhas.slice(1);
+  const fim = linhas.findIndex((l) => /^agradecemos o contacto e permanecemos/i.test(l.trim()) || /^com os melhores cumprimentos/i.test(l.trim()));
+  if (fim >= 0) linhas = linhas.slice(0, fim);
+  return linhas.join("\n").trim();
+}
+
+// Formato dos modelos do Anexo: saudação, texto do modelo e assinatura.
+// Não acrescenta frases: o texto é sempre o do modelo ou o que foi escrito antes.
+function embrulharResposta(texto, entry, origem, assinatura) {
+  const nome = (entry.complainant || "").trim();
+  return [
+    nome ? `Exmo.(a) Sr.(a) ${nome},` : "Exmo.(a) Sr.(a) Encarregado(a) de Educação,",
+    "",
+    texto.trim(),
+    "",
+    "Com os melhores cumprimentos,",
+    "",
+    "Secretaria Dragon Force",
+    ...(assinatura ? [assinatura] : []),
+  ].join("\n");
+}
+
+// Reutiliza uma resposta já dada tal como foi escrita, trocando só o nome na saudação.
+function trocarNomeSaudacao(texto, entry) {
+  const linhas = String(texto || "").split("\n");
+  const nome = (entry.complainant || "").trim();
+  if (nome && /^exm[oa]/i.test((linhas[0] || "").trim())) linhas[0] = `Exmo.(a) Sr.(a) ${nome},`;
+  return linhas.join("\n");
+}
+
+const LS_ASSINATURA = "df-assinatura";
+
+function SugestoesResposta({ entry, biblioteca, historico, onUsar }) {
+  const [aberta, setAberta] = useState(null);
+  const [comMoldura, setComMoldura] = useState(true);
+  const [procurar, setProcurar] = useState(false);
+  const [termo, setTermo] = useState("");
+  const sugestoes = useMemo(() => sugerirRespostas(entry, biblioteca, historico), [entry, biblioteca, historico]);
+
+  const [assinatura, setAssinatura] = useState(() => {
+    try {
+      return window.localStorage.getItem(LS_ASSINATURA) || "";
+    } catch (e) {
+      return "";
+    }
+  });
+  const guardarAssinatura = (v) => {
+    setAssinatura(v);
+    try {
+      window.localStorage.setItem(LS_ASSINATURA, v);
+    } catch (e) {
+      // só nesta sessão
+    }
+  };
+  const usar = (s) => {
+    const orig = s.origem || (biblioteca.find((r) => r.id === (s.tipo === "biblioteca" ? s.id : s.respostaTipoId)) || {}).origem;
+    const final =
+      s.tipo === "historico"
+        ? comMoldura
+          ? trocarNomeSaudacao(s.original || s.texto, entry)
+          : s.texto
+        : comMoldura
+        ? embrulharResposta(s.texto, entry, orig, assinatura.trim())
+        : s.texto;
+    onUsar(final, s.tipo === "biblioteca" ? s.id : s.respostaTipoId || null, s.assunto || "");
+  };
+  const encontrados = termo.trim()
+    ? biblioteca.filter((r) => normChave(`${r.situacao} ${r.texto} ${(r.palavras || []).join(" ")}`).includes(normChave(termo))).slice(0, 8)
+    : biblioteca.slice(0, 8);
+
+  return (
+    <div style={{ marginBottom: 18, padding: "12px 14px", borderRadius: 10, background: COLORS.navyWash, border: `1px solid ${COLORS.rule}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: COLORS.navy, textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 6 }}>
+          <Sparkles size={13} /> Respostas sugeridas
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ fontSize: 11.5, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+            <input type="checkbox" checked={comMoldura} onChange={(e) => setComMoldura(e.target.checked)} /> Com saudação e assinatura
+          </label>
+          {comMoldura && (
+            <input
+              value={assinatura}
+              onChange={(e) => guardarAssinatura(e.target.value)}
+              placeholder="O teu nome (assinatura)"
+              aria-label="Nome para a assinatura"
+              style={{ ...inputStyle, width: 170, padding: "4px 8px", fontSize: 12 }}
+            />
+          )}
+        </div>
+      </div>
+
+      {sugestoes.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5 }}>
+          Nenhum modelo do Anexo se aplica e ainda não respondeste a uma reclamação parecida. Escreve a resposta: fica guardada e passa a ser sugerida em casos semelhantes.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {sugestoes.map((s, i) => {
+            const chave = `${s.tipo}-${s.id}`;
+            const exp = aberta === chave;
+            return (
+              <div key={chave} style={{ background: COLORS.paperRaised, borderRadius: 8, padding: "10px 12px", border: `1px solid ${i === 0 ? COLORS.navySoft : COLORS.rule}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: s.tipo === "historico" ? COLORS.purple : COLORS.navySoft, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      {s.fonte}
+                    </div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 2 }}>{s.titulo}</div>
+                    {s.assunto && <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 2 }}>Assunto: {s.assunto}</div>}
+                    <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 2 }}>
+                      {s.motivo}
+                      {s.texto.includes("[a preencher]") ? " · tem campos a preencher" : ""}
+                    </div>
+                  </div>
+                  <button onClick={() => usar(s)} className="press" style={{ ...primaryBtnStyle, flex: "none", width: "auto", padding: "6px 12px", fontSize: 12.5 }}>
+                    Usar
+                  </button>
+                </div>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: COLORS.ink2,
+                    marginTop: 6,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    ...(exp ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
+                  }}
+                >
+                  {s.texto}
+                </div>
+                <button onClick={() => setAberta(exp ? null : chave)} style={{ ...linkBtnStyle, marginTop: 4, fontSize: 11.5 }}>
+                  {exp ? "Mostrar menos" : "Ler tudo"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button onClick={() => setProcurar((v) => !v)} style={{ ...linkBtnStyle, marginTop: 8, fontSize: 12 }}>
+        {procurar ? "Fechar biblioteca" : "Procurar na biblioteca de respostas"}
+      </button>
+      {procurar && (
+        <div style={{ marginTop: 8 }}>
+          <input value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="Ex: reembolso, convocatória, seguro…" style={inputStyle} aria-label="Procurar resposta-tipo" />
+          <div style={{ display: "grid", gap: 4, marginTop: 6, maxHeight: 220, overflowY: "auto" }}>
+            {encontrados.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => usar({ tipo: "biblioteca", id: r.id, texto: r.texto, assunto: r.assunto, origem: r.origem })}
+                className="rowHover"
+                style={{ textAlign: "left", background: "transparent", border: "none", borderRadius: 6, padding: "7px 8px", cursor: "pointer", color: COLORS.ink, font: "inherit" }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{r.situacao}</div>
+                <div style={{ fontSize: 11.5, color: COLORS.slate, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.texto}</div>
+              </button>
+            ))}
+            {encontrados.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate }}>Nada encontrado.</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Biblioteca de respostas-tipo ----------
+function BibliotecaRespostas({ biblioteca, historico, onGuardar, onRemover, notificar }) {
+  const [termo, setTermo] = useState("");
+  const [editar, setEditar] = useState(null);
+  const [confirmar, setConfirmar] = useState(false);
+
+  const usos = (id) => historico.filter((h) => h.respostaTipoId === id);
+  const lista = biblioteca.filter((r) => !termo.trim() || normChave(`${r.situacao} ${r.texto} ${(r.palavras || []).join(" ")}`).includes(normChave(termo)));
+  const grupoDe = (r) => (r.origem === "anexo" ? `Anexo · ${r.capitulo}` : r.origem === "manual" ? `Manual · ${String(r.capitulo || "").split(",")[0]}` : "Acrescentadas por ti");
+  const grupos = [...new Set(lista.map(grupoDe))].sort((a, b) => (a.startsWith("Acrescentadas") ? -1 : b.startsWith("Acrescentadas") ? 1 : 0));
+
+  // Respostas dadas que ainda não estão na biblioteca: candidatas a resposta-tipo.
+  const candidatas = historico
+    .filter((h) => h.status === "concluido" && h.eficacia === "eficaz" && !h.respostaTipoId && (h.responseText || "").trim().length >= 60)
+    .filter((h) => !biblioteca.some((r) => normChave(r.texto) === normChave(desembrulharResposta(h.responseText))))
+    .reverse()
+    .filter((h, i, arr) => arr.findIndex((o) => normChave(desembrulharResposta(o.responseText)) === normChave(desembrulharResposta(h.responseText))) === i)
+    .slice(0, 5);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ position: "relative", flex: "1 1 260px", maxWidth: 420 }}>
+          <Search size={14} color={COLORS.slate} style={{ position: "absolute", left: 10, top: 11 }} />
+          <input value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="Procurar respostas…" style={{ ...inputStyle, paddingLeft: 30 }} aria-label="Procurar respostas-tipo" />
+        </div>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => setEditar({ id: `r_${Date.now()}`, situacao: "", texto: "", palavras: [], temas: [], origem: "propria", novo: true })}
+          className="press"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: COLORS.navy, color: COLORS.onAccent, border: "none", borderRadius: 8, padding: "9px 14px", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}
+        >
+          <Plus size={15} /> Nova resposta-tipo
+        </button>
+      </div>
+
+      <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 16, lineHeight: 1.55, maxWidth: 760 }}>
+        Os {biblioteca.filter((r) => r.origem === "anexo").length} modelos de e-mail do Anexo{biblioteca.some((r) => r.origem !== "anexo") ? " e as respostas que acrescentaste" : ""}. São sugeridos nas reclamações abertas. Quando um modelo não serve tal como está, adapta-o ou escreve a tua resposta: o texto que deres fica como exemplo e passa a ser sugerido em casos parecidos.
+      </div>
+
+      {candidatas.length > 0 && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Respostas tuas, com eficácia, que podes juntar à biblioteca</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {candidatas.map((h) => (
+              <div key={h.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between", padding: "8px 10px", background: COLORS.paperSunken, borderRadius: 8 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                    Nº {String(h.entryNumber).padStart(4, "0")} · {h.tema || "sem tema"}
+                  </div>
+                  <div style={{ fontSize: 12, color: COLORS.slate, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{h.responseText}</div>
+                </div>
+                <button
+                  onClick={() => setEditar({ id: `r_${Date.now()}`, situacao: h.description || "", texto: desembrulharResposta(h.responseText), palavras: [], temas: h.tema ? [h.tema] : [], origem: "propria", novo: true })}
+                  style={{ ...secondaryBtnStyle, flex: "none", padding: "6px 10px", fontSize: 12 }}
+                >
+                  Acrescentar
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {grupos.map((g) => (
+        <div key={g} style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: COLORS.navy, marginBottom: 8 }}>{g}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
+            {lista
+              .filter((r) => grupoDe(r) === g)
+              .map((r) => {
+                const u = usos(r.id);
+                const efic = u.filter((h) => h.eficacia === "eficaz").length;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      setConfirmar(false);
+                      setEditar(r);
+                    }}
+                    className="liftable"
+                    style={{ ...panelStyle, textAlign: "left", cursor: "pointer", font: "inherit", color: COLORS.ink, padding: "12px 14px" }}
+                  >
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>“{r.situacao}”</div>
+                    {r.assunto && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 2 }}>Assunto: {r.assunto}</div>}
+                    <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 4, lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.texto}</div>
+                    <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>
+                      {u.length ? `Usada ${u.length}× · ${efic} eficaz${efic === 1 ? "" : "es"}` : "Ainda não usada"}
+                      {(r.palavras || []).length ? ` · ${r.palavras.slice(0, 3).join(", ")}` : ""}
+                    </div>
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      ))}
+
+      {editar && (
+        <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={() => setEditar(null)}>
+          <div
+            className="sheet"
+            style={{ width: "min(620px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{editar.novo ? "Nova resposta-tipo" : "Editar resposta-tipo"}</h2>
+              <button onClick={() => setEditar(null)} style={iconBtnStyle}>
+                <X size={18} />
+              </button>
+            </div>
+            <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rt-situacao">
+              Situação (o que o encarregado diz)
+            </label>
+            <input id="rt-situacao" value={editar.situacao} onChange={(e) => setEditar((x) => ({ ...x, situacao: e.target.value }))} placeholder="Ex: O meu filho joga pouco" style={inputStyle} />
+            <label style={labelStyle} htmlFor="rt-assunto">
+              Assunto do e-mail
+            </label>
+            <input id="rt-assunto" value={editar.assunto || ""} onChange={(e) => setEditar((x) => ({ ...x, assunto: e.target.value }))} placeholder="Ex: Esclarecimento sobre convocatória" style={inputStyle} />
+            <label style={labelStyle} htmlFor="rt-texto">
+              Resposta (sem saudação nem assinatura)
+            </label>
+            <textarea id="rt-texto" rows={7} value={editar.texto} onChange={(e) => setEditar((x) => ({ ...x, texto: e.target.value }))} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.55 }} />
+            <label style={labelStyle} htmlFor="rt-palavras">
+              Palavras-chave (separadas por vírgula)
+            </label>
+            <input
+              id="rt-palavras"
+              value={(editar.palavras || []).join(", ")}
+              onChange={(e) => setEditar((x) => ({ ...x, palavras: e.target.value.split(",").map((p) => p.trim()).filter(Boolean) }))}
+              placeholder="Ex: tempo de jogo, minutos, banco"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>Quando aparecem no texto da reclamação, esta resposta sobe nas sugestões.</div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20, alignItems: "center", flexWrap: "wrap" }}>
+              {!editar.novo && (
+                <button
+                  onClick={() => {
+                    if (!confirmar) return setConfirmar(true);
+                    onRemover(editar.id);
+                    setEditar(null);
+                    notificar("Resposta-tipo apagada.", "aviso");
+                  }}
+                  style={{ ...secondaryBtnStyle, flex: "none", color: COLORS.danger, borderColor: confirmar ? COLORS.danger : COLORS.rule }}
+                >
+                  {confirmar ? "Confirmar: apagar" : "Apagar"}
+                </button>
+              )}
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setEditar(null)} style={{ ...secondaryBtnStyle, flex: "none" }}>
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (!editar.situacao.trim() || !editar.texto.trim()) return notificar("Preenche a situação e a resposta.", "aviso");
+                  const { novo, ...r } = editar;
+                  onGuardar({ ...r, situacao: r.situacao.trim(), texto: r.texto.trim() });
+                  setEditar(null);
+                  notificar(novo ? "Resposta-tipo acrescentada." : "Resposta-tipo atualizada.");
+                }}
+                style={{ ...primaryBtnStyle, flex: "none", padding: "10px 18px" }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ======================================================================
+// ---------- Comparação entre épocas ----------
+// ======================================================================
+// Painel reutilizável: escolhe duas épocas e mostra cada métrica lado a lado.
+// Com a época atual em curso compara, por defeito, até à mesma data em ambas
+// (ex.: 1 jul–2 out de cada época), para não comparar meia época com uma inteira.
+
+const inicioEpoca = (ep) => `${String(ep).slice(0, 4)}-07-01`;
+
+// Data limite para a época `ep` quando se compara "até à mesma data".
+function limiteEpoca(ep, epAtual) {
+  const hoje = new Date();
+  const ini = new Date(inicioEpoca(epAtual) + "T00:00:00");
+  const dias = Math.floor((hoje - ini) / 86400000);
+  const d = new Date(inicioEpoca(ep) + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+// Filtra uma lista por época (pela data indicada) e, opcionalmente, até ao limite.
+function naEpoca(lista, campoData, ep, limite) {
+  return lista.filter((x) => {
+    const d = String(typeof campoData === "function" ? campoData(x) : x[campoData] || "").slice(0, 10);
+    if (!d || epocaDe(d) !== ep) return false;
+    return !limite || d <= limite;
+  });
+}
+
+function ComparacaoEpocas({ titulo, epocas, metricas, calcular, nota }) {
+  const epAtual = epocaDe(new Date().toISOString().slice(0, 10));
+  const lista = [...new Set([epAtual, ...epocas])].filter(Boolean).sort().reverse();
+  const [a, setA] = useState(lista[0]);
+  const [b, setB] = useState(lista[1] || lista[0]);
+  const [mesmaData, setMesmaData] = useState(true);
+  const [aberto, setAberto] = useState(true);
+
+  if (lista.length < 2) return null;
+  const parcial = mesmaData && a === epAtual;
+  const vA = calcular(a, parcial ? limiteEpoca(a, epAtual) : null);
+  const vB = calcular(b, parcial ? limiteEpoca(b, epAtual) : null);
+  const limTxt = parcial ? new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long" }).format(new Date(limiteEpoca(a, epAtual) + "T00:00:00")) : null;
+  const sel = { ...inputStyle, width: "auto", padding: "6px 8px", fontSize: 12.5 };
+
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button onClick={() => setAberto((v) => !v)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", ...panelTitle, marginBottom: 0, display: "flex", alignItems: "center", gap: 6 }} aria-expanded={aberto}>
+          <span style={{ display: "inline-block", transform: aberto ? "rotate(90deg)" : "none", transition: "transform 160ms ease" }}>›</span>
+          {titulo || "Comparação entre épocas"}
+        </button>
+        <div style={{ flex: 1 }} />
+        {aberto && (
+          <>
+            <select value={a} onChange={(e) => setA(e.target.value)} style={sel} aria-label="Época A">
+              {lista.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 12, color: COLORS.slate }}>vs</span>
+            <select value={b} onChange={(e) => setB(e.target.value)} style={sel} aria-label="Época B">
+              {lista.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+            {a === epAtual && (
+              <label style={{ fontSize: 12, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                <input type="checkbox" checked={mesmaData} onChange={(e) => setMesmaData(e.target.checked)} /> Até à mesma data
+              </label>
+            )}
+          </>
+        )}
+      </div>
+      {aberto && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 12 }}>
+            {metricas.map((m) => {
+              const x = vA[m.key];
+              const y = vB[m.key];
+              const temAmbos = x !== null && x !== undefined && y !== null && y !== undefined && !isNaN(x) && !isNaN(y);
+              const dif = temAmbos ? x - y : null;
+              const relativo = m.unidade === "%" || m.unidade === " p.p." ? null : temAmbos && y ? Math.round(((x - y) / Math.abs(y)) * 100) : null;
+              const bom = dif === null || dif === 0 || !m.melhor ? null : m.melhor === "alto" ? dif > 0 : dif < 0;
+              const cor = bom === null ? COLORS.slate : bom ? COLORS.ok : COLORS.danger;
+              const f = (v) => (v === null || v === undefined || isNaN(v) ? "—" : `${Number(v).toLocaleString("pt-PT", { maximumFractionDigits: m.dec ?? 0 })}${m.unidade || ""}`);
+              return (
+                <div key={m.key} style={{ padding: "10px 12px", borderRadius: 10, background: COLORS.paperSunken }}>
+                  <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 500 }}>{m.label}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+                    <span style={{ fontSize: 20, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{f(x)}</span>
+                    <span style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>vs {f(y)}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: cor, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                    {dif === null
+                      ? "Sem comparação"
+                      : dif === 0
+                      ? "Igual"
+                      : `${dif > 0 ? "▲" : "▼"} ${Math.abs(dif).toLocaleString("pt-PT", { maximumFractionDigits: m.dec ?? 0 })}${m.unidade === "%" ? " p.p." : m.unidade || ""}${relativo !== null ? ` (${relativo > 0 ? "+" : ""}${relativo}%)` : ""}`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10 }}>
+            {parcial ? `Época ${a} até ${limTxt} comparada com o mesmo período de ${b}.` : `Épocas ${a} e ${b} completas.`}
+            {nota ? ` ${nota}` : ""}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ======================================================================
+// ---------- Hoje: página inicial ----------
+// ======================================================================
+// Junta o que precisa de atenção hoje e nos próximos 7 dias. Cada área da
+// app contribui com uma "fonte" que devolve itens; para acrescentar uma área
+// nova basta juntar mais uma fonte a FONTES_HOJE.
+
+const DIAS_SEMANA_CURTO = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function diasEntre(aISO, bISO) {
+  return Math.round((new Date(bISO + "T00:00:00") - new Date(aISO + "T00:00:00")) / 86400000);
+}
+
+// Cada fonte recebe o contexto e devolve itens:
+// { id, area, quando: "atraso" | "hoje" | "semana", data, nivel, titulo, detalhe, abrir }
+const FONTES_HOJE = [
+  // Reclamações: fora do prazo, prazo hoje, prazo nos próximos 7 dias, por iniciar há dias.
+  (c) =>
+    c.reclamacoes
+      .filter((e) => e.derivedStatus !== "concluido")
+      .map((e) => {
+        const prazo = isoDe(new Date(e.deadline));
+        const d = diasEntre(c.hoje, prazo);
+        const num = `Nº ${String(e.entryNumber).padStart(4, "0")}`;
+        const base = { id: `r-${e.id}`, area: "Reclamações", data: prazo, abrir: () => c.abrirReclamacao(e) };
+        if (d < 0) return { ...base, quando: "atraso", nivel: "alarme", titulo: `${num} fora do prazo há ${-d} dia${d === -1 ? "" : "s"}`, detalhe: `${e.complainant} · ${e.school || "sem escola"} · ${e.tema || "sem tema"}` };
+        if (d === 0) return { ...base, quando: "hoje", nivel: "alarme", titulo: `${num}: o prazo termina hoje`, detalhe: `${e.complainant} · ${e.school || "sem escola"}` };
+        if (d <= 7) return { ...base, quando: "semana", nivel: e.status === "por_pegar" ? "atencao" : "info", titulo: `${num}: prazo a ${fmt(new Date(e.deadline))}`, detalhe: `${e.status === "por_pegar" ? "Ainda por iniciar · " : ""}${e.complainant} · ${e.school || "sem escola"}` };
+        return null;
+      })
+      .filter(Boolean),
+
+  // Reclamações recebidas há 2+ dias e ainda não iniciadas.
+  (c) =>
+    c.reclamacoes
+      .filter((e) => e.status === "por_pegar" && e.derivedStatus !== "atrasado" && diasEntre(e.receivedDate, c.hoje) >= 2 && diasEntre(c.hoje, isoDe(new Date(e.deadline))) > 7)
+      .map((e) => ({
+        id: `ri-${e.id}`,
+        area: "Reclamações",
+        quando: "hoje",
+        data: c.hoje,
+        nivel: "atencao",
+        titulo: `Nº ${String(e.entryNumber).padStart(4, "0")} por iniciar há ${diasEntre(e.receivedDate, c.hoje)} dias`,
+        detalhe: `${e.complainant} · ${e.school || "sem escola"}`,
+        abrir: () => c.abrirReclamacao(e),
+      })),
+
+  // Cronograma de inquéritos: envios atrasados, de hoje e da semana; eventos a decorrer.
+  (c) =>
+    c.plano.flatMap((p) => {
+      const envio = dataEnvioPlano(p, c.regrasEnvio);
+      const nome = [p.evento, p.edicao].filter(Boolean).join(" · ");
+      const out = [];
+      if (envio && p.estado === "Por enviar") {
+        const d = diasEntre(c.hoje, envio);
+        const base = { id: `pl-${p.id}`, area: "Inquéritos", data: envio, abrir: () => c.irPara("inqueritos") };
+        if (d < 0) out.push({ ...base, quando: "atraso", nivel: "alarme", titulo: `Inquérito por enviar: ${nome}`, detalhe: `Devia ter saído a ${fmt(new Date(envio + "T00:00:00"))}${p.responsavel ? ` · ${p.responsavel}` : ""}` });
+        else if (d === 0) out.push({ ...base, quando: "hoje", nivel: "atencao", titulo: `Enviar hoje o inquérito: ${nome}`, detalhe: `${p.publico || "Público por definir"}${p.responsavel ? ` · ${p.responsavel}` : ""}` });
+        else if (d <= 7) out.push({ ...base, quando: "semana", nivel: "info", titulo: `Enviar inquérito: ${nome}`, detalhe: `${p.publico || "Público por definir"}${p.responsavel ? ` · ${p.responsavel}` : ""}` });
+      }
+      if (p.estado === "Enviado" && envio && diasEntre(envio, c.hoje) > 14) {
+        out.push({ id: `plf-${p.id}`, area: "Inquéritos", quando: "hoje", data: c.hoje, nivel: "atencao", titulo: `Fechar o inquérito: ${nome}`, detalhe: `Enviado há ${diasEntre(envio, c.hoje)} dias. Fecha e importa os resultados.`, abrir: () => c.irPara("inqueritos") });
+      } else if (p.estado === "Enviado") {
+        out.push({ id: `plc-${p.id}`, area: "Inquéritos", quando: "semana", data: null, nivel: "info", titulo: `A recolher respostas: ${nome}`, detalhe: `${envio ? `Enviado a ${fmt(new Date(envio + "T00:00:00"))}` : "Enviado"}${p.inscritos ? ` · ${p.inscritos} inscritos` : ""}`, abrir: () => c.irPara("inqueritos") });
+      }
+      if (p.estado === "Fechado" && !p.inqueritoId) {
+        out.push({ id: `pla-${p.id}`, area: "Inquéritos", quando: "hoje", data: c.hoje, nivel: "atencao", titulo: `Analisar o inquérito: ${nome}`, detalhe: "Fechado. Importa as respostas para entrarem na análise.", abrir: () => c.irPara("inqueritos") });
+      }
+      if (p.inicio) {
+        const di = diasEntre(c.hoje, p.inicio);
+        const df = diasEntre(c.hoje, p.fim || p.inicio);
+        if (di <= 0 && df >= 0) out.push({ id: `ev-${p.id}`, area: "Eventos", quando: "hoje", data: c.hoje, nivel: "info", titulo: `A decorrer: ${nome}`, detalhe: p.fim && p.fim !== p.inicio ? `Até ${fmt(new Date(p.fim + "T00:00:00"))}` : "Hoje", abrir: () => c.irPara("inqueritos") });
+        else if (di > 0 && di <= 7) out.push({ id: `ev-${p.id}`, area: "Eventos", quando: "semana", data: p.inicio, nivel: "info", titulo: `Evento: ${nome}`, detalhe: p.publico || "", abrir: () => c.irPara("inqueritos") });
+      }
+      return out;
+    }),
+
+  // Auditorias: não conformidades maiores em aberto.
+  (c) => {
+    const ncm = c.audits.flatMap((a) => (a.findings || []).filter((f) => f.classification === "NCM" && !f.resolvida).map((f) => ({ ...f, escola: a.school, data: a.date })));
+    if (!ncm.length) return [];
+    return [
+      {
+        id: "ncm",
+        area: "Auditorias",
+        quando: "hoje",
+        data: c.hoje,
+        nivel: "alarme",
+        titulo: `${ncm.length} não conformidade${ncm.length === 1 ? "" : "s"} maior${ncm.length === 1 ? "" : "es"} por resolver`,
+        detalhe: [...new Set(ncm.map((f) => f.escola))].join(", "),
+        abrir: () => c.irPara("auditorias"),
+      },
+    ];
+  },
+
+  // Experiências por avaliar há mais de 7 dias.
+  (c) => {
+    const pend = c.experiencias.filter((x) => x.resultado === "pendente" && x.data && diasEntre(x.data, c.hoje) > 7);
+    if (!pend.length) return [];
+    const n = pend.reduce((s, x) => s + x.n, 0);
+    return [
+      {
+        id: "xp",
+        area: "Inscritos",
+        quando: "hoje",
+        data: c.hoje,
+        nivel: "atencao",
+        titulo: `${n} experiência${n === 1 ? "" : "s"} por avaliar há mais de uma semana`,
+        detalhe: [...new Set(pend.map((x) => x.escola))].join(", "),
+        abrir: () => c.irPara("inscritos"),
+      },
+    ];
+  },
+
+  // Retrato semanal de inscritos ainda não feito esta semana.
+  (c) => {
+    if (!c.turmasAlunos.length) return [];
+    const semana = semanaISO(new Date());
+    const feito = Object.values(c.inscritos).some((l) => (l || []).some((r) => r.semana === semana));
+    if (feito) return [];
+    return [{ id: "retrato", area: "Inscritos", quando: "semana", data: c.hoje, nivel: "info", titulo: "Fazer o retrato semanal de inscritos", detalhe: `Semana ${semanaLabel(semana)} ainda sem registo`, abrir: () => c.irPara("inscritos") }];
+  },
+
+  // Pedidos de desvinculação ainda sem decisão.
+  (c) =>
+    (c.desvinculacoes || [])
+      .filter((v) => v.aceite === null || v.aceite === undefined)
+      .map((v) => ({
+        id: `dv-${v.id}`,
+        area: "Inscritos",
+        quando: "hoje",
+        data: c.hoje,
+        nivel: "atencao",
+        titulo: `Desvinculação por decidir: ${v.escola}`,
+        detalhe: `${v.quemPediu}${v.clubeDestino ? ` · ${v.clubeDestino}` : ""} · pedido a ${fmt(new Date(v.data + "T00:00:00"))}`,
+        abrir: () => c.irPara("inscritos"),
+      })),
+
+  // Experiências marcadas para hoje ou para os próximos dias.
+  (c) =>
+    c.experiencias
+      .filter((x) => x.resultado === "pendente" && x.data && diasEntre(c.hoje, x.data) >= 0 && diasEntre(c.hoje, x.data) <= 7)
+      .map((x) => ({
+        id: `xpf-${x.id}`,
+        area: "Inscritos",
+        quando: x.data === c.hoje ? "hoje" : "semana",
+        data: x.data,
+        nivel: "info",
+        titulo: `Experiência: ${x.n} atleta${x.n === 1 ? "" : "s"} em ${x.turma}`,
+        detalhe: x.escola,
+        abrir: () => c.irPara("inscritos"),
+      })),
+
+  // Previsão de fim de época abaixo da época passada.
+  (c) =>
+    observacoesPrevisao(previsoesEscolas({ escolas: c.escolas || [], inscritos: c.inscritos, epocaAnterior: c.epocaAnterior || {}, experiencias: c.experiencias, turmasAlunos: c.turmasAlunos, hoje: c.hoje })).map((o, k) => ({
+      id: `prev-${k}`,
+      area: "Inscritos",
+      quando: "semana",
+      data: null,
+      nivel: o.nivel,
+      titulo: o.titulo,
+      detalhe: o.texto,
+      abrir: () => c.irPara("inscritos"),
+    })),
+
+  // Sanções por decidir.
+  (c) =>
+    c.sanctions
+      .filter((s) => (s.personType === "elemento_df" ? !String(s.stage || "").startsWith("decisao") : s.sanctionApplied === null || s.sanctionApplied === undefined))
+      .map((s) => ({
+        id: `s-${s.id}`,
+        area: "Sanções",
+        quando: "hoje",
+        data: c.hoje,
+        nivel: s.motivo === "agressao" || s.motivo === "ameacas" ? "alarme" : "atencao",
+        titulo: `Ocorrência por decidir: ${nomeOcorrencia(s)}`,
+        detalhe: `${(MOTIVO_META[s.motivo] || MOTIVO_META.outro).label} · ${s.school || "sem escola"} · ${fmt(new Date(s.date + "T00:00:00"))}`,
+        abrir: () => c.irPara("sancoes"),
+      })),
+];
+
+function semanaISO(d) {
+  const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dia = x.getUTCDay() || 7;
+  x.setUTCDate(x.getUTCDate() + 4 - dia);
+  const ini = new Date(Date.UTC(x.getUTCFullYear(), 0, 1));
+  const sem = Math.ceil(((x - ini) / 86400000 + 1) / 7);
+  return `${x.getUTCFullYear()}-W${String(sem).padStart(2, "0")}`;
+}
+
+const COR_AREA = () => ({
+  Reclamações: COLORS.danger,
+  Inquéritos: COLORS.purple,
+  Eventos: COLORS.progress,
+  Auditorias: COLORS.warn,
+  Inscritos: COLORS.ok,
+  Sanções: COLORS.navySoft,
+});
+
+function ItemHoje({ it }) {
+  const cor = it.nivel === "alarme" ? COLORS.danger : it.nivel === "atencao" ? COLORS.warn : COLORS.navySoft;
+  return (
+    <button
+      onClick={it.abrir}
+      className="rowHover"
+      style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 8, padding: "9px 10px", cursor: "pointer", color: COLORS.ink, font: "inherit" }}
+    >
+      <span style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: cor, flex: "none" }} aria-hidden="true" />
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{it.titulo}</span>
+        {it.detalhe && <span style={{ display: "block", fontSize: 12, color: COLORS.slate, marginTop: 2 }}>{it.detalhe}</span>}
+      </span>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: COR_AREA()[it.area] || COLORS.slate, textTransform: "uppercase", letterSpacing: "0.04em", flex: "none", marginTop: 3 }}>{it.area}</span>
+    </button>
+  );
+}
+
+function HojePage(props) {
+  const hoje = isoDe(new Date());
+  const ctx = { ...props, hoje };
+  const itens = FONTES_HOJE.flatMap((f) => {
+    try {
+      return f(ctx) || [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const ordemNivel = { alarme: 0, atencao: 1, info: 2 };
+  const atrasos = itens.filter((i) => i.quando === "atraso").sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  const deHoje = itens.filter((i) => i.quando === "hoje").sort((a, b) => ordemNivel[a.nivel] - ordemNivel[b.nivel]);
+  const semana = itens.filter((i) => i.quando === "semana").sort((a, b) => String(a.data).localeCompare(String(b.data)));
+
+  // Próximos 7 dias, um bloco por dia com itens.
+  const dias = Array.from({ length: 7 }, (_, k) => {
+    const d = new Date();
+    d.setDate(d.getDate() + k + 1);
+    return isoDe(d);
+  });
+
+  // Números da semana: últimos 7 dias contra os 7 anteriores.
+  const entre = (d, a, b) => d && d >= a && d <= b;
+  const menos = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return isoDe(d);
+  };
+  const recebidas7 = props.reclamacoes.filter((e) => entre(e.receivedDate, menos(6), hoje)).length;
+  const recebidasAnt = props.reclamacoes.filter((e) => entre(e.receivedDate, menos(13), menos(7))).length;
+  const concluidas7 = props.reclamacoes.filter((e) => e.resolvedDate && entre(isoDe(new Date(e.resolvedDate)), menos(6), hoje)).length;
+  const desist7 = props.desistencias.filter((x) => entre(x.data, menos(6), hoje)).reduce((n, x) => n + x.n, 0);
+  const xp7 = props.experiencias.filter((x) => entre(x.data, menos(6), hoje)).reduce((n, x) => n + x.n, 0);
+
+  const dataLonga = new Intl.DateTimeFormat("pt-PT", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
+
+  const bloco = (titulo, lista, vazio, destaque) => (
+    <div style={{ ...panelStyle, padding: "14px 10px 10px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 6px", marginBottom: 6 }}>
+        <div style={{ ...panelTitle, marginBottom: 0, color: destaque || COLORS.ink }}>{titulo}</div>
+        <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{lista.length}</div>
+      </div>
+      {lista.length === 0 ? <div style={{ fontSize: 12.5, color: COLORS.slate, padding: "8px 6px 10px" }}>{vazio}</div> : lista.map((it) => <ItemHoje key={it.id} it={it} />)}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ marginBottom: 18 }}>
+        <h2 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.02em", color: COLORS.ink }}>{dataLonga.charAt(0).toUpperCase() + dataLonga.slice(1)}</h2>
+        <div style={{ fontSize: 14, color: COLORS.ink2, marginTop: 4 }}>
+          {atrasos.length + deHoje.length === 0 ? "Nada urgente para hoje." : `${atrasos.length + deHoje.length} ${atrasos.length + deHoje.length === 1 ? "assunto" : "assuntos"} para tratar hoje.`}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <StatCard label="Em atraso" value={atrasos.length} color={atrasos.length ? COLORS.danger : COLORS.ok} subtitle={atrasos.length ? "Prazos e envios já ultrapassados" : "Tudo dentro do prazo"} />
+        <StatCard label="Para hoje" value={deHoje.length} color={COLORS.warn} subtitle="Prazos, envios e pendentes" />
+        <StatCard label="Próximos 7 dias" value={semana.length} color={COLORS.navy} subtitle="Prazos, envios e eventos" />
+        <StatCard label="Reclamações nos últimos 7 dias" value={recebidas7} subtitle={`${recebidasAnt} na semana anterior · ${concluidas7} concluídas`} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gap: 16 }}>
+          {atrasos.length > 0 && bloco("Em atraso", atrasos, "", COLORS.danger)}
+          {bloco("Hoje", deHoje, "Sem tarefas para hoje.")}
+        </div>
+        <div style={{ ...panelStyle, padding: "14px 10px 10px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "0 6px", marginBottom: 6 }}>
+            <div style={{ ...panelTitle, marginBottom: 0 }}>Próximos 7 dias</div>
+            <div style={{ fontSize: 12, color: COLORS.slate }}>{semana.length}</div>
+          </div>
+          {semana.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.slate, padding: "8px 6px 10px" }}>Nada marcado para os próximos dias.</div>}
+          {dias.map((d) => {
+            const doDia = semana.filter((i) => i.data === d);
+            if (!doDia.length) return null;
+            const dt = new Date(d + "T00:00:00");
+            return (
+              <div key={d} style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.navy, textTransform: "uppercase", letterSpacing: "0.06em", padding: "6px 6px 2px" }}>
+                  {DIAS_SEMANA_CURTO[dt.getDay()]} {dt.getDate()}
+                  {diasEntre(hoje, d) === 1 ? " · amanhã" : ""}
+                </div>
+                {doDia.map((it) => (
+                  <ItemHoje key={it.id} it={it} />
+                ))}
+              </div>
+            );
+          })}
+          {/* Itens da semana sem dia exato (ex.: retrato semanal) */}
+          {semana.filter((i) => !dias.includes(i.data)).map((it) => (
+            <ItemHoje key={it.id} it={it} />
+          ))}
+        </div>
+      </div>
+
+      {(() => {
+        const comEnvio = props.plano.map((p) => ({ ...p, envio: dataEnvioPlano(p, props.regrasEnvio) }));
+        const nome = (p) => [p.evento, p.edicao].filter(Boolean).join(" · ");
+        const colunas = [
+          {
+            titulo: "Para enviar",
+            nota: "atrasados e próximos 7 dias",
+            cor: COLORS.slate,
+            itens: comEnvio
+              .filter((p) => p.estado === "Por enviar" && p.envio && diasEntre(hoje, p.envio) <= 7)
+              .sort((a, b) => a.envio.localeCompare(b.envio))
+              .map((p) => ({ p, linha: diasEntre(hoje, p.envio) < 0 ? `atrasado desde ${fmt(new Date(p.envio + "T00:00:00"))}` : diasEntre(hoje, p.envio) === 0 ? "hoje" : fmt(new Date(p.envio + "T00:00:00")), alerta: diasEntre(hoje, p.envio) < 0 })),
+          },
+          {
+            titulo: "A recolher respostas",
+            nota: "enviados",
+            cor: COLORS.progress,
+            itens: comEnvio.filter((p) => p.estado === "Enviado").map((p) => ({ p, linha: p.envio ? `enviado há ${Math.max(0, diasEntre(p.envio, hoje))} dias` : "enviado", alerta: p.envio && diasEntre(p.envio, hoje) > 14 })),
+          },
+          {
+            titulo: "Para analisar",
+            nota: "fechados sem resultados",
+            cor: COLORS.warn,
+            itens: comEnvio.filter((p) => p.estado === "Fechado" && !p.inqueritoId).map((p) => ({ p, linha: "importar respostas", alerta: true })),
+          },
+          {
+            titulo: "Analisados esta época",
+            nota: "com resultados",
+            cor: COLORS.ok,
+            itens: comEnvio
+              .filter((p) => p.estado === "Analisado" && p.epoca === epocaDe(hoje))
+              .slice(-4)
+              .map((p) => ({ p, linha: p.inscritos && p.respostas != null ? `${Math.round((p.respostas / p.inscritos) * 100)}% de resposta` : "analisado" })),
+          },
+        ];
+        const proximoEnvio = comEnvio.filter((p) => p.estado === "Por enviar" && p.envio && p.envio >= hoje).sort((a, b) => a.envio.localeCompare(b.envio))[0];
+        if (!props.plano.length) return null;
+        return (
+          <div style={{ ...panelStyle, marginTop: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <div style={panelTitle}>Inquéritos de satisfação</div>
+              <button onClick={() => props.irPara("inqueritos")} style={{ ...linkBtnStyle, marginTop: 0 }}>
+                Abrir planeamento
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              {colunas.map((col) => (
+                <div key={col.titulo} style={{ background: COLORS.paperSunken, borderRadius: 10, padding: "10px 12px", borderTop: `3px solid ${col.cor}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{col.titulo}</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{col.itens.length}</div>
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 6 }}>{col.nota}</div>
+                  {col.itens.length === 0 ? (
+                    col.titulo === "Para enviar" && proximoEnvio ? (
+                      <div style={{ fontSize: 12, color: COLORS.slate, padding: "2px 0" }}>
+                        Nada nos próximos 7 dias. Próximo: <strong style={{ color: COLORS.ink }}>{nome(proximoEnvio)}</strong> a {fmt(new Date(proximoEnvio.envio + "T00:00:00"))}.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: COLORS.slate }}>Nada.</div>
+                    )
+                  ) : (
+                    col.itens.slice(0, 5).map(({ p, linha, alerta }) => (
+                      <button
+                        key={p.id}
+                        onClick={() => props.irPara("inqueritos")}
+                        className="rowHover"
+                        style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 6, padding: "5px 6px", cursor: "pointer", color: COLORS.ink, font: "inherit" }}
+                      >
+                        <span style={{ display: "block", fontSize: 12.5, fontWeight: 600 }}>{nome(p)}</span>
+                        <span style={{ display: "block", fontSize: 11.5, color: alerta ? COLORS.danger : COLORS.slate }}>{linha}</span>
+                      </button>
+                    ))
+                  )}
+                  {col.itens.length > 5 && <div style={{ fontSize: 11.5, color: COLORS.slate, padding: "2px 6px" }}>e mais {col.itens.length - 5}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      <div style={{ ...panelStyle, marginTop: 16 }}>
+        <div style={panelTitle}>Últimos 7 dias</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+          {[
+            ["Reclamações recebidas", recebidas7, recebidasAnt],
+            ["Reclamações concluídas", concluidas7, null],
+            ["Desistências", desist7, null],
+            ["Experiências", xp7, null],
+          ].map(([l, v, ant]) => (
+            <div key={l} style={{ padding: "10px 12px", borderRadius: 10, background: COLORS.paperSunken }}>
+              <div style={{ fontSize: 11.5, color: COLORS.ink2 }}>{l}</div>
+              <div style={{ fontSize: 20, fontWeight: 600, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+              {ant !== null && <div style={{ fontSize: 11, color: COLORS.slate }}>{ant} na semana anterior</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ======================================================================
+// ---------- Causa raiz ----------
+// ======================================================================
+// O tema diz "de que se queixam"; a causa diz "porque aconteceu". Só se
+// regista ao fechar (reclamação concluída ou constatação resolvida) e usa a
+// mesma lista fixa em toda a app, para se poder somar entre módulos.
+
+// Lista editável em "Todas as listas" (options.causasRaiz). Estas são as de partida.
+const DEFAULT_CAUSAS_RAIZ = ["Pessoas", "Processo", "Comunicação", "Instalações e equipamento", "Fornecedor ou parceiro", "Fator externo", "Sem fundamento"];
+const AJUDA_CAUSA = {
+  Pessoas: "Comportamento ou competência de alguém",
+  Processo: "Procedimento em falta, mal definido ou não cumprido",
+  Comunicação: "Informação que não chegou, chegou tarde ou errada",
+  "Instalações e equipamento": "Espaços, material, avarias",
+  "Fornecedor ou parceiro": "Entidade externa contratada ou parceira",
+  "Fator externo": "Fora do controlo da Dragon Force (meteorologia, arbitragem…)",
+  "Sem fundamento": "Analisado: não havia falha da Dragon Force",
+};
+// Registos antigos guardavam um código; converte para o nome.
+const CODIGO_CAUSA = { pessoas: "Pessoas", processo: "Processo", comunicacao: "Comunicação", instalacoes: "Instalações e equipamento", fornecedor: "Fornecedor ou parceiro", externo: "Fator externo", sem_fundamento: "Sem fundamento" };
+const nomeCausa = (v) => (v ? CODIGO_CAUSA[v] || v : "");
+// Causas que não apontam para uma falha interna: não entram nos alertas de "causa principal".
+const causaNeutra = (c) => ["sem fundamento", "fator externo"].includes(normChave(c));
+
+// A lista atual vem das opções; o App atualiza-a a cada render (como as cores do tema).
+let CAUSAS_ATUAIS = DEFAULT_CAUSAS_RAIZ;
+const PALETA_CAUSAS = () => [COLORS.danger, COLORS.warn, COLORS.purple, COLORS.progress, COLORS.navySoft, COLORS.slate, COLORS.ok];
+const corCausa = (c) => {
+  const i = CAUSAS_ATUAIS.indexOf(c);
+  return i >= 0 ? PALETA_CAUSAS()[i % PALETA_CAUSAS().length] : colorForLabel(c).color;
+};
+
+function SeletorCausa({ valor, onChange, compacto, onGerirLista }) {
+  const atual = nomeCausa(valor);
+  const lista = atual && !CAUSAS_ATUAIS.includes(atual) ? [...CAUSAS_ATUAIS, atual] : CAUSAS_ATUAIS;
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: compacto ? 11.5 : 12.5, fontWeight: 600, color: compacto ? COLORS.slate : COLORS.ink }}>
+          Porque é que isto aconteceu? <span style={{ fontWeight: 400, color: COLORS.slate }}>(causa raiz)</span>
+        </div>
+        {onGerirLista && (
+          <button type="button" onClick={() => onGerirLista("causasRaiz")} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11.5 }}>
+            Gerir lista
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {lista.map((c) => {
+          const ativo = atual === c;
+          const cor = corCausa(c);
+          return (
+            <button
+              key={c}
+              type="button"
+              title={AJUDA_CAUSA[c] || c}
+              onClick={() => onChange(ativo ? "" : c)}
+              style={{
+                padding: compacto ? "4px 10px" : "6px 11px",
+                borderRadius: 20,
+                border: `1.5px solid ${ativo ? cor : COLORS.rule}`,
+                background: ativo ? COLORS.paperSunken : "transparent",
+                color: ativo ? cor : COLORS.ink2,
+                fontSize: compacto ? 11.5 : 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {ativo ? "✓ " : ""}
+              {c}
+            </button>
+          );
+        })}
+      </div>
+      {atual && AJUDA_CAUSA[atual] && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 5 }}>{AJUDA_CAUSA[atual]}.</div>}
+    </div>
+  );
+}
+
+// Junta reclamações concluídas e constatações resolvidas numa só lista.
+function itensCausa(reclamacoes, audits) {
+  const r = (reclamacoes || [])
+    .filter((e) => e.status === "concluido")
+    .map((e) => ({ origem: "Reclamações", causa: nomeCausa(e.causaRaiz), escola: e.school || "Sem escola", data: e.receivedDate, tema: e.tema || e.categoria || "" }));
+  const a = (audits || []).flatMap((au) =>
+    (au.findings || []).filter((f) => f.resolvida).map((f) => ({ origem: "Auditorias", causa: nomeCausa(f.causaRaiz), escola: au.school || "Sem escola", data: au.date, tema: f.area || "" }))
+  );
+  return [...r, ...a];
+}
+
+function observacoesCausas(itens) {
+  const obs = [];
+  const com = itens.filter((i) => i.causa);
+  if (com.length < 5) return obs;
+  const conta = {};
+  com.forEach((i) => (conta[i.causa] = (conta[i.causa] || 0) + 1));
+  const [top, n] = Object.entries(conta).sort((a, b) => b[1] - a[1])[0];
+  if (!causaNeutra(top)) {
+    const origens = [...new Set(com.filter((i) => i.causa === top).map((i) => i.origem))];
+    obs.push({
+      nivel: n / com.length >= 0.35 ? "alarme" : "atencao",
+      titulo: `${top} explica ${Math.round((n / com.length) * 100)}% dos casos classificados`,
+      texto: `${n} de ${com.length}${origens.length > 1 ? ", em reclamações e em auditorias" : ""}. Corrigir esta causa resolve mais do que tratar cada caso.`,
+    });
+  }
+  // Escola onde uma causa pesa muito mais do que no total.
+  const escolas = [...new Set(com.map((i) => i.escola))];
+  escolas.forEach((e) => {
+    const daEsc = com.filter((i) => i.escola === e);
+    if (daEsc.length < 4) return;
+    const c = {};
+    daEsc.forEach((i) => (c[i.causa] = (c[i.causa] || 0) + 1));
+    const [k, v] = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+    const pesoEsc = v / daEsc.length;
+    const pesoTotal = (conta[k] || 0) / com.length;
+    if (!causaNeutra(k) && pesoEsc >= 0.5 && pesoEsc - pesoTotal >= 0.15) {
+      obs.push({ nivel: "atencao", titulo: `${e}: ${Math.round(pesoEsc * 100)}% dos casos por ${k.toLowerCase()}`, texto: `Na média das escolas é ${Math.round(pesoTotal * 100)}%.` });
+    }
+  });
+  const sem = itens.length - com.length;
+  if (sem > 0 && sem / itens.length >= 0.3) {
+    obs.push({ nivel: "atencao", titulo: `${sem} caso${sem === 1 ? "" : "s"} fechado${sem === 1 ? "" : "s"} sem causa`, texto: "Classifica-os ao concluir para a análise de causas ficar completa." });
+  }
+  const fund = Object.entries(conta).filter(([k]) => normChave(k) === "sem fundamento").reduce((t, [, v]) => t + v, 0);
+  if (fund / com.length >= 0.3) {
+    obs.push({ nivel: "bom", titulo: `${Math.round((fund / com.length) * 100)}% dos casos sem fundamento`, texto: "Depois de analisados, não havia falha da Dragon Force." });
+  }
+  return obs;
+}
+
+function PainelCausas({ itens, titulo }) {
+  const [vista, setVista] = useState("total");
+  const com = itens.filter((i) => i.causa);
+  const sem = itens.length - com.length;
+  const origens = [...new Set(itens.map((i) => i.origem))];
+  const causas = [...CAUSAS_ATUAIS, ...[...new Set(com.map((i) => i.causa))].filter((c) => !CAUSAS_ATUAIS.includes(c))];
+  const dados = causas.map((c) => {
+    const linha = { name: c, key: c };
+    origens.forEach((o) => (linha[o] = com.filter((i) => i.causa === c && i.origem === o).length));
+    linha.total = com.filter((i) => i.causa === c).length;
+    return linha;
+  }).filter((l) => l.total > 0);
+  const escolas = [...new Set(com.map((i) => i.escola))].sort();
+  const colunas = causas.filter((c) => com.some((i) => i.causa === c));
+  const maxCel = Math.max(1, ...escolas.flatMap((e) => colunas.map((c) => com.filter((i) => i.escola === e && i.causa === c).length)));
+  const corOrigem = { Reclamações: COLORS.navy, Auditorias: COLORS.warn };
+
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={panelTitle}>{titulo || "Causa raiz"}</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 11.5, color: COLORS.slate }}>
+            {com.length} classificados{sem ? ` · ${sem} sem causa` : ""}
+          </span>
+          {escolas.length > 1 && (
+            <div style={{ display: "inline-flex", gap: 2, background: COLORS.segTrack, borderRadius: 8, padding: 2 }}>
+              {[
+                ["total", "Total"],
+                ["escola", "Por escola"],
+              ].map(([k, l]) => (
+                <button
+                  key={k}
+                  onClick={() => setVista(k)}
+                  className="pill"
+                  style={{ border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontWeight: vista === k ? 600 : 500, background: vista === k ? COLORS.paperRaised : "transparent", color: vista === k ? COLORS.ink : COLORS.ink2, cursor: "pointer" }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {com.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: COLORS.slate }}>
+          Ainda não há casos com causa. A pergunta "Porque é que isto aconteceu?" aparece ao concluir uma reclamação e ao resolver uma constatação.
+        </div>
+      ) : vista === "total" ? (
+        <>
+          <ResponsiveContainer width="100%" height={Math.max(150, dados.length * 34)}>
+            <BarChart data={dados} layout="vertical" margin={{ left: 4, right: 20 }}>
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+              {origens.map((o, i) => (
+                <Bar key={o} dataKey={o} name={o} stackId="c" fill={corOrigem[o] || COLORS.navySoft} radius={i === origens.length - 1 ? [0, 4, 4, 0] : 0} barSize={16} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+          {origens.length > 1 && (
+            <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: COLORS.ink2, marginTop: 4 }}>
+              {origens.map((o) => (
+                <span key={o} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: corOrigem[o] }} />
+                  {o}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "separate", borderSpacing: 3, fontSize: 12, minWidth: 560 }}>
+            <thead>
+              <tr>
+                <th />
+                {colunas.map((c) => (
+                  <th key={c} style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.slate, padding: "2px 4px", textAlign: "center", maxWidth: 90 }}>
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {escolas.map((e) => (
+                <tr key={e}>
+                  <td style={{ padding: "4px 8px 4px 0", fontWeight: 600, whiteSpace: "nowrap" }}>{e}</td>
+                  {colunas.map((c) => {
+                    const n = com.filter((i) => i.escola === e && i.causa === c).length;
+                    const op = n ? 0.15 + 0.85 * (n / maxCel) : 0;
+                    return (
+                      <td key={c} title={`${e} · ${c}: ${n}`} style={{ textAlign: "center", padding: "6px 4px", borderRadius: 6, background: n ? `color-mix(in srgb, ${COLORS.navy} ${Math.round(op * 100)}%, transparent)` : COLORS.paperSunken, color: op > 0.55 ? COLORS.onAccent : COLORS.ink, fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: 44 }}>
+                        {n || ""}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ======================================================================
+// ---------- Previsão de fim de época ----------
+// ======================================================================
+// Projeta os inscritos de cada escola até 30 de junho a partir de:
+// - o último retrato semanal (ponto de partida);
+// - o ritmo das últimas semanas: novas inscrições e desistências por semana;
+// - as experiências por avaliar, multiplicadas pela taxa de conversão da escola.
+// As entradas vão abrandando ao longo da época (8% por semana); as saídas
+// mantêm-se. O intervalo vai de "sem novas inscrições" a "ritmo atual mantido".
+
+const SEMANAS_RITMO = 8;
+const ABRANDAMENTO_ENTRADAS = 0.92;
+
+function fimDeEpoca(ep) {
+  return `${Number(String(ep).slice(0, 4)) + 1}-06-30`;
+}
+
+// Segunda-feira de uma semana ISO (aaaa-Wnn).
+function inicioSemanaISO(chave) {
+  const [ano, sem] = String(chave).split("-W").map(Number);
+  const d = new Date(Date.UTC(ano, 0, 4));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + (sem - 1) * 7);
+  return d.toISOString().slice(0, 10);
+}
+
+function preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis, hoje }) {
+  const ep = epocaDe(hoje);
+  const serie = [...(inscritos[escola] || [])]
+    .filter((r) => epocaDe(inicioSemanaISO(r.semana)) === ep)
+    .sort((a, b) => a.semana.localeCompare(b.semana));
+  if (serie.length < 3) return { escola, insuficiente: true, semanasComDados: serie.length };
+
+  const atual = serie[serie.length - 1].total;
+  const recentes = serie.slice(-SEMANAS_RITMO);
+  let entradas = recentes.reduce((t, r) => t + (r.novas || 0), 0) / recentes.length;
+  let saidas = recentes.reduce((t, r) => t + (r.desist || 0), 0) / recentes.length;
+  // Sem novas/desistências registadas: usa a variação do total.
+  if (!entradas && !saidas && recentes.length > 1) {
+    const liquido = (recentes[recentes.length - 1].total - recentes[0].total) / (recentes.length - 1);
+    entradas = Math.max(0, liquido);
+    saidas = Math.max(0, -liquido);
+  }
+
+  const xps = experiencias.filter((x) => x.escola === escola);
+  const suc = xps.filter((x) => x.resultado === "sucesso").reduce((t, x) => t + x.n, 0);
+  const ins = xps.filter((x) => x.resultado === "insucesso").reduce((t, x) => t + x.n, 0);
+  const conv = suc + ins ? suc / (suc + ins) : 0.5;
+  const pendentes = xps.filter((x) => x.resultado === "pendente").reduce((t, x) => t + x.n, 0);
+  const deExperiencias = Math.round(pendentes * conv);
+
+  const turmas = turmasAlunos.filter((t) => t.escola === escola);
+  const capacidade = turmas.reduce((t, x) => t + (x.cap || capacidadeSugerida(x.turma, niveis)), 0);
+  const limitar = (v) => Math.max(0, capacidade ? Math.min(capacidade, v) : v);
+
+  const fim = fimDeEpoca(ep);
+  const semanas = Math.max(0, Math.ceil((new Date(fim + "T00:00:00") - new Date(hoje + "T00:00:00")) / (7 * 86400000)));
+
+  let central = atual + deExperiencias;
+  let alto = atual + deExperiencias;
+  let baixo = atual;
+  const trajetoria = [];
+  const segunda = new Date(inicioSemanaISO(serie[serie.length - 1].semana) + "T00:00:00Z");
+  for (let w = 1; w <= semanas; w++) {
+    central = limitar(central + entradas * Math.pow(ABRANDAMENTO_ENTRADAS, w) - saidas);
+    alto = limitar(alto + entradas - saidas);
+    baixo = limitar(baixo - saidas);
+    const d = new Date(segunda);
+    d.setUTCDate(d.getUTCDate() + 7 * w);
+    trajetoria.push({ semana: semanaISO(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), central: Math.round(central), baixo: Math.round(baixo), alto: Math.round(alto) });
+  }
+
+  const ant = (epocaAnterior[escola] || {}).inscritos || null;
+  const prev = Math.round(central);
+  const variacao = ant ? Math.round(((prev - ant) / ant) * 1000) / 10 : null;
+  const falta = ant ? Math.max(0, ant - prev) : null;
+  return {
+    escola,
+    atual,
+    ant,
+    previsao: prev,
+    baixo: Math.round(baixo),
+    alto: Math.round(alto),
+    variacao,
+    falta,
+    porSemana: falta && semanas ? Math.ceil(falta / semanas) : 0,
+    entradas: Math.round(entradas * 10) / 10,
+    saidas: Math.round(saidas * 10) / 10,
+    deExperiencias,
+    capacidade,
+    semanas,
+    fim,
+    serie,
+    trajetoria,
+    semanasRitmo: recentes.length,
+  };
+}
+
+function previsoesEscolas(ctx) {
+  const hoje = ctx.hoje || isoDe(new Date());
+  return (ctx.escolas || []).map((escola) => preverEscola({ ...ctx, escola, hoje, niveis: ctx.niveis || DEFAULT_NIVEIS }));
+}
+
+function observacoesPrevisao(previsoes, limites) {
+  return previsoes
+    .filter((p) => !p.insuficiente && p.variacao !== null)
+    .map((p) => {
+      const cls = classificarCrescimento(p.variacao, limites);
+      if (cls.key !== "critico" && cls.key !== "declinio") return null;
+      return {
+        nivel: cls.key === "critico" ? "alarme" : "atencao",
+        titulo: `A este ritmo, ${p.escola} acaba ${Math.abs(p.variacao).toLocaleString("pt-PT")}% abaixo da época passada`,
+        texto: `Previsão de ${p.previsao} alunos em junho (entre ${p.baixo} e ${p.alto}), contra ${p.ant}. Para igualar, faltam ${p.falta} inscrições, cerca de ${p.porSemana} por semana.`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis, limites, fEsc }) {
+  const hoje = isoDe(new Date());
+  const todas = previsoesEscolas({ escolas, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis, hoje });
+  const lista = todas.filter((p) => fEsc === "todas" || p.escola === fEsc);
+  const validas = lista.filter((p) => !p.insuficiente);
+  const fim = fimDeEpoca(epocaDe(hoje));
+  const fimTxt = new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long" }).format(new Date(fim + "T00:00:00"));
+
+  // Gráfico: soma das escolas visíveis, semana a semana (real + projeção).
+  const porSemana = new Map();
+  validas.forEach((p) => {
+    p.serie.forEach((r) => {
+      const x = porSemana.get(r.semana) || { semana: r.semana };
+      x.real = (x.real || 0) + r.total;
+      porSemana.set(r.semana, x);
+    });
+    const ultima = p.serie[p.serie.length - 1];
+    const x0 = porSemana.get(ultima.semana);
+    x0.central = (x0.central || 0) + ultima.total;
+    x0.faixaB = (x0.faixaB || 0) + ultima.total;
+    x0.faixaA = (x0.faixaA || 0) + ultima.total;
+    p.trajetoria.forEach((t) => {
+      const x = porSemana.get(t.semana) || { semana: t.semana };
+      x.central = (x.central || 0) + t.central;
+      x.faixaB = (x.faixaB || 0) + t.baixo;
+      x.faixaA = (x.faixaA || 0) + t.alto;
+      porSemana.set(t.semana, x);
+    });
+  });
+  const dadosGraf = [...porSemana.values()]
+    .sort((a, b) => a.semana.localeCompare(b.semana))
+    .map((x) => ({ ...x, name: semanaLabel(x.semana), faixa: x.faixaB !== undefined ? [x.faixaB, x.faixaA] : undefined }));
+  const antSoma = validas.reduce((t, p) => t + (p.ant || 0), 0);
+  const total = validas.reduce(
+    (t, p) => ({ atual: t.atual + p.atual, previsao: t.previsao + p.previsao, baixo: t.baixo + p.baixo, alto: t.alto + p.alto }),
+    { atual: 0, previsao: 0, baixo: 0, alto: 0 }
+  );
+  const varTotal = antSoma ? Math.round(((total.previsao - antSoma) / antSoma) * 1000) / 10 : null;
+
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+        <div style={panelTitle}>Previsão de fim de época ({fimTxt})</div>
+        {validas.length > 0 && (
+          <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
+            {fEsc === "todas" ? "Total previsto" : "Previsto"}: <strong style={{ color: COLORS.ink }}>{total.previsao}</strong> alunos (entre {total.baixo} e {total.alto})
+            {varTotal !== null && (
+              <span style={{ color: varTotal >= 0 ? COLORS.ok : COLORS.danger, fontWeight: 600 }}>
+                {" "}
+                · {varTotal > 0 ? "+" : ""}
+                {varTotal.toLocaleString("pt-PT")}% face à época passada
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {validas.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginTop: 6 }}>
+          São precisos pelo menos 3 retratos semanais desta época para prever o fim de época. Faz o retrato semanal em Registo.
+        </div>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={250}>
+            <ComposedChart data={dadosGraf} margin={{ left: -6, right: 16, top: 10 }}>
+              <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={Math.max(0, Math.ceil(dadosGraf.length / 10) - 1)} />
+              <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} width={44} />
+              <Tooltip
+                content={({ active, payload, label }) =>
+                  active && payload && payload.length ? (
+                    <DicaGrafico
+                      active
+                      label={label}
+                      payload={payload
+                        .filter((x) => x.dataKey !== "faixa")
+                        .concat(payload.find((x) => x.dataKey === "faixa") ? [{ name: "Intervalo", value: payload.find((x) => x.dataKey === "faixa").value.join(" – "), color: COLORS.rule }] : [])}
+                    />
+                  ) : null
+                }
+              />
+              <Area type="monotone" dataKey="faixa" name="Intervalo" stroke="none" fill={COLORS.navy} fillOpacity={0.1} isAnimationActive={false} />
+              {antSoma > 0 && <ReferenceLine y={antSoma} stroke={COLORS.slate} strokeDasharray="4 4" label={{ value: "Época passada", position: "insideTopLeft", fontSize: 10.5, fill: COLORS.slate }} />}
+              <Line type="monotone" dataKey="real" name="Inscritos" stroke={COLORS.navy} strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="central" name="Previsão" stroke={COLORS.navy} strokeWidth={2} strokeDasharray="6 5" dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11.5, color: COLORS.ink2, marginTop: 2 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 16, height: 2, background: COLORS.navy }} /> Inscritos
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 16, height: 0, borderTop: `2px dashed ${COLORS.navy}` }} /> Previsão
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 14, height: 10, background: COLORS.navy, opacity: 0.15, borderRadius: 2 }} /> Intervalo: sem novas inscrições a ritmo atual mantido
+            </span>
+          </div>
+        </>
+      )}
+
+      {lista.length > 0 && (
+        <div style={{ overflowX: "auto", marginTop: 14 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 720 }}>
+            <thead>
+              <tr>
+                {["Escola", "Agora", "Época passada", "Previsão em junho", "Variação", "", "Para igualar a época passada", "Ritmo semanal"].map((c, i) => (
+                  <th key={i} style={{ textAlign: "left", fontSize: 11, fontWeight: 600, color: COLORS.slate, padding: "6px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
+                    {c}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((p) => {
+                if (p.insuficiente)
+                  return (
+                    <tr key={p.escola}>
+                      <td style={{ padding: "7px 8px", fontWeight: 600 }}>{p.escola}</td>
+                      <td colSpan={7} style={{ padding: "7px 8px", color: COLORS.slate }}>
+                        Faltam retratos semanais ({p.semanasComDados} de 3).
+                      </td>
+                    </tr>
+                  );
+                const cls = p.variacao !== null ? classificarCrescimento(p.variacao, limites) : null;
+                return (
+                  <tr key={p.escola} style={{ borderTop: `1px solid ${COLORS.ruleSoft}` }}>
+                    <td style={{ padding: "7px 8px", fontWeight: 600 }}>{p.escola}</td>
+                    <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums" }}>{p.atual}</td>
+                    <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums" }}>{p.ant ?? "—"}</td>
+                    <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums" }}>
+                      <strong>{p.previsao}</strong> <span style={{ color: COLORS.slate }}>({p.baixo}–{p.alto})</span>
+                    </td>
+                    <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: p.variacao === null ? COLORS.slate : p.variacao >= 0 ? COLORS.ok : COLORS.danger }}>
+                      {p.variacao === null ? "—" : `${p.variacao > 0 ? "+" : ""}${p.variacao.toLocaleString("pt-PT")}%`}
+                    </td>
+                    <td style={{ padding: "7px 8px" }}>{cls && <Tag label={cls.label} color={cls.color} bg={cls.bg} />}</td>
+                    <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums" }}>
+                      {p.falta === null ? "—" : p.falta === 0 ? <span style={{ color: COLORS.ok }}>Já lá chega</span> : `+${p.falta} (≈ ${p.porSemana}/semana)`}
+                    </td>
+                    <td style={{ padding: "7px 8px", fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                      +{p.entradas.toLocaleString("pt-PT")} / −{p.saidas.toLocaleString("pt-PT")}
+                      {p.deExperiencias ? ` · +${p.deExperiencias} exp.` : ""}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 8, lineHeight: 1.5 }}>
+            Ritmo das últimas {SEMANAS_RITMO} semanas: novas inscrições e desistências por semana, e as experiências por avaliar que deverão converter. As novas inscrições abrandam ao longo da época; nenhuma escola passa a capacidade das suas turmas.
+          </div>
+        </div>
       )}
     </div>
   );
@@ -9408,7 +13484,7 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 // ---------- Main App ----------
 export default function App() {
   const [entries, setEntries] = useState([]);
-  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ });
+  const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ });
   const [audits, setAudits] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
@@ -9421,6 +13497,9 @@ export default function App() {
   const [espacos, setEspacos] = useState([]);
   const [eventos, setEventos] = useState([]);
   const [inqueritos, setInqueritos] = useState([]);
+  const [notasRelatorio, setNotasRelatorio] = useState({});
+  const [planoInq, setPlanoInq] = useState([]);
+  const [respostasTipo, setRespostasTipo] = useState(RESPOSTAS_PADRAO);
   const [satisfacao, setSatisfacao] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -9429,7 +13508,7 @@ export default function App() {
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
   const [viewingSanction, setViewingSanction] = useState(null);
-  const [page, setPage] = useState("registo");
+  const [page, setPage] = useState("hoje");
   // Tema claro/escuro. Fica guardado no browser para não se perder ao recarregar.
   // Notificações flutuantes: substituem o banner de erro, que só aparecia
   // numa das páginas e passava despercebido nas outras.
@@ -9540,6 +13619,9 @@ export default function App() {
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
   const persistSatisfacao = fazPersist(setSatisfacao, STORAGE_SATISFACAO_KEY, "a satisfação");
   const persistInqueritos = fazPersist(setInqueritos, STORAGE_INQUERITOS_KEY, "os inquéritos");
+  const persistNotasRel = fazPersist(setNotasRelatorio, STORAGE_NOTAS_REL_KEY, "as notas do relatório");
+  const persistPlanoInq = fazPersist(setPlanoInq, STORAGE_PLANO_INQ_KEY, "o cronograma de inquéritos");
+  const persistRespostas = fazPersist(setRespostasTipo, STORAGE_RESPOSTAS_KEY, "as respostas-tipo");
 
   const persistInscritos = useCallback(async (next) => {
     setInscritos(next);
@@ -9590,7 +13672,7 @@ export default function App() {
       }
       try {
         const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
-        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, ...JSON.parse(res.value) });
+        if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
@@ -9632,6 +13714,9 @@ export default function App() {
         [STORAGE_EVENTOS_KEY, setEventos],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
         [STORAGE_INQUERITOS_KEY, setInqueritos],
+        [STORAGE_NOTAS_REL_KEY, setNotasRelatorio],
+        [STORAGE_PLANO_INQ_KEY, setPlanoInq],
+        [STORAGE_RESPOSTAS_KEY, (v) => setRespostasTipo(juntarRespostasPadrao(v))],
       ]) {
         try {
           const r = await dbStorage.get(chave);
@@ -9871,8 +13956,23 @@ export default function App() {
 
   const saveEvento = (reg) => persistEventos([...eventos, reg]);
   const removeEvento = (id) => persistEventos(eventos.filter((e) => e.id !== id));
-  const guardarInquerito = (reg, substituir) =>
+  const guardarInquerito = (reg, substituir, planoId) => {
     persistInqueritos(substituir ? inqueritos.map((i) => (i.id === reg.id ? reg : i)) : [...inqueritos, reg]);
+    if (planoId) {
+      persistPlanoInq(
+        planoInq.map((p) =>
+          p.id === planoId ? { ...p, estado: "Analisado", respostas: reg.respostas, inscritos: p.inscritos ?? reg.enviados ?? null, inqueritoId: reg.id } : p
+        )
+      );
+    }
+  };
+  const guardarItemPlano = (item) => {
+    const { envio, ...limpo } = item;
+    persistPlanoInq(planoInq.some((p) => p.id === limpo.id) ? planoInq.map((p) => (p.id === limpo.id ? limpo : p)) : [...planoInq, limpo]);
+  };
+  const removerItemPlano = (id) => persistPlanoInq(planoInq.filter((p) => p.id !== id));
+  const importarPlano = (itens, epoca, substituir) =>
+    persistPlanoInq([...(substituir ? planoInq.filter((p) => p.epoca !== epoca) : planoInq), ...itens]);
   const atualizarInquerito = (id, patch) => persistInqueritos(inqueritos.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   const removerInquerito = (id) => {
     persistInqueritos(inqueritos.filter((i) => i.id !== id));
@@ -9916,7 +14016,7 @@ export default function App() {
     );
   };
 
-  const markDone = (id, { responseText, eficacia, resolvedDate, startedDate } = {}) => {
+  const markDone = (id, { responseText, eficacia, resolvedDate, startedDate, respostaTipoId, causaRaiz } = {}) => {
     persist(
       entries.map((e) => {
         if (e.id !== id) return e;
@@ -9934,6 +14034,8 @@ export default function App() {
           resolvedDate: resolvedISO,
           startedDate: startedISO,
           responseText: responseText !== undefined ? responseText : e.responseText || "",
+          respostaTipoId: respostaTipoId !== undefined ? respostaTipoId : e.respostaTipoId || null,
+          causaRaiz: causaRaiz !== undefined ? causaRaiz : e.causaRaiz || "",
           eficacia: eficacia !== undefined ? eficacia : e.eficacia || "",
         };
       })
@@ -9954,6 +14056,8 @@ export default function App() {
     sancoes: "Sanções",
     inscritos: "Inscritos",
     inqueritos: "Inquéritos",
+    relatorio: "Geral",
+    hoje: "Geral",
   }[page];
 
   const titulo =
@@ -9965,6 +14069,10 @@ export default function App() {
       ? "Gestão de inscritos"
       : page === "inqueritos"
       ? "Inquéritos de satisfação"
+      : page === "relatorio"
+      ? "Relatório de escola"
+      : page === "hoje"
+      ? "Hoje"
       : "Reclamações";
 
   // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
@@ -9985,6 +14093,15 @@ export default function App() {
       nota: "Mais específicos que a categoria. Ex: comportamento de treinador, mensalidades, balneários.",
       placeholder: "Ex: Convocatórias",
       emUso: (x) => entries.filter((e) => e.tema === x).length,
+    },
+    causasRaiz: {
+      area: "Geral",
+      titulo: "Causas raiz",
+      nota: "Respondem a \"porque é que aconteceu?\". São as mesmas para reclamações e auditorias, para se poderem somar. Não confundir com o tema (de que se queixam).",
+      placeholder: "Ex: Formação insuficiente",
+      emUso: (x) =>
+        withStatus.filter((e) => nomeCausa(e.causaRaiz) === x).length +
+        audits.reduce((n, a) => n + (a.findings || []).filter((f) => nomeCausa(f.causaRaiz) === x).length, 0),
     },
     complaintCategories: {
       area: "Reclamações",
@@ -10042,6 +14159,13 @@ export default function App() {
       placeholder: "Ex: Dragon Cup",
       emUso: (x) => inqueritos.filter((i) => i.tipoEvento === x).length,
     },
+    tipologiasInq: {
+      area: "Inquéritos",
+      titulo: "Tipologias de evento (cronograma)",
+      nota: "Cada tipologia tem a sua regra de envio, em Planeamento → Regras de envio.",
+      placeholder: "Ex: Torneio 2 dias",
+      emUso: (x) => planoInq.filter((p) => p.tipologia === x).length,
+    },
     dimensoesInquerito: {
       area: "Inquéritos",
       titulo: "Dimensões das perguntas",
@@ -10060,10 +14184,12 @@ export default function App() {
 
   // Comandos da paleta: secções, ações e as reclamações abertas.
   const comandosPaleta = [
+    { id: "p-hoje", grupo: "Ir para", titulo: "Hoje", icon: Sun, acao: () => setPage("hoje") },
     { id: "p-registo", grupo: "Ir para", titulo: "Reclamações", icon: LayoutGrid, acao: () => setPage("registo") },
     { id: "p-auditorias", grupo: "Ir para", titulo: "Auditorias", icon: ClipboardList, acao: () => setPage("auditorias") },
     { id: "p-sancoes", grupo: "Ir para", titulo: "Sanções", icon: Scale, acao: () => setPage("sancoes") },
     { id: "p-inscritos", grupo: "Ir para", titulo: "Inscritos", icon: Users, acao: () => setPage("inscritos") },
+    { id: "p-relatorio", grupo: "Ir para", titulo: "Relatório de escola", icon: FileText, acao: () => setPage("relatorio") },
     { id: "p-inqueritos", grupo: "Ir para", titulo: "Inquéritos de satisfação", icon: MessageSquareText, acao: () => setPage("inqueritos") },
     {
       id: "a-nova",
@@ -10105,7 +14231,23 @@ export default function App() {
       })),
   ];
 
+  // A lista de causas é lida pelos componentes de causa raiz.
+  CAUSAS_ATUAIS = options.causasRaiz && options.causasRaiz.length ? options.causasRaiz : DEFAULT_CAUSAS_RAIZ;
+
+  const contagemHoje = (() => {
+    try {
+      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits, experiencias, desvinculacoes, turmasAlunos, inscritos, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
+      return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
+    } catch (e) {
+      return 0;
+    }
+  })();
+
   const secoes = [
+    {
+      grupo: "Início",
+      itens: [{ key: "hoje", label: "Hoje", icon: Sun, contador: contagemHoje || null }],
+    },
     {
       grupo: "Gestão",
       itens: [
@@ -10115,6 +14257,10 @@ export default function App() {
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
       ],
+    },
+    {
+      grupo: "Relatórios",
+      itens: [{ key: "relatorio", label: "Relatório de escola", icon: FileText, contador: null }],
     },
   ];
 
@@ -10157,6 +14303,7 @@ export default function App() {
         /* Caixa centrada: sobe e cresce ligeiramente, como uma folha do iOS. */
         @keyframes sheetIn { from { opacity: 0; transform: translateY(14px) scale(0.975); } to { opacity: 1; transform: none; } }
         .sheet { animation: sheetIn 300ms var(--ease) both; box-sizing: border-box; }
+        .drawer { box-sizing: border-box; }
 
         /* Painel lateral: desliza da direita. */
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: none; } }
@@ -10232,10 +14379,24 @@ export default function App() {
           .toastIn { animation: none; }
         }
         /* Quem pede mais contraste não deve ficar com chrome translúcido. */
+
+        /* ---- relatório: o que aparece no ecrã e o que sai no PDF ---- */
+        .relSoImpressao { display: none; }
+        @media print {
+          @page { size: A4; margin: 14mm; }
+          .naoImprimir, .relControlos, .relSoEcra, .demoFaixa { display: none !important; }
+          .relSoImpressao { display: block !important; }
+          .pageIn, .pageIn > * { animation: none !important; }
+          .relFolha { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: none !important; }
+          .relSeccao { break-inside: avoid; }
+          body, html { background: #fff !important; }
+          * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
       `}</style>
 
       {/* ---------- barra lateral ---------- */}
       <div
+        className="naoImprimir"
         style={{
           width: 248,
           flex: "none",
@@ -10246,6 +14407,8 @@ export default function App() {
           position: "sticky",
           top: 0,
           height: "100vh",
+          boxSizing: "border-box",
+          overflowY: "auto",
           padding: "14px 0",
           zIndex: 6,
         }}
@@ -10368,6 +14531,7 @@ export default function App() {
       {/* ---------- conteúdo ---------- */}
       <div style={{ flex: 1, minWidth: 0, maxWidth: "100%", overflowX: "hidden", display: "flex", flexDirection: "column" }}>
         <div
+          className="naoImprimir"
           style={{
             height: 52,
             background: COLORS.paperRaised,
@@ -10508,6 +14672,51 @@ export default function App() {
             onAddOption={addOption}
             onRemoveOption={removeOption}
           />
+        ) : page === "hoje" ? (
+          <HojePage
+            reclamacoes={withStatus}
+            plano={planoInq}
+            regrasEnvio={{ ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }}
+            audits={audits}
+            experiencias={experiencias}
+            desistencias={desistencias}
+            desvinculacoes={desvinculacoes}
+            turmasAlunos={turmasAlunos}
+            inscritos={inscritos}
+            epocaAnterior={epocaAnterior}
+            escolas={options.schools || []}
+            sanctions={sanctions}
+            abrirReclamacao={(e) => {
+              setPage("registo");
+              setReclamacoesView("registo");
+              setViewingDetail(e);
+            }}
+            irPara={(pg) => setPage(pg)}
+          />
+        ) : page === "relatorio" ? (
+          <RelatorioEscolaPage
+            escolas={options.schools || []}
+            reclamacoes={withStatus}
+            audits={audits}
+            sanctions={sanctions}
+            inscritos={inscritos}
+            turmasAlunos={turmasAlunos}
+            epocaAnterior={epocaAnterior}
+            desistencias={desistencias}
+            experiencias={experiencias}
+            desvinculacoes={desvinculacoes}
+            satisfacao={satisfacao}
+            inqueritos={inqueritos}
+            niveis={options.niveis}
+            notas={notasRelatorio}
+            onGuardarNota={(k, v) => {
+              persistNotasRel({ ...notasRelatorio, [k]: v });
+              notificar("Notas guardadas.");
+            }}
+            notificar={notificar}
+            tema={tema}
+            setTema={setTema}
+          />
         ) : page === "inqueritos" ? (
           <InqueritosPage
             inqueritos={inqueritos}
@@ -10518,6 +14727,16 @@ export default function App() {
             onRemover={removerInquerito}
             onGerirLista={setListaAberta}
             notificar={notificar}
+            plano={planoInq}
+            regrasEnvio={{ ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }}
+            tipologias={options.tipologiasInq || DEFAULT_TIPOLOGIAS_INQ}
+            onGuardarItemPlano={guardarItemPlano}
+            onRemoverItemPlano={removerItemPlano}
+            onImportarPlano={importarPlano}
+            onGuardarRegras={(r) => {
+              persistOptions({ ...options, regrasEnvioInq: r });
+              notificar("Regras de envio guardadas. As datas foram recalculadas.");
+            }}
           />
         ) : page === "sancoes" ? (
           <SanctionsPage
@@ -10541,6 +14760,7 @@ export default function App() {
           {[
             { key: "registo", label: "Registo", icon: LayoutGrid },
             { key: "analise", label: "Análise", icon: BarChart3 },
+            { key: "respostas", label: "Respostas-tipo", icon: MessageSquareText },
           ].map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -10567,8 +14787,22 @@ export default function App() {
           ))}
         </div>
 
-        {reclamacoesView === "analise" ? (
-          <AnalysisDashboard withStatus={withStatus} schoolOptions={options.schools} categoryOptions={options.categories} categoriaOptions={options.complaintCategories} />
+        {reclamacoesView === "respostas" ? (
+          <BibliotecaRespostas
+            biblioteca={respostasTipo.filter((r) => !r.arquivada)}
+            historico={withStatus}
+            notificar={notificar}
+            onGuardar={(r) => persistRespostas(respostasTipo.some((x) => x.id === r.id) ? respostasTipo.map((x) => (x.id === r.id ? r : x)) : [...respostasTipo, r])}
+            onRemover={(id) =>
+              persistRespostas(
+                respostasTipo
+                  .map((x) => (x.id === id && (x.origem === "manual" || x.origem === "anexo") ? { ...x, arquivada: true } : x))
+                  .filter((x) => x.id !== id || x.origem === "manual" || x.origem === "anexo")
+              )
+            }
+          />
+        ) : reclamacoesView === "analise" ? (
+          <AnalysisDashboard withStatus={withStatus} audits={audits} schoolOptions={options.schools} categoryOptions={options.categories} categoriaOptions={options.complaintCategories} />
         ) : (
         <>
         <div
@@ -10764,6 +14998,9 @@ export default function App() {
           entry={withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail}
           onClose={() => setViewingDetail(null)}
           onAddNote={addNote}
+          biblioteca={respostasTipo.filter((r) => !r.arquivada)}
+          historico={withStatus}
+          onGerirLista={setListaAberta}
           onStart={(id) => {
             startWork(id);
             setViewingDetail(null);
