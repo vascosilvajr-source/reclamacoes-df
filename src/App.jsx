@@ -13509,6 +13509,11 @@ function AppPrincipal({ onSair }) {
   const [showSanctionForm, setShowSanctionForm] = useState(false);
   const [viewingSanction, setViewingSanction] = useState(null);
   const [page, setPage] = useState("hoje");
+  // A página nova abre sempre no topo (o conteúdo desliza dentro da sua coluna).
+  const conteudoRef = useRef(null);
+  useEffect(() => {
+    if (conteudoRef.current) conteudoRef.current.scrollTop = 0;
+  }, [page]);
   // Tema claro/escuro. Fica guardado no browser para não se perder ao recarregar.
   // Notificações flutuantes: substituem o banner de erro, que só aparecia
   // numa das páginas e passava despercebido nas outras.
@@ -14269,11 +14274,13 @@ function AppPrincipal({ onSair }) {
       style={{
         fontFamily: "'Inter', system-ui, sans-serif",
         background: COLORS.paper,
-        minHeight: "100vh",
+        height: "100dvh",
+        overflow: "hidden",
         color: COLORS.ink,
         display: "flex",
         WebkitFontSmoothing: "antialiased",
       }}
+      className="appEcra"
     >
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
@@ -14380,7 +14387,16 @@ function AppPrincipal({ onSair }) {
         }
         /* Quem pede mais contraste não deve ficar com chrome translúcido. */
 
-        html, body { margin: 0; padding: 0; background: ${COLORS.paper}; }
+        html, body { margin: 0; padding: 0; background: ${COLORS.paper}; height: 100%; overflow: hidden; overscroll-behavior: none; }
+        .appConteudo { overscroll-behavior: contain; }
+        .appConteudo > * { flex-shrink: 0; }
+        [style*="overflow-x: auto"], [style*="overflow: auto"] { overscroll-behavior: contain; }
+        .registoTabela th, .registoTabela td { padding: 9px 10px !important; }
+        .registoTabela th { white-space: nowrap; }
+        .registoTabela td:last-child > div { gap: 2px !important; }
+        .registoTabela td:last-child button { padding: 5px !important; }
+        .registoTabela td.quebra { white-space: normal; max-width: 190px; }
+        .registoTabela .sub { display: block; margin-top: 3px; font-size: 12px; font-weight: 450; color: ${COLORS.slate}; }
 
         /* ---- relatório: o que aparece no ecrã e o que sai no PDF ---- */
         .relSoImpressao { display: none; }
@@ -14391,7 +14407,8 @@ function AppPrincipal({ onSair }) {
           .pageIn, .pageIn > * { animation: none !important; }
           .relFolha { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: none !important; }
           .relSeccao { break-inside: avoid; }
-          body, html { background: #fff !important; }
+          body, html { background: #fff !important; height: auto !important; overflow: visible !important; }
+          .appEcra, .appConteudo { height: auto !important; overflow: visible !important; display: block !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
       `}</style>
@@ -14408,9 +14425,11 @@ function AppPrincipal({ onSair }) {
           flexDirection: "column",
           position: "sticky",
           top: 0,
-          height: "100vh",
+          height: "100%",
           boxSizing: "border-box",
           overflowY: "auto",
+          overflowX: "hidden",
+          overscrollBehavior: "contain",
           padding: "14px 0",
           zIndex: 6,
         }}
@@ -14540,7 +14559,7 @@ function AppPrincipal({ onSair }) {
       </div>
 
       {/* ---------- conteúdo ---------- */}
-      <div style={{ flex: 1, minWidth: 0, maxWidth: "100%", overflowX: "hidden", display: "flex", flexDirection: "column" }}>
+      <div ref={conteudoRef} className="appConteudo" style={{ flex: 1, minWidth: 0, maxWidth: "100%", height: "100%", overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <div
           className="naoImprimir"
           style={{
@@ -14896,10 +14915,10 @@ function AppPrincipal({ onSair }) {
           </div>
         ) : (
           <div style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 6, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 880 }}>
+            <table className="registoTabela" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 880 }}>
               <thead>
                 <tr style={{ background: COLORS.paperSunken, textAlign: "left" }}>
-                  {["Nº", "Receção", "Época", "Canal", "Gravidade", "Categoria", "Escola", "Tema", "Reclamante", "Prazo", "Estado", ""].map((h) => (
+                  {["Nº · data", "Canal", "Categoria", "Reclamante", "Prazo", "Estado", ""].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -14922,21 +14941,22 @@ function AppPrincipal({ onSair }) {
                   <tr key={e.id} style={{ borderBottom: `1px solid ${COLORS.rule}` }}>
                     <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: COLORS.slate }}>
                       {String(e.entryNumber).padStart(4, "0")}
-                    </td>
-                    <td style={{ padding: "10px 14px" }}>{fmt(new Date(e.receivedDate + "T00:00:00"))}</td>
-                    <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums", color: COLORS.slate }}>{e.epoca || "—"}</td>
-                    <td style={{ padding: "10px 14px" }}>
-                      {e.canal && CANAL_META[e.canal] && <Tag label={CANAL_META[e.canal].label} color={CANAL_META[e.canal].color} bg={CANAL_META[e.canal].bg} />}
+                      <span className="sub" style={{ color: COLORS.ink }}>{fmt(new Date(e.receivedDate + "T00:00:00"))}</span>
                     </td>
                     <td style={{ padding: "10px 14px" }}>
-                      {e.severity && <Tag label={SEVERITY_META[e.severity].label} color={SEVERITY_META[e.severity].color} bg={SEVERITY_META[e.severity].bg} />}
+                      <div style={{ display: "grid", justifyItems: "start", gap: 4 }}>
+                        {e.canal && CANAL_META[e.canal] && <Tag label={CANAL_META[e.canal].label} color={CANAL_META[e.canal].color} bg={CANAL_META[e.canal].bg} />}
+                        {e.severity && <Tag label={SEVERITY_META[e.severity].label} color={SEVERITY_META[e.severity].color} bg={SEVERITY_META[e.severity].bg} />}
+                      </div>
                     </td>
-                    <td style={{ padding: "10px 14px" }}>
+                    <td className="quebra" style={{ padding: "10px 14px" }}>
                       {e.categoria && <Tag label={e.categoria} color={colorForLabel(e.categoria).color} bg={colorForLabel(e.categoria).bg} />}
+                      <span className="sub">{e.tema || "—"}</span>
                     </td>
-                    <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.school || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: COLORS.slate }}>{e.tema || "—"}</td>
-                    <td style={{ padding: "10px 14px", fontWeight: 600 }}>{e.complainant}</td>
+                    <td className="quebra" style={{ padding: "10px 14px", fontWeight: 600 }}>
+                      {e.complainant}
+                      <span className="sub">{(e.school || "—").replace(/^Dragon Force\s+/i, "")}</span>
+                    </td>
                     <td style={{ padding: "10px 14px", fontVariantNumeric: "tabular-nums" }}>{fmt(new Date(e.deadline))}</td>
                     <td style={{ padding: "10px 14px" }}>
                       <Stamp statusKey={e.derivedStatus} onClick={() => setViewingDetail(e)} />
