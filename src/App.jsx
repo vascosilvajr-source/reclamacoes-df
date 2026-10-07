@@ -2657,6 +2657,22 @@ function AuditDetail({
                         </div>
                       )}
                       <div style={{ fontSize: 13.5 }}>{f.description}</div>
+                      {(f.responsavel || f.resolvidaEm || f.analiseCausas) && (
+                        <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 5, lineHeight: 1.5 }}>
+                          {f.analiseCausas && (
+                            <div>
+                              <strong style={{ fontWeight: 600 }}>Análise de causas:</strong> {f.analiseCausas}
+                            </div>
+                          )}
+                          {(f.responsavel || f.resolvidaEm) && (
+                            <div style={{ color: COLORS.slate }}>
+                              {f.responsavel ? `Responsável: ${f.responsavel}` : ""}
+                              {f.responsavel && f.resolvidaEm ? " · " : ""}
+                              {f.resolvidaEm ? `Fechada a ${fmt(new Date(f.resolvidaEm + "T00:00:00"))}` : ""}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <button title="Remover" onClick={() => onRemoveFinding(audit.id, f.id)} style={{ ...iconBtnStyle, padding: 0 }}>
                       <X size={14} />
@@ -2678,7 +2694,7 @@ function AuditDetail({
                     <button
                       onClick={() =>
                         onUpdateFinding(audit.id, f.id,
-                          f.resolvida ? { resolvida: false, eficacia: "", acao: "" } : { resolvida: true, eficacia: f.eficacia || "eficaz" }
+                          f.resolvida ? { resolvida: false, eficacia: "", acao: "", resolvidaEm: null } : { resolvida: true, eficacia: f.eficacia || "eficaz", resolvidaEm: isoDe(new Date()) }
                         )
                       }
                       style={{
@@ -3692,7 +3708,313 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
 }
 
 // ---------- Audits page (registo + análise) ----------
-function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOptions, auditCategoryOptions }) {
+// ======================================================================
+// ---------- Importar constatações de auditoria (Excel) ----------
+// ======================================================================
+// Cada linha é uma constatação. As linhas com a mesma escola e a mesma data
+// de visita pertencem à mesma auditoria: a app cria as visitas e põe lá dentro
+// as constatações. Se a visita já existir, junta-lhes as que faltam.
+
+const COLUNAS_AUDIT_IMP = [
+  { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "recinto", "centro"] },
+  { chave: "tipo", rotulo: "Tipo (OM/NC/NCM/AS)", sinonimos: ["tipo", "classificacao", "tipo de constatacao", "tipo (om/nc/ncm/as)"] },
+  { chave: "data", rotulo: "Data da visita", sinonimos: ["data da visita", "data visita", "data de visita", "visita", "data"] },
+  { chave: "fecho", rotulo: "Data de fecho", opcional: true, sinonimos: ["data de fecho da ocorrencia", "data de fecho", "data fecho", "fecho", "data de resolucao", "resolvido", "data de encerramento"] },
+  { chave: "responsavel", rotulo: "Responsável pela resolução", opcional: true, sinonimos: ["responsavel pela resolucao", "responsavel", "resp."] },
+  { chave: "assunto", rotulo: "Assunto (categoria)", sinonimos: ["assunto (categoria)", "assunto", "categoria", "constatacao", "descricao"] },
+  { chave: "causas", rotulo: "Análise de causas", opcional: true, sinonimos: ["analise de causas", "analise de causa", "analise das causas", "causas", "causa"] },
+];
+
+function tipoConstatacao(v) {
+  const t = normChave(v).replace(/[^a-z]/g, "");
+  if (!t) return null;
+  if (t === "ncm" || t.startsWith("ncmaior") || t.startsWith("naoconformidademaior")) return "NCM";
+  if (t === "nc" || t.startsWith("naoconformidade")) return "NC";
+  if (t === "om" || t.startsWith("oportunidade")) return "OM";
+  if (t === "as" || t.startsWith("area") || t.startsWith("sensivel")) return "AS";
+  return null;
+}
+
+function colunasAuditoria(cab) {
+  const c = cab.map(normChave);
+  const mapa = {};
+  const usadas = new Set();
+  COLUNAS_AUDIT_IMP.forEach((col) => {
+    // Primeiro procura igualdade, depois títulos que começam pelo sinónimo.
+    let i = c.findIndex((h, k) => !usadas.has(k) && col.sinonimos.includes(h));
+    if (i < 0) i = c.findIndex((h, k) => !usadas.has(k) && col.sinonimos.some((s) => s.length > 3 && h.startsWith(s)));
+    if (i >= 0) {
+      mapa[col.chave] = i;
+      usadas.add(i);
+    }
+  });
+  return mapa;
+}
+
+function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, onFechar }) {
+  const [linhas, setLinhas] = useState(null);
+  const [iCab, setICab] = useState(0);
+  const [mapa, setMapa] = useState({});
+  const [mapaEscola, setMapaEscola] = useState({});
+  const [erro, setErro] = useState("");
+  const [aLer, setALer] = useState(false);
+
+  const carregar = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setALer(true);
+    setErro("");
+    try {
+      const ls = (/\.xlsx?$/i.test(f.name) ? await lerExcelInq(f) : lerCSVInq(await f.text())).filter((l) => l.some((c) => String(c ?? "").trim()));
+      if (!ls.length) throw new Error("o ficheiro está vazio");
+      // A linha de títulos é a primeira (nas 10 primeiras) que reconhece mais colunas.
+      let melhor = 0;
+      let pontos = -1;
+      ls.slice(0, 10).forEach((l, i) => {
+        const n = Object.keys(colunasAuditoria(l)).length;
+        if (n > pontos) {
+          pontos = n;
+          melhor = i;
+        }
+      });
+      setLinhas(ls);
+      setICab(melhor);
+      setMapa(colunasAuditoria(ls[melhor]));
+    } catch (err) {
+      setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const cab = linhas ? linhas[iCab] : [];
+  const dados = linhas ? linhas.slice(iCab + 1) : [];
+  const v = (l, k) => (mapa[k] === undefined ? "" : String(l[mapa[k]] ?? "").trim());
+
+  // Escolas do ficheiro e a escola da app a que correspondem.
+  const escolasBrutas = useMemo(() => {
+    const c = {};
+    dados.forEach((l) => {
+      const e = v(l, "escola");
+      if (e) c[e] = (c[e] || 0) + 1;
+    });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [linhas, iCab, mapa]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const novo = {};
+    escolasBrutas.forEach(([bruto]) => {
+      const semPrefixo = (t) => normChave(t).replace(/^(dragon force|df)\s+/, "");
+      const n = semPrefixo(bruto);
+      const exata = escolas.find((e) => normChave(e) === normChave(bruto) || semPrefixo(e) === n);
+      const parcial = n.length >= 3 && escolas.find((e) => normChave(e).includes(n));
+      novo[bruto] = exata || parcial || `__nova__${bruto}`;
+    });
+    setMapaEscola(novo);
+  }, [escolasBrutas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resultado = useMemo(() => {
+    if (!linhas) return null;
+    const problemas = [];
+    const visitas = {};
+    dados.forEach((l, i) => {
+      const bruto = v(l, "escola");
+      const data = dataDeCelula(v(l, "data"));
+      const tipo = tipoConstatacao(v(l, "tipo"));
+      const assunto = v(l, "assunto");
+      if (!bruto || !data || !tipo) {
+        problemas.push(`Linha ${iCab + i + 2}: ${!bruto ? "sem escola" : !data ? "data da visita inválida" : `tipo "${v(l, "tipo")}" desconhecido`}`);
+        return;
+      }
+      const alvo = mapaEscola[bruto] || `__nova__${bruto}`;
+      const escola = alvo.startsWith("__nova__") ? alvo.slice(8) : alvo;
+      const fecho = dataDeCelula(v(l, "fecho"));
+      const analise = v(l, "causas");
+      const causaLista = (CAUSAS_ATUAIS || []).find((c) => normChave(c) === normChave(analise));
+      const areaLista = areas.find((a) => normChave(a) === normChave(assunto));
+      const catLista = categorias.find((c) => normChave(c) === normChave(assunto));
+      const chave = `${escola}|${data}`;
+      visitas[chave] = visitas[chave] || { escola, data, findings: [] };
+      visitas[chave].findings.push({
+        id: `f_imp_${Date.now().toString(36)}_${i}`,
+        classification: tipo,
+        category: catLista || (areaLista ? "" : assunto),
+        area: areaLista || "",
+        description: assunto || "(sem assunto)",
+        resolvida: !!fecho,
+        resolvidaEm: fecho || null,
+        responsavel: v(l, "responsavel"),
+        analiseCausas: causaLista ? "" : analise,
+        causaRaiz: causaLista || "",
+        eficacia: "",
+        acao: "",
+        origem: "importacao",
+      });
+    });
+    const lista = Object.values(visitas).sort((a, b) => a.data.localeCompare(b.data));
+    const assinatura = (f) => [f.classification, normChave(f.description), f.resolvidaEm || "", normChave(f.responsavel || "")].join("|");
+    let novasVisitas = 0;
+    let juntas = 0;
+    let repetidas = 0;
+    lista.forEach((vis) => {
+      const existe = audits.find((a) => a.school === vis.escola && a.date === vis.data);
+      if (existe) {
+        const ja = new Set((existe.findings || []).map(assinatura));
+        const antes = vis.findings.length;
+        vis.findings = vis.findings.filter((f) => !ja.has(assinatura(f)));
+        repetidas += antes - vis.findings.length;
+        vis.existente = existe.id;
+        if (vis.findings.length) juntas++;
+      } else novasVisitas++;
+    });
+    const total = lista.reduce((n, x) => n + x.findings.length, 0);
+    const porEpoca = {};
+    lista.forEach((x) => {
+      const ep = epocaDe(x.data);
+      porEpoca[ep] = porEpoca[ep] || { visitas: 0, constat: 0 };
+      porEpoca[ep].visitas++;
+      porEpoca[ep].constat += x.findings.length;
+    });
+    return { lista, problemas, novasVisitas, juntas, repetidas, total, porEpoca };
+  }, [linhas, iCab, mapa, mapaEscola, audits]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const faltam = COLUNAS_AUDIT_IMP.filter((c) => !c.opcional && mapa[c.chave] === undefined);
+  const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
+
+  const importar = () => {
+    const novas = [];
+    const acrescentos = {};
+    resultado.lista.forEach((vis, i) => {
+      if (!vis.findings.length) return;
+      if (vis.existente) acrescentos[vis.existente] = [...(acrescentos[vis.existente] || []), ...vis.findings];
+      else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, date: vis.data, findings: vis.findings, origem: "importacao" });
+    });
+    onImportar(novas, acrescentos, novasEscolas);
+  };
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div
+        className="sheet"
+        style={{ width: "min(720px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Importar constatações de auditoria</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
+          Uma linha por constatação, com as colunas <strong>Escola</strong>, <strong>Tipo</strong> (OM, NC, NCM ou AS), <strong>Data da visita</strong>, <strong>Data de fecho</strong>, <strong>Responsável</strong>, <strong>Assunto</strong> e <strong>Análise de causas</strong>. Não precisa de estar ordenado: as linhas com a mesma escola e a mesma data ficam na mesma visita.
+        </div>
+        <label style={{ ...primaryBtnStyle, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "10px 16px", width: "auto" }}>
+          <Plus size={15} /> {aLer ? "A ler…" : linhas ? "Escolher outro ficheiro" : "Escolher ficheiro Excel ou CSV"}
+          <input type="file" accept=".xlsx,.csv" onChange={carregar} style={{ display: "none" }} />
+        </label>
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.danger }}>{erro}</div>}
+
+        {linhas && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Que coluna é o quê</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
+              {COLUNAS_AUDIT_IMP.map((c) => (
+                <div key={c.chave}>
+                  <label style={{ ...labelStyle, marginTop: 0 }}>
+                    {c.rotulo}
+                    {c.opcional && <span style={{ color: COLORS.slate, fontWeight: 400 }}> · opcional</span>}
+                  </label>
+                  <select
+                    value={mapa[c.chave] ?? ""}
+                    onChange={(e) => setMapa((m) => ({ ...m, [c.chave]: e.target.value === "" ? undefined : Number(e.target.value) }))}
+                    style={{ ...inputStyle, borderColor: !c.opcional && mapa[c.chave] === undefined ? COLORS.danger : undefined }}
+                  >
+                    <option value="">—</option>
+                    {cab.map((h, i) => (
+                      <option key={i} value={i}>
+                        {String(h || `Coluna ${i + 1}`)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            {faltam.length === 0 && escolasBrutas.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Escolas encontradas no ficheiro</div>
+                <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+                  {escolasBrutas.map(([bruto, n], i) => (
+                    <div key={bruto} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 13 }}>
+                      <span style={{ flex: 1 }}>
+                        {bruto} <span style={{ color: COLORS.slate }}>· {n} {n === 1 ? "constatação" : "constatações"}</span>
+                      </span>
+                      <span style={{ color: COLORS.slate }}>→</span>
+                      <select value={mapaEscola[bruto] || ""} onChange={(e) => setMapaEscola((m) => ({ ...m, [bruto]: e.target.value }))} style={{ ...inputStyle, width: 230, padding: "6px 8px" }}>
+                        {escolas.map((e) => (
+                          <option key={e} value={e}>
+                            {e}
+                          </option>
+                        ))}
+                        <option value={`__nova__${bruto}`}>Nova escola: {bruto}</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {faltam.length > 0 ? (
+              <div style={{ marginTop: 14, fontSize: 12.5, color: COLORS.danger }}>Falta indicar a coluna de: {faltam.map((c) => c.rotulo).join(", ")}.</div>
+            ) : (
+              resultado && (
+                <div style={{ marginTop: 18, padding: "14px 16px", background: COLORS.paperSunken, borderRadius: 10 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>
+                    {resultado.total} constatações em {resultado.lista.filter((x) => x.findings.length).length} visitas
+                  </div>
+                  <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 6, lineHeight: 1.6 }}>
+                    {resultado.novasVisitas} visitas novas
+                    {resultado.juntas ? ` · ${resultado.juntas} visitas que já existiam recebem constatações` : ""}
+                    {resultado.repetidas ? ` · ${resultado.repetidas} repetidas ignoradas` : ""}
+                    <br />
+                    {Object.entries(resultado.porEpoca)
+                      .sort()
+                      .map(([ep, x]) => `Época ${ep}: ${x.visitas} visitas, ${x.constat} constatações`)
+                      .join(" · ")}
+                    {novasEscolas.length > 0 && (
+                      <>
+                        <br />
+                        Escolas novas a criar: {novasEscolas.join(", ")}
+                      </>
+                    )}
+                  </div>
+                  {resultado.problemas.length > 0 && (
+                    <details style={{ marginTop: 8, fontSize: 12, color: COLORS.warn }}>
+                      <summary style={{ cursor: "pointer" }}>{resultado.problemas.length} linhas ignoradas</summary>
+                      <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.6 }}>{resultado.problemas.slice(0, 30).join(" · ")}</div>
+                    </details>
+                  )}
+                </div>
+              )
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: 1 }}>
+                Cancelar
+              </button>
+              <button onClick={importar} disabled={faltam.length > 0 || !resultado || !resultado.total} style={{ ...primaryBtnStyle, flex: 2, opacity: faltam.length > 0 || !resultado || !resultado.total ? 0.5 : 1 }}>
+                Importar {resultado && resultado.total ? `${resultado.total} constatações` : ""}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions, areaOptions, auditCategoryOptions }) {
   const [view, setView] = useState("registo");
 
   const sorted = [...audits].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -3741,7 +4063,12 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, schoolOptions, areaOption
         <AuditsAnalysis audits={audits} schoolOptions={schoolOptions} areaOptions={areaOptions} auditCategoryOptions={auditCategoryOptions} />
       ) : (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
+            {onImportar && (
+              <button onClick={onImportar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7 }}>
+                <FileText size={15} /> Importar Excel
+              </button>
+            )}
             <button
               onClick={onNewAudit}
               style={{
@@ -10664,6 +10991,706 @@ const contar = (lista, chave) => {
 
 const LS_RELATORIO = "df-relatorio-seccoes-v2";
 
+// ======================================================================
+// ---------- Relatório geral Dragon Force (todas as escolas) ----------
+// ======================================================================
+
+const SECCOES_GERAL = [
+  { key: "epocas", label: "Evolução entre épocas" },
+  { key: "momentos", label: "Ao longo da época" },
+  { key: "escolas", label: "Escolas lado a lado" },
+  { key: "auditorias", label: "Auditorias" },
+  { key: "reclamacoes", label: "Reclamações" },
+  { key: "satisfacao", label: "Satisfação" },
+  { key: "causas", label: "Causa raiz" },
+  { key: "acompanhar", label: "Pontos a acompanhar" },
+  { key: "notas", label: "Notas e conclusões" },
+];
+const LS_REL_GERAL = "df-relatorio-geral-seccoes";
+
+// Ordem dos meses numa época (julho a junho).
+const MESES_EPOCA = [6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5];
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+const diasEntreRel = (a, b) => Math.round((new Date(String(b).slice(0, 10) + "T00:00:00") - new Date(String(a).slice(0, 10) + "T00:00:00")) / 86400000);
+const mediaDe = (vs) => (vs.length ? vs.reduce((x, y) => x + y, 0) / vs.length : null);
+
+// Indicadores da rede numa época. "ate" (opcional) corta na mesma data do ano.
+function indicadoresEpoca(ep, d, ate) {
+  const dentro = (data) => {
+    if (!data) return false;
+    const x = String(data).slice(0, 10);
+    if (epocaDe(x) !== ep) return false;
+    return ate ? x <= ate : true;
+  };
+  const recl = d.reclamacoes.filter((r) => dentro(r.receivedDate));
+  const res = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
+  const visitas = d.audits.filter((a) => dentro(a.date));
+  const constat = visitas.flatMap((a) => (a.findings || []).map((f) => ({ ...f, data: a.date })));
+  const fechadas = constat.filter((f) => f.resolvida);
+  const temposFecho = fechadas.filter((f) => f.resolvidaEm).map((f) => diasEntreRel(f.data, f.resolvidaEm)).filter((x) => x >= 0);
+  const inq = d.inqueritos.filter((i) => dentro(i.data));
+  const sat = inq.length ? satisfacaoDe(inq.flatMap((i) => i.perguntas || [])).pct : null;
+  const nps = inq.length ? npsDe(inq) : null;
+  const porCls = (c) => constat.filter((f) => f.classification === c).length;
+  return {
+    recl: recl.length,
+    prazo: res.length ? Math.round((res.filter((r) => new Date(r.resolvedDate) <= new Date(r.deadline)).length / res.length) * 100) : null,
+    tempoResp: res.length ? Math.round(mediaDe(res.map((r) => diasEntreRel(r.receivedDate, r.resolvedDate)))) : null,
+    visitas: visitas.length,
+    constat: constat.length,
+    NCM: porCls("NCM"),
+    NC: porCls("NC"),
+    OM: porCls("OM"),
+    AS: porCls("AS"),
+    porVisita: visitas.length ? Math.round((constat.length / visitas.length) * 10) / 10 : null,
+    fechadasPct: constat.length ? Math.round((fechadas.length / constat.length) * 100) : null,
+    tempoFecho: temposFecho.length ? Math.round(mediaDe(temposFecho)) : null,
+    sancoes: d.sanctions.filter((s) => dentro(s.date)).length,
+    satisfacao: sat,
+    nps: nps ? nps.valor : null,
+    inqueritos: inq.length,
+    desistencias: d.desistencias.filter((x) => dentro(x.data)).reduce((n, x) => n + x.n, 0),
+  };
+}
+
+const LINHAS_EPOCA = [
+  { k: "recl", label: "Reclamações recebidas", bom: "baixo", grupo: "Reclamações" },
+  { k: "prazo", label: "Resolvidas no prazo", un: "%", bom: "alto", grupo: "Reclamações" },
+  { k: "tempoResp", label: "Tempo médio de resposta", un: " dias", bom: "baixo", grupo: "Reclamações" },
+  { k: "visitas", label: "Visitas de auditoria", grupo: "Auditorias" },
+  { k: "constat", label: "Constatações", bom: "baixo", grupo: "Auditorias" },
+  { k: "NCM", label: "Não conformidades maiores", bom: "baixo", grupo: "Auditorias", sub: true },
+  { k: "NC", label: "Não conformidades", bom: "baixo", grupo: "Auditorias", sub: true },
+  { k: "OM", label: "Oportunidades de melhoria", grupo: "Auditorias", sub: true },
+  { k: "AS", label: "Áreas sensíveis", bom: "baixo", grupo: "Auditorias", sub: true },
+  { k: "porVisita", label: "Constatações por visita", bom: "baixo", dec: 1, grupo: "Auditorias" },
+  { k: "fechadasPct", label: "Constatações fechadas", un: "%", bom: "alto", grupo: "Auditorias" },
+  { k: "tempoFecho", label: "Tempo médio de fecho", un: " dias", bom: "baixo", grupo: "Auditorias" },
+  { k: "satisfacao", label: "Satisfação nos eventos", un: "%", bom: "alto", grupo: "Satisfação e disciplina" },
+  { k: "nps", label: "NPS dos eventos", bom: "alto", grupo: "Satisfação e disciplina" },
+  { k: "sancoes", label: "Ocorrências disciplinares", bom: "baixo", grupo: "Satisfação e disciplina" },
+  { k: "desistencias", label: "Desistências registadas", bom: "baixo", grupo: "Satisfação e disciplina" },
+];
+
+function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGuardarNota, seccoes }) {
+  const { reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, satisfacao, inqueritos } = dados;
+  const ver = (k) => seccoes.has(k);
+  const hoje = isoDe(new Date());
+  const epocaAtual = epocaDe(hoje);
+  const chaveNota = `__geral__|${periodo}`;
+  const [nota, setNota] = useState(notas[chaveNota] || "");
+  useEffect(() => setNota(notas[chaveNota] || ""), [chaveNota]); // eslint-disable-line react-hooks/exhaustive-deps
+  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+
+  // ---- Épocas com dados (no máximo as três mais recentes) ----
+  const todasEpocas = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaDe(a.date)), ...inqueritos.map((i) => epocaDe(i.data))].filter(Boolean))]
+    .filter((e) => e <= epocaAtual)
+    .sort();
+  const epocas = todasEpocas.slice(-3);
+  const anoAtual = Number(epocaAtual.slice(0, 4));
+  const epocaPassada = `${anoAtual - 1}/${String(anoAtual).slice(2)}`;
+  const hojeUmAnoAntes = (() => {
+    const x = new Date();
+    x.setFullYear(x.getFullYear() - 1);
+    return isoDe(x);
+  })();
+  const ind = Object.fromEntries(epocas.map((e) => [e, indicadoresEpoca(e, dados)]));
+  const homologo = epocas.includes(epocaPassada) && epocas.includes(epocaAtual) ? indicadoresEpoca(epocaPassada, dados, hojeUmAnoAntes) : null;
+  const dataCurta = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit" }).format(new Date());
+
+  // ---- Período escolhido ----
+  const recl = reclamacoes.filter((r) => dentroPeriodo(periodo, r.receivedDate));
+  const visitas = audits.filter((a) => dentroPeriodo(periodo, a.date));
+  const constat = visitas.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
+  const todasConstat = audits.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
+  const abertas = todasConstat.filter((f) => !f.resolvida);
+  const inqPeriodo = inqueritos.filter((i) => dentroPeriodo(periodo, i.data));
+  const satPeriodo = inqPeriodo.length ? satisfacaoDe(inqPeriodo.flatMap((i) => i.perguntas || [])).pct : null;
+  const npsPeriodo = inqPeriodo.length ? npsDe(inqPeriodo) : null;
+  const alunosTotal = escolas.reduce((n, e) => n + (metricasEscola(e, periodo, dados).alunos || 0), 0);
+  const antTotal = escolas.reduce((n, e) => n + ((epocaAnterior[e] || {}).inscritos || 0), 0);
+  const crescRede = antTotal && alunosTotal ? Math.round(((alunosTotal - antTotal) / antTotal) * 1000) / 10 : null;
+  const porEscola = escolas.map((e) => ({ e, m: metricasEscola(e, periodo, dados), constat: constat.filter((f) => f.escola === e).length, abertas: abertas.filter((f) => f.escola === e).length }));
+
+  // ---- Momentos: série mensal por época ----
+  const serieMensal = (lista, dataDe) =>
+    MESES_EPOCA.map((m) => {
+      const linha = { name: MES_CURTO[m] };
+      epocas.forEach((ep) => {
+        const ano = m >= 6 ? Number(ep.slice(0, 4)) : Number(ep.slice(0, 4)) + 1;
+        const prefixo = `${ano}-${String(m + 1).padStart(2, "0")}`;
+        // Meses ainda por vir na época em curso ficam em branco.
+        linha[ep] = ep === epocaAtual && prefixo > hoje.slice(0, 7) ? null : lista.filter((x) => String(dataDe(x)).slice(0, 7) === prefixo).length;
+      });
+      return linha;
+    });
+  const coresEpoca = (i) => [COLORS.slate, "#9DB5DD", azulRel()][i + (3 - epocas.length)] || azulRel();
+
+  const corDif = (dif, bom) => (dif === 0 || !bom ? COLORS.slate : (bom === "alto" ? dif > 0 : dif < 0) ? REL_VERDE : REL_VERMELHO);
+  const fmtDif = (dif, l) => (dif === null ? "—" : dif === 0 ? "=" : `${dif > 0 ? "+" : "−"}${fmtNum(Math.abs(dif), l.dec ?? 0)}${l.un === "%" ? " p.p." : l.un === " dias" ? " d" : ""}`);
+
+  // ---- Melhor e pior por coluna (escolas lado a lado) ----
+  const COL_ESC = [
+    { k: "alunos", label: "Alunos", v: (x) => x.m.alunos || null },
+    { k: "crescimento", label: "Cresc.", v: (x) => x.m.crescimento, un: "%", dec: 1, bom: "alto" },
+    { k: "reclPor100", label: "Recl./100", v: (x) => x.m.reclPor100, dec: 1, bom: "baixo" },
+    { k: "prazo", label: "No prazo", v: (x) => x.m.prazo, un: "%", bom: "alto" },
+    { k: "constat", label: "Constat.", v: (x) => x.constat, bom: "baixo" },
+    { k: "abertas", label: "Por fechar", v: (x) => x.abertas, bom: "baixo" },
+    { k: "satisfacao", label: "Satisf.", v: (x) => x.m.satisfacao, un: "%", bom: "alto" },
+    { k: "desistPct", label: "Desist.", v: (x) => x.m.desistPct, un: "%", dec: 1, bom: "baixo" },
+    { k: "conversao", label: "Conversão", v: (x) => x.m.conversao, un: "%", bom: "alto" },
+  ];
+  const extremos = Object.fromEntries(
+    COL_ESC.filter((c) => c.bom).map((c) => {
+      const vs = porEscola.map(c.v).filter((v) => v !== null && v !== undefined && !isNaN(v));
+      if (vs.length < 2) return [c.k, null];
+      const max = Math.max(...vs);
+      const min = Math.min(...vs);
+      if (max === min) return [c.k, null];
+      return [c.k, c.bom === "alto" ? { melhor: max, pior: min } : { melhor: min, pior: max }];
+    })
+  );
+
+  // ---- Auditorias: assuntos, responsáveis e escolas ----
+  const assuntoDe = (f) => f.category || f.area || f.description || "Sem assunto";
+  const epA = epocas[epocas.length - 2];
+  const epB = epocas[epocas.length - 1];
+  const assuntos = (() => {
+    const c = {};
+    todasConstat.forEach((f) => {
+      const ep = epocaDe(f.data);
+      if (ep !== epA && ep !== epB) return;
+      const k = assuntoDe(f);
+      c[k] = c[k] || { a: 0, b: 0 };
+      if (ep === epA) c[k].a++;
+      else c[k].b++;
+    });
+    return Object.entries(c)
+      .map(([name, x]) => ({ name, ...x, total: x.a + x.b }))
+      .sort((x, y) => y.total - x.total)
+      .slice(0, 10);
+  })();
+  const responsaveis = (() => {
+    const c = {};
+    constat.forEach((f) => {
+      const k = (f.responsavel || "").trim();
+      if (!k) return;
+      c[k] = c[k] || { n: 0, fechadas: 0, tempos: [] };
+      c[k].n++;
+      if (f.resolvida) {
+        c[k].fechadas++;
+        if (f.resolvidaEm) c[k].tempos.push(diasEntreRel(f.data, f.resolvidaEm));
+      }
+    });
+    return Object.entries(c)
+      .map(([nome, x]) => ({ nome, ...x, tempo: x.tempos.length ? Math.round(mediaDe(x.tempos)) : null }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 10);
+  })();
+  const fechoPorEscola = escolas
+    .map((e) => {
+      const ts = constat.filter((f) => f.escola === e && f.resolvidaEm).map((f) => diasEntreRel(f.data, f.resolvidaEm)).filter((x) => x >= 0);
+      return { name: e.replace(/^Dragon Force\s+/i, ""), value: ts.length ? Math.round(mediaDe(ts)) : null };
+    })
+    .filter((x) => x.value !== null)
+    .sort((a, b) => b.value - a.value);
+  const empilhado = epocas.map((ep) => ({ name: ep, NCM: ind[ep].NCM, NC: ind[ep].NC, OM: ind[ep].OM, AS: ind[ep].AS }));
+  const CORES_CLS = { NCM: REL_VERMELHO, NC: "#C58A1A", OM: azulRel(), AS: "#9DB5DD" };
+
+  // ---- Reclamações: temas por época ----
+  const temas = (() => {
+    const c = {};
+    reclamacoes.forEach((r) => {
+      const ep = epocaDe(r.receivedDate);
+      if (ep !== epA && ep !== epB) return;
+      const k = r.tema || r.categoria || "Sem tema";
+      c[k] = c[k] || { a: 0, b: 0 };
+      if (ep === epA) c[k].a++;
+      else c[k].b++;
+    });
+    return Object.entries(c)
+      .map(([name, x]) => ({ name, ...x, total: x.a + x.b }))
+      .sort((x, y) => y.total - x.total)
+      .slice(0, 10);
+  })();
+
+  // ---- Pontos a acompanhar ----
+  const acompanhar = [];
+  porEscola.forEach(({ e }) => {
+    const atrasadas = reclamacoes.filter((r) => r.school === e && r.derivedStatus === "atrasado").length;
+    if (atrasadas) acompanhar.push({ nivel: "alto", t: `${e}: ${atrasadas} ${atrasadas === 1 ? "reclamação" : "reclamações"} fora do prazo` });
+  });
+  porEscola.forEach(({ e }) => {
+    const nc = abertas.filter((f) => f.escola === e && (f.classification === "NC" || f.classification === "NCM"));
+    const velhas = nc.filter((f) => diasEntreRel(f.data, hoje) > 60).length;
+    if (nc.length) acompanhar.push({ nivel: nc.some((f) => f.classification === "NCM") || velhas ? "alto" : "medio", t: `${e}: ${nc.length} não conformidade${nc.length === 1 ? "" : "s"} por fechar${velhas ? ` (${velhas} há mais de 60 dias)` : ""}` });
+  });
+  porEscola
+    .filter((x) => x.m.crescimento !== null && x.m.crescimento < 0)
+    .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.e}: ${fmtNum(x.m.crescimento, 1)}% de alunos face à época passada` }));
+  porEscola
+    .filter((x) => x.m.satisfacao !== null && x.m.satisfacao < 75)
+    .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.e}: satisfação de ${x.m.satisfacao}%` }));
+  if (homologo && ind[epocaAtual].recl > homologo.recl)
+    acompanhar.push({ nivel: "medio", t: `Reclamações acima do mesmo período da época passada (${ind[epocaAtual].recl} contra ${homologo.recl})` });
+  inqPeriodo
+    .map((i) => ({ i, s: satisfacaoDe(i.perguntas || []) }))
+    .filter((x) => x.s.pct !== null && x.s.pct < 70)
+    .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.i.edicao}: ${x.s.pct}% de satisfação` }));
+  const ordemN = { alto: 0, medio: 1, baixo: 2 };
+  acompanhar.sort((a, b) => ordemN[a.nivel] - ordemN[b.nivel]);
+  const corN = { alto: REL_VERMELHO, medio: "#C58A1A", baixo: COLORS.slate };
+
+  const thR = (al = "right") => ({ textAlign: al, padding: "0 0 8px 10px", borderBottom: `1px solid ${COLORS.ink}`, whiteSpace: "nowrap" });
+  const tdR = { textAlign: "right", padding: "8px 0 8px 10px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+
+  return (
+    <article className="relFolha" style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, maxWidth: 880, margin: "0 auto", boxShadow: "0 1px 2px rgba(10,20,40,0.06), 0 12px 40px -12px rgba(10,20,40,0.18)", overflow: "hidden" }}>
+      <table className="relPaginas">
+        <thead>
+          <tr>
+            <td>
+              <div className="relEspaco" />
+            </td>
+          </tr>
+        </thead>
+        <tfoot>
+          <tr>
+            <td>
+              <div className="relRodapeImp">
+                <span>FC Porto · Dragon Force · Gestão da Qualidade</span>
+                <span>Relatório geral · {nomePeriodo(periodo)}</span>
+              </div>
+            </td>
+          </tr>
+        </tfoot>
+        <tbody>
+          <tr>
+            <td>
+              <header className="relCapa">
+                <div style={{ background: REL_AZUL, color: "#fff", display: "flex", alignItems: "center", gap: 14, padding: "14px 44px" }}>
+                  <LogoRel altura={30} cor="#fff" />
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.16em", textTransform: "uppercase", lineHeight: 1.5 }}>
+                    FC Porto · Dragon Force
+                    <div style={{ fontWeight: 500, opacity: 0.7, letterSpacing: "0.12em" }}>Gestão da Qualidade</div>
+                  </div>
+                  <div style={{ marginLeft: "auto", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.8 }}>Relatório geral</div>
+                </div>
+                <div style={{ padding: "44px 44px 0" }}>
+                  <div className="relRotulo" style={{ color: azulRel() }}>
+                    {nomePeriodo(periodo)} · {escolas.length} escolas
+                  </div>
+                  <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 46, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05 }}>Dragon Force</h2>
+                  <div style={{ fontSize: 13, color: COLORS.ink2 }}>
+                    Relatório da rede de escolas · emitido a {geradoEm}
+                    {epocas.length > 1 ? ` · compara as épocas ${epocas.join(", ")}` : ""}
+                  </div>
+                  <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
+                    {[
+                      ["Alunos", fmtNum(alunosTotal), crescRede === null ? null : `${crescRede > 0 ? "+" : ""}${fmtNum(crescRede, 1)}% face à época passada`],
+                      ["Reclamações", fmtNum(recl.length), alunosTotal ? `${fmtNum(por100(recl.length, alunosTotal), 1)} por 100 alunos` : null],
+                      ["Visitas de auditoria", fmtNum(visitas.length), `${constat.length} constatações`],
+                      ["Por fechar", fmtNum(abertas.length), "constatações em aberto"],
+                      ["Satisfação", satPeriodo === null ? "—" : `${satPeriodo}%`, npsPeriodo ? `NPS ${npsPeriodo.valor > 0 ? "+" : ""}${npsPeriodo.valor}` : "eventos e campos"],
+                    ].map(([l, v, sub], i) => (
+                      <div key={l} style={{ padding: "16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
+                        <div className="relRotulo">{l}</div>
+                        <div style={{ fontFamily: REL_SERIFA, fontSize: 34, fontWeight: 600, color: COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                        {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </header>
+
+              <div className="relCorpo" style={{ padding: "0 44px 40px" }}>
+                {ver("epocas") && (
+                  <SeccaoRel titulo="Evolução entre épocas" nota={homologo ? `A coluna ${epocaPassada} até ${dataCurta} conta só até à mesma data do ano passado` : "Épocas completas"}>
+                    <table className="relQuadro" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr>
+                          <th className="relRotulo" style={thR("left")}>Indicador</th>
+                          {epocas.map((e) => (
+                            <th key={e} className="relRotulo" style={{ ...thR(), color: e === epocaAtual ? azulRel() : undefined }}>
+                              {e}
+                              {e === epocaAtual ? " *" : ""}
+                            </th>
+                          ))}
+                          {homologo && (
+                            <th className="relRotulo" style={thR()}>
+                              {epocaPassada} até {dataCurta}
+                            </th>
+                          )}
+                          <th className="relRotulo" style={thR()}>
+                            Variação
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {LINHAS_EPOCA.map((l, i) => {
+                          const atual = ind[epocas[epocas.length - 1]][l.k];
+                          const base = homologo ? homologo[l.k] : epocas.length > 1 ? ind[epocas[epocas.length - 2]][l.k] : null;
+                          const dif = atual !== null && base !== null && base !== undefined ? atual - base : null;
+                          const novoGrupo = i === 0 || LINHAS_EPOCA[i - 1].grupo !== l.grupo;
+                          return (
+                            <React.Fragment key={l.k}>
+                              {novoGrupo && (
+                                <tr>
+                                  <td colSpan={epocas.length + (homologo ? 3 : 2)} style={{ padding: "16px 0 6px", fontFamily: REL_SERIFA, fontSize: 14, fontWeight: 600, color: COLORS.ink }}>
+                                    {l.grupo}
+                                  </td>
+                                </tr>
+                              )}
+                              <tr className="relLinhaComp">
+                                <td style={{ padding: "8px 0", paddingLeft: l.sub ? 14 : 0, color: l.sub ? COLORS.ink2 : COLORS.ink, borderBottom: `1px solid ${COLORS.ruleSoft}` }}>{l.label}</td>
+                                {epocas.map((e) => (
+                                  <td key={e} style={{ ...tdR, fontWeight: e === epocaAtual ? 600 : 400, color: COLORS.ink }}>
+                                    {fmtNum(ind[e][l.k], l.dec ?? 0)}
+                                    {ind[e][l.k] !== null && l.un ? <span style={{ color: COLORS.slate }}>{l.un}</span> : null}
+                                  </td>
+                                ))}
+                                {homologo && (
+                                  <td style={{ ...tdR, color: COLORS.ink2 }}>
+                                    {fmtNum(homologo[l.k], l.dec ?? 0)}
+                                    {homologo[l.k] !== null && l.un ? <span style={{ color: COLORS.slate }}>{l.un}</span> : null}
+                                  </td>
+                                )}
+                                <td style={{ ...tdR, fontWeight: 600, color: dif === null ? COLORS.slate : corDif(dif, l.bom) }}>{fmtDif(dif, l)}</td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ fontSize: 10.5, color: COLORS.slate, marginTop: 10 }}>
+                      * Época em curso, com dados até {fmt(new Date())}.{homologo ? ` A variação compara com ${epocaPassada} até à mesma data.` : ""}
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("momentos") && (
+                  <SeccaoRel titulo="Ao longo da época" nota="Por mês, de julho a junho">
+                    <div className="relGrelha">
+                      {[
+                        ["Reclamações recebidas", serieMensal(reclamacoes, (r) => r.receivedDate)],
+                        ["Constatações de auditoria", serieMensal(todasConstat, (f) => f.data)],
+                      ].map(([titulo, serie]) => (
+                        <div key={titulo}>
+                          <div className="relSub">{titulo}</div>
+                          <ResponsiveContainer width="100%" height={190}>
+                            <LineChart data={serie} margin={{ left: -22, right: 8, top: 6 }}>
+                              <CartesianGrid stroke={COLORS.ruleSoft} vertical={false} />
+                              <XAxis dataKey="name" tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                              <Tooltip content={<DicaGrafico />} />
+                              {epocas.map((ep, i) => (
+                                <Line key={ep} type="linear" dataKey={ep} name={ep} stroke={coresEpoca(i)} strokeWidth={ep === epocaAtual ? 2.2 : 1.4} strokeDasharray={ep === epocaAtual ? undefined : i === 0 && epocas.length === 3 ? "2 3" : "5 3"} dot={false} connectNulls={false} isAnimationActive={false} />
+                              ))}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 18, fontSize: 11.5, color: COLORS.ink2, marginTop: -12 }}>
+                      {epocas.map((ep, i) => (
+                        <span key={ep} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ width: 18, height: 0, borderTop: `${ep === epocaAtual ? 2.2 : 1.4}px ${ep === epocaAtual ? "solid" : "dashed"} ${coresEpoca(i)}` }} />
+                          {ep}
+                        </span>
+                      ))}
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("escolas") && (
+                  <SeccaoRel titulo="Escolas lado a lado" nota={`${nomePeriodo(periodo)} · a verde o melhor valor, a vermelho o pior`}>
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="relQuadro" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr>
+                            <th className="relRotulo" style={thR("left")}>Escola</th>
+                            {COL_ESC.map((c) => (
+                              <th key={c.k} className="relRotulo" style={thR()}>
+                                {c.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...porEscola]
+                            .sort((a, b) => (b.m.alunos || 0) - (a.m.alunos || 0))
+                            .map((x) => (
+                              <tr key={x.e} className="relLinhaComp">
+                                <td style={{ padding: "9px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink, whiteSpace: "nowrap" }}>{x.e.replace(/^Dragon Force\s+/i, "")}</td>
+                                {COL_ESC.map((c) => {
+                                  const v = c.v(x);
+                                  const ex = extremos[c.k];
+                                  const cor = ex && v === ex.melhor ? REL_VERDE : ex && v === ex.pior ? REL_VERMELHO : COLORS.ink;
+                                  return (
+                                    <td key={c.k} style={{ ...tdR, color: cor, fontWeight: cor !== COLORS.ink ? 700 : 400 }}>
+                                      {fmtNum(v, c.dec ?? 0)}
+                                      {v !== null && v !== undefined && c.un ? c.un : ""}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("auditorias") && (
+                  <SeccaoRel titulo="Auditorias" nota={`${visitas.length} visitas e ${constat.length} constatações no período`}>
+                    <div className="relGrelha">
+                      <div>
+                        <div className="relSub">Constatações por tipo e época</div>
+                        {empilhado.some((x) => x.NCM + x.NC + x.OM + x.AS) ? (
+                          <>
+                            <ResponsiveContainer width="100%" height={Math.max(90, epocas.length * 44)}>
+                              <BarChart data={empilhado} layout="vertical" margin={{ left: 0, right: 30 }}>
+                                <XAxis type="number" hide />
+                                <YAxis type="category" dataKey="name" width={62} tick={{ fontSize: 11.5, fill: COLORS.ink2 }} axisLine={false} tickLine={false} />
+                                <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                                {["NCM", "NC", "OM", "AS"].map((c, i, arr) => (
+                                  <Bar key={c} dataKey={c} stackId="t" fill={CORES_CLS[c]} barSize={14} isAnimationActive={false}>
+                                    {i === arr.length - 1 && <LabelList valueAccessor={(e) => e.payload.NCM + e.payload.NC + e.payload.OM + e.payload.AS} position="right" style={{ fontSize: 11.5, fontWeight: 600, fill: COLORS.ink }} />}
+                                  </Bar>
+                                ))}
+                              </BarChart>
+                            </ResponsiveContainer>
+                            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11, color: COLORS.ink2, marginTop: 6 }}>
+                              {["NCM", "NC", "OM", "AS"].map((c) => (
+                                <span key={c} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                  <span style={{ width: 8, height: 8, background: CORES_CLS[c] }} />
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="relVazio">Sem constatações registadas.</div>
+                        )}
+                      </div>
+                      <div>
+                        <div className="relSub">Tempo médio de fecho por escola (dias)</div>
+                        <BarrasRel dados={fechoPorEscola} largura={110} />
+                      </div>
+                    </div>
+                    <div className="relGrelha">
+                      <div>
+                        <div className="relSub">Assuntos mais frequentes</div>
+                        {assuntos.length ? (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                            <thead>
+                              <tr>
+                                <th className="relRotulo" style={thR("left")}>Assunto</th>
+                                {epA && <th className="relRotulo" style={thR()}>{epA}</th>}
+                                <th className="relRotulo" style={thR()}>{epB}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {assuntos.map((a) => (
+                                <tr key={a.name}>
+                                  <td style={{ padding: "7px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink }}>{a.name}</td>
+                                  {epA && <td style={{ ...tdR, color: COLORS.ink2 }}>{a.a}</td>}
+                                  <td style={{ ...tdR, fontWeight: 600, color: epA ? corDif(a.b - a.a, "baixo") : COLORS.ink }}>{a.b}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="relVazio">Sem constatações registadas.</div>
+                        )}
+                      </div>
+                      <div>
+                        <div className="relSub">Responsáveis pela resolução</div>
+                        {responsaveis.length ? (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                            <thead>
+                              <tr>
+                                <th className="relRotulo" style={thR("left")}>Responsável</th>
+                                <th className="relRotulo" style={thR()}>Constat.</th>
+                                <th className="relRotulo" style={thR()}>Fechadas</th>
+                                <th className="relRotulo" style={thR()}>Dias</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {responsaveis.map((r) => (
+                                <tr key={r.nome}>
+                                  <td style={{ padding: "7px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink }}>{r.nome}</td>
+                                  <td style={tdR}>{r.n}</td>
+                                  <td style={tdR}>{Math.round((r.fechadas / r.n) * 100)}%</td>
+                                  <td style={tdR}>{fmtNum(r.tempo)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="relVazio">Sem responsáveis registados no período.</div>
+                        )}
+                      </div>
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("reclamacoes") && (
+                  <SeccaoRel titulo="Reclamações" nota={`${recl.length} no período`}>
+                    <div className="relGrelha">
+                      <div>
+                        <div className="relSub">Temas mais frequentes</div>
+                        {temas.length ? (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                            <thead>
+                              <tr>
+                                <th className="relRotulo" style={thR("left")}>Tema</th>
+                                {epA && <th className="relRotulo" style={thR()}>{epA}</th>}
+                                <th className="relRotulo" style={thR()}>{epB}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {temas.map((a) => (
+                                <tr key={a.name}>
+                                  <td style={{ padding: "7px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink }}>{a.name}</td>
+                                  {epA && <td style={{ ...tdR, color: COLORS.ink2 }}>{a.a}</td>}
+                                  <td style={{ ...tdR, fontWeight: 600, color: epA ? corDif(a.b - a.a, "baixo") : COLORS.ink }}>{a.b}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="relVazio">Sem reclamações registadas.</div>
+                        )}
+                      </div>
+                      <div>
+                        <div className="relSub">Por escola, por 100 alunos</div>
+                        <BarrasRel
+                          dados={porEscola
+                            .filter((x) => x.m.reclPor100 !== null)
+                            .map((x) => ({ name: x.e.replace(/^Dragon Force\s+/i, ""), value: x.m.reclPor100 }))
+                            .sort((a, b) => b.value - a.value)}
+                          largura={110}
+                        />
+                        <div className="relSub" style={{ marginTop: 18 }}>
+                          Gravidade
+                        </div>
+                        <BarraPartesRel partes={["alta", "media", "baixa"].map((k) => ({ label: SEVERITY_META[k].label, valor: recl.filter((r) => r.severity === k).length, cor: { alta: REL_VERMELHO, media: "#C58A1A", baixa: "#9DB5DD" }[k] }))} />
+                      </div>
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("satisfacao") && (
+                  <SeccaoRel titulo="Satisfação" nota={`${inqPeriodo.length} inquéritos de eventos no período`}>
+                    <div className="relGrelha">
+                      <div>
+                        <div className="relSub">Eventos e campos</div>
+                        <TabelaRel
+                          colunas={["Evento", "Respostas", "Satisfação", "NPS"]}
+                          vazio="Sem inquéritos no período."
+                          linhas={inqPeriodo
+                            .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+                            .slice(0, 12)
+                            .map((i) => {
+                              const s = satisfacaoDe(i.perguntas || []);
+                              const n = npsDe([i]);
+                              return [i.edicao, i.respostas || s.n || "—", <strong style={{ color: corRel(corSatisfacao(s.pct)) || COLORS.ink }}>{s.pct ?? "—"}%</strong>, n ? n.valor : "—"];
+                            })}
+                        />
+                      </div>
+                      <div>
+                        <div className="relSub">Satisfação por escola</div>
+                        <BarrasRel
+                          dados={porEscola
+                            .filter((x) => x.m.satisfacao !== null)
+                            .map((x) => ({ name: x.e.replace(/^Dragon Force\s+/i, ""), value: x.m.satisfacao }))
+                            .sort((a, b) => b.value - a.value)}
+                          largura={110}
+                          sufixo="%"
+                        />
+                      </div>
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                {ver("causas") && (
+                  <SeccaoRel titulo="Causa raiz" nota="Reclamações concluídas e constatações fechadas no período">
+                    {(() => {
+                      const itens = itensCausa(recl, visitas);
+                      const analises = constat.filter((f) => f.analiseCausas).length;
+                      return (
+                        <div className="relGrelha">
+                          <div>
+                            <div className="relSub">Reclamações</div>
+                            <BarrasRel dados={contar(itens.filter((i) => i.origem === "Reclamações"), "causa")} largura={170} />
+                          </div>
+                          <div>
+                            <div className="relSub">Constatações de auditoria</div>
+                            <BarrasRel dados={contar(itens.filter((i) => i.origem === "Auditorias"), "causa")} largura={170} />
+                            {analises > 0 && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 8 }}>{analises} constatações com análise de causas escrita</div>}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </SeccaoRel>
+                )}
+
+                {ver("acompanhar") && (
+                  <SeccaoRel titulo="Pontos a acompanhar" nota="Gerados a partir dos dados">
+                    {acompanhar.length === 0 ? (
+                      <div style={{ fontSize: 13, color: COLORS.ink2 }}>Nada pendente na rede.</div>
+                    ) : (
+                      <div>
+                        {acompanhar.slice(0, 18).map((it, i) => (
+                          <div key={i} className="relLinhaComp" style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "10px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, lineHeight: 1.5, color: COLORS.ink }}>
+                            <span style={{ width: 13, height: 13, border: `1px solid ${COLORS.ink2}`, flex: "none", marginTop: 3 }} />
+                            <span style={{ flex: 1 }}>{it.t}</span>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: corN[it.nivel], flex: "none", marginTop: 6 }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </SeccaoRel>
+                )}
+
+                {ver("notas") && (
+                  <SeccaoRel titulo="Notas e conclusões" nota="Ficam guardadas para o relatório geral deste período">
+                    <textarea
+                      className="relSoEcra"
+                      rows={5}
+                      value={nota}
+                      placeholder="Conclusões, próximos passos, responsáveis…"
+                      onChange={(e) => setNota(e.target.value)}
+                      onBlur={() => {
+                        if ((notas[chaveNota] || "") !== nota) onGuardarNota(chaveNota, nota);
+                      }}
+                      style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", lineHeight: 1.55 }}
+                    />
+                    <div className="relSoImpressao" style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                      {nota || Array.from({ length: 5 }).map((_, i) => <div key={i} style={{ height: 30, borderBottom: `1px solid ${COLORS.rule}` }} />)}
+                    </div>
+                  </SeccaoRel>
+                )}
+
+                <div className="relFimEcra" style={{ marginTop: 44, paddingTop: 14, borderTop: `1px solid ${COLORS.rule}`, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10.5, color: COLORS.slate, letterSpacing: "0.04em" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <LogoRel altura={18} cor={COLORS.slate} />
+                    FC Porto · Dragon Force · Gestão da Qualidade
+                  </span>
+                  <span>Relatório geral · {nomePeriodo(periodo)}</span>
+                </div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </article>
+  );
+}
+
 function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
   const epocaAtual = epocaDe(new Date().toISOString().slice(0, 10));
   const epocasComDados = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaDe(a.date))].filter(Boolean))].sort().reverse();
@@ -10680,6 +11707,27 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
     return new Set(SECCOES_RELATORIO.map((s) => s.key));
   });
   const [comparar, setComparar] = useState(true);
+  const geral = escola === "__geral__";
+  const [seccoesGeral, setSeccoesGeral] = useState(() => {
+    try {
+      const g = JSON.parse(window.localStorage.getItem(LS_REL_GERAL) || "null");
+      if (Array.isArray(g)) return new Set(g);
+    } catch (e) {
+      // sem preferências guardadas
+    }
+    return new Set(SECCOES_GERAL.map((x) => x.key));
+  });
+  const toggleGeral = (k) =>
+    setSeccoesGeral((s0) => {
+      const n = new Set(s0);
+      n.has(k) ? n.delete(k) : n.add(k);
+      try {
+        window.localStorage.setItem(LS_REL_GERAL, JSON.stringify([...n]));
+      } catch (e) {
+        // preferências só nesta sessão
+      }
+      return n;
+    });
   const chaveNota = `${escola}|${periodo}`;
   const [nota, setNota] = useState(notas[chaveNota] || "");
   useEffect(() => setNota(notas[chaveNota] || ""), [chaveNota]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -10827,6 +11875,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               Escola
             </label>
             <select id="rel-escola" value={escola} onChange={(e) => setEscola(e.target.value)} style={selectStyle}>
+              <option value="__geral__">Dragon Force · relatório geral</option>
               {escolas.map((e) => (
                 <option key={e} value={e}>
                   {e}
@@ -10851,17 +11900,19 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               ))}
             </select>
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, paddingBottom: 9, cursor: "pointer" }}>
-            <input type="checkbox" checked={comparar} onChange={(e) => setComparar(e.target.checked)} />
-            Comparar com as outras escolas
-          </label>
+          {!geral && (
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, paddingBottom: 9, cursor: "pointer" }}>
+              <input type="checkbox" checked={comparar} onChange={(e) => setComparar(e.target.checked)} />
+              Comparar com as outras escolas
+            </label>
+          )}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button
               onClick={() => {
                 // O PDF sai sempre em tema claro; se estiver escuro, troca e repõe no fim.
                 const imprimir = () => {
                   const tituloAntes = document.title;
-                  document.title = `Relatório ${escola} - ${nomePeriodo(periodo)}`.replace(/[\\/:*?"<>|]/g, "-");
+                  document.title = `${geral ? "Relatório geral Dragon Force" : `Relatório ${escola}`} - ${nomePeriodo(periodo)}`.replace(/[\\/:*?"<>|]/g, "-");
                   const repor = () => {
                     document.title = tituloAntes;
                     window.removeEventListener("afterprint", repor);
@@ -10890,12 +11941,12 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
         </div>
         <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 8px" }}>Secções do relatório</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {SECCOES_RELATORIO.map((s) => {
-            const on = seccoes.has(s.key);
+          {(geral ? SECCOES_GERAL : SECCOES_RELATORIO).map((s) => {
+            const on = (geral ? seccoesGeral : seccoes).has(s.key);
             return (
               <button
                 key={s.key}
-                onClick={() => toggle(s.key)}
+                onClick={() => (geral ? toggleGeral(s.key) : toggle(s.key))}
                 className="pill"
                 style={{
                   padding: "6px 12px",
@@ -10916,7 +11967,20 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
         </div>
       </div>
 
+      {geral && (
+        <RelatorioGeral
+          escolas={escolas}
+          periodo={periodo}
+          comparar={comparar}
+          dados={{ reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, satisfacao, inqueritos }}
+          niveis={niveis}
+          notas={notas}
+          onGuardarNota={onGuardarNota}
+          seccoes={seccoesGeral}
+        />
+      )}
       {/* ---- Folha do relatório ---- */}
+      {!geral && (
       <article className="relFolha" style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, maxWidth: 880, margin: "0 auto", boxShadow: "0 1px 2px rgba(10,20,40,0.06), 0 12px 40px -12px rgba(10,20,40,0.18)", overflow: "hidden" }}>
        {/* A tabela só serve a impressão: repete uma margem no topo e um rodapé em cada página. */}
        <table className="relPaginas">
@@ -11430,6 +12494,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
         </tbody>
        </table>
       </article>
+      )}
     </div>
   );
 }
@@ -13995,6 +15060,7 @@ function AppPrincipal({ onSair }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showAuditForm, setShowAuditForm] = useState(false);
+  const [importarAud, setImportarAud] = useState(false);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
@@ -14566,7 +15632,7 @@ function AppPrincipal({ onSair }) {
       : page === "inqueritos"
       ? "Inquéritos de satisfação"
       : page === "relatorio"
-      ? "Relatório de escola"
+      ? "Relatórios"
       : page === "hoje"
       ? "Hoje"
       : "Reclamações";
@@ -14685,7 +15751,7 @@ function AppPrincipal({ onSair }) {
     { id: "p-auditorias", grupo: "Ir para", titulo: "Auditorias", icon: ClipboardList, acao: () => setPage("auditorias") },
     { id: "p-sancoes", grupo: "Ir para", titulo: "Sanções", icon: Scale, acao: () => setPage("sancoes") },
     { id: "p-inscritos", grupo: "Ir para", titulo: "Inscritos", icon: Users, acao: () => setPage("inscritos") },
-    { id: "p-relatorio", grupo: "Ir para", titulo: "Relatório de escola", icon: FileText, acao: () => setPage("relatorio") },
+    { id: "p-relatorio", grupo: "Ir para", titulo: "Relatórios (escola e geral)", icon: FileText, acao: () => setPage("relatorio") },
     { id: "p-inqueritos", grupo: "Ir para", titulo: "Inquéritos de satisfação", icon: MessageSquareText, acao: () => setPage("inqueritos") },
     {
       id: "a-nova",
@@ -14756,7 +15822,7 @@ function AppPrincipal({ onSair }) {
     },
     {
       grupo: "Relatórios",
-      itens: [{ key: "relatorio", label: "Relatório de escola", icon: FileText, contador: null }],
+      itens: [{ key: "relatorio", label: "Relatórios", icon: FileText, contador: null }],
     },
   ];
 
@@ -15193,6 +16259,7 @@ function AppPrincipal({ onSair }) {
           <AuditsPage
             audits={audits}
             onNewAudit={() => setShowAuditForm(true)}
+            onImportar={() => setImportarAud(true)}
             onOpenAudit={(a) => setViewingAudit(a)}
             schoolOptions={options.schools}
             areaOptions={options.auditAreas}
@@ -15579,6 +16646,23 @@ function AppPrincipal({ onSair }) {
           onReopen={(id) => {
             reopen(id);
             setViewingDetail(null);
+          }}
+        />
+      )}
+
+      {importarAud && (
+        <ImportarAuditorias
+          audits={audits}
+          escolas={options.schools}
+          categorias={options.auditCategories || []}
+          areas={options.auditAreas || []}
+          onFechar={() => setImportarAud(false)}
+          onImportar={(novas, acrescentos, novasEscolas) => {
+            const n = novas.reduce((t, a) => t + a.findings.length, 0) + Object.values(acrescentos).reduce((t, l) => t + l.length, 0);
+            persistAudits([...audits.map((a) => (acrescentos[a.id] ? { ...a, findings: [...(a.findings || []), ...acrescentos[a.id]] } : a)), ...novas]);
+            if (novasEscolas.length) persistOptions({ ...options, schools: [...options.schools, ...novasEscolas.filter((e) => !options.schools.includes(e))] });
+            setImportarAud(false);
+            notificar(`${n} constatações importadas em ${novas.length} visitas novas${Object.keys(acrescentos).length ? ` e ${Object.keys(acrescentos).length} já existentes` : ""}.`);
           }}
         />
       )}
