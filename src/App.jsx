@@ -175,7 +175,7 @@ function fmt(date) {
   return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
-// Época desportiva: começa em julho. Uma data de 2026-03 pertence a 2025/26.
+// Época desportiva: de 1 de agosto a 31 de julho. Uma data de 2026-03 pertence a 2025/26.
 // Época de uma visita de auditoria: a indicada (importação) ou a da data.
 const epocaAud = (a) => a.epoca || epocaDe(a.date);
 function audNoPeriodo(periodo, a) {
@@ -188,14 +188,14 @@ const dataAud = (a) => (a.date ? fmt(new Date(a.date + "T00:00:00")) : "Sem data
 function epocaDe(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   if (isNaN(d.getTime())) return "";
-  const ano = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1;
+  const ano = d.getMonth() >= 7 ? d.getFullYear() : d.getFullYear() - 1;
   return `${ano}/${String(ano + 1).slice(2)}`;
 }
 
 // Lista de épocas para escolher: a atual e as anteriores, mais a seguinte.
 function epocasDisponiveis(extra) {
   const hoje = new Date();
-  const anoBase = hoje.getMonth() >= 6 ? hoje.getFullYear() : hoje.getFullYear() - 1;
+  const anoBase = hoje.getMonth() >= 7 ? hoje.getFullYear() : hoje.getFullYear() - 1;
   const lista = [];
   for (let a = anoBase + 1; a >= anoBase - 8; a--) lista.push(`${a}/${String(a + 1).slice(2)}`);
   (Array.isArray(extra) ? extra : [extra]).forEach((e) => {
@@ -8113,13 +8113,11 @@ const proximaSemana = (key) => {
 };
 const ddmm = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
-// Semanas da época desportiva: a semana 1 começa na segunda-feira da semana de
-// 24 de junho (em 2026/27, 22/06). É a numeração da coluna "Semana" dos Excel.
+// Semanas da época desportiva: a época vai de 1 de agosto a 31 de julho e a
+// semana 1 começa sempre a 1 de agosto (7 dias por semana a partir daí).
 function semana1Padrao(epoca) {
   const ano = Number(String(epoca).slice(0, 4)) || new Date().getFullYear();
-  const d = new Date(Date.UTC(ano, 5, 24));
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
+  return `${ano}-08-01`;
 }
 const semanaDaEpoca = (iso, s1) => (iso ? Math.min(53, Math.max(1, Math.floor((Date.parse(String(iso).slice(0, 10) + "T00:00:00Z") - Date.parse(s1 + "T00:00:00Z")) / (7 * 86400000)) + 1)) : null);
 const inicioSemanaEpoca = (k, s1) => {
@@ -8135,7 +8133,7 @@ const semanaExpDe = (x, s1) => (x.data ? semanaDaEpoca(x.data, s1) : x.semana);
 // Balanço de cada semana da época: entradas, desistências, experiências e alunos no fim.
 function balancoSemanal(reg, escola, epoca) {
   if (!reg) return [];
-  const s1 = reg.semana1 || semana1Padrao(epoca);
+  const s1 = semana1Padrao(epoca);
   const alunos = Object.values(reg.alunos || {}).filter((a) => !escola || a.escola === escola);
   const exps = Object.values(reg.experiencias || {}).filter((x) => !escola || x.escola === escola);
   if (!alunos.length && !exps.length) return [];
@@ -8154,7 +8152,8 @@ function balancoSemanal(reg, escola, epoca) {
       k,
       semana: semanaISO(new Date(ini + "T12:00:00")),
       ini,
-      fim: fimD.toISOString().slice(0, 10),
+      // A última semana acaba a 31 de julho.
+      fim: [fimD.toISOString().slice(0, 10), `${Number(String(epoca).slice(0, 4)) + 1}-07-31`].sort()[0],
       entradas: entradas.length,
       novos: entradas.filter((a) => a.rubrica !== "renov").length,
       renov: entradas.filter((a) => a.rubrica === "renov").length,
@@ -8254,7 +8253,6 @@ function lerFichaAlunos(linhas) {
 }
 
 function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, onImportar, onFechar, epocaInicial }) {
-  const [semana1Manual, setSemana1Manual] = useState("");
   const [folhas, setFolhas] = useState(null);
   const [papel, setPapel] = useState({ alunos: -1, desist: -1, exp: -1 });
   const [mapaEscola, setMapaEscola] = useState({});
@@ -8349,11 +8347,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const epocaDetetada = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
     const epoca = epocaManual || epocaDetetada;
     const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
-    // Semana 1: começa na primeira data do ficheiro (ou na data escolhida, ou na que ficou
-    // fixada no Painel). As semanas de entrada, experiência e desistência saem das datas.
-    const primeiraData = [...alunosF, ...desistF, ...expF].map((r) => r.data).filter((d) => d && d >= `${epoca.slice(0, 4)}-06-01`).sort()[0];
-    const s1Ficheiro = primeiraData || anterior.semana1 || semana1Padrao(epoca);
-    const s1 = semana1Manual || (anterior.semana1Fixa && anterior.semana1) || s1Ficheiro;
+    const s1 = semana1Padrao(epoca);
     const semHoje = semanaDaEpoca(hoje, s1);
     const alunos = {};
     // Alunos de importações anteriores que não estão neste ficheiro (podem ter saído).
@@ -8437,8 +8431,6 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     return {
       epoca,
       semana1: s1,
-      semana1Fixa: !!(semana1Manual || anterior.semana1Fixa),
-      s1Ficheiro,
       alunos,
       experiencias,
       ativos,
@@ -8452,7 +8444,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       nTurmas: turmasFinais.size,
       importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: expF.length }],
     };
-  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual, epocaManual, semana1Manual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual, epocaManual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
   const opcoesNovas = [...new Set([...escolasBrutas.map(([b]) => nomeEscolaProposto(b)), ...novasEscolas])].filter((n) => !escolas.includes(n)).sort((a, b) => a.localeCompare(b, "pt"));
@@ -8628,18 +8620,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                   <div style={{ fontSize: 14, fontWeight: 600 }}>
                     Época {resultado.epoca}: {resultado.ativos} alunos inscritos em {resultado.nTurmas} turmas
                   </div>
-                  <div style={{ color: COLORS.ink2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "4px 0" }}>
-                    A semana 1 começa a
-                    <input type="date" value={resultado.semana1} onChange={(e) => setSemana1Manual(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 12.5 }} aria-label="Início da semana 1" />
-                    <span style={{ color: COLORS.slate }}>
-                      (até {ddmm((() => {
-                        const d = new Date(resultado.semana1 + "T00:00:00Z");
-                        d.setUTCDate(d.getUTCDate() + 6);
-                        return d.toISOString().slice(0, 10);
-                      })())}). As semanas de entrada, experiência e desistência contam-se pelas datas a partir deste dia.
-                      {resultado.semana1 !== resultado.s1Ficheiro ? ` A primeira data do ficheiro é ${ddmm(resultado.s1Ficheiro)}.` : ""}
-                    </span>
-                  </div>
+                  <div style={{ color: COLORS.ink2 }}>Época de 01/08/{resultado.epoca.slice(0, 4)} a 31/07/{Number(resultado.epoca.slice(0, 4)) + 1}; a semana 1 começa a 1 de agosto.</div>
                   {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências na folha · {resultado.convertidas} convertidas (extrainscrições) · {resultado.pendentesExp} por decidir (últimas 3 semanas).
                   {novasEscolas.length > 0 && <div>Escolas novas a criar: {novasEscolas.join(", ")}</div>}
                   {resultado.foraEpoca.length > 0 && (
@@ -9342,7 +9323,6 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, onFechar })
   const iguais = Object.keys(nomesA).filter((t) => nomesB[t]);
 
   // ---- semana 1 ----
-  const [datasS1, setDatasS1] = useState(() => Object.fromEntries(epocasReg.map((ep) => [ep, registoAlunos[ep].semana1 || semana1Padrao(ep)])));
 
   const seg = (k, l) => (
     <button key={k} onClick={() => setAba(k)} className="pill" style={{ background: aba === k ? COLORS.paperRaised : "transparent", border: "none", borderRadius: 7, padding: "6px 13px", fontSize: 13, fontWeight: aba === k ? 600 : 500, color: aba === k ? COLORS.ink : COLORS.ink2, cursor: "pointer", boxShadow: aba === k ? "0 1px 3px rgba(0,0,0,0.12)" : "none" }}>
@@ -9404,7 +9384,6 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, onFechar })
         <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2, margin: "14px 0 16px" }}>
           {seg("apagar", "Apagar dados")}
           {seg("turmas", "Turmas entre épocas")}
-          {seg("semana1", "Semana 1")}
         </div>
 
         {aba === "apagar" && (
@@ -9595,30 +9574,6 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, onFechar })
           </div>
         )}
 
-        {aba === "semana1" && (
-          <div>
-            <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.6, marginBottom: 12 }}>
-              A semana 1 começa no dia indicado e cada semana tem 7 dias a partir daí. As semanas de entrada (renovação, inscrição, extrainscrição), experiência e desistência contam-se pela data de cada linha do ficheiro.
-            </div>
-            {!epocasReg.length && <div style={{ fontSize: 13, color: COLORS.slate }}>Ainda não há épocas importadas.</div>}
-            {epocasReg.map((ep) => {
-              const atual = registoAlunos[ep].semana1 || semana1Padrao(ep);
-              return (
-                <div key={ep} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, flexWrap: "wrap" }}>
-                  <strong style={{ width: 70 }}>{ep}</strong>
-                  <input type="date" value={datasS1[ep] || ""} onChange={(e) => setDatasS1((m) => ({ ...m, [ep]: e.target.value }))} style={{ ...inputStyle, width: "auto", padding: "5px 8px" }} aria-label={`Início da semana 1 de ${ep}`} />
-                  {datasS1[ep] && datasS1[ep] !== atual ? (
-                    <button onClick={() => g.semana1(ep, datasS1[ep])} style={{ ...primaryBtnStyle, width: "auto", padding: "6px 12px", fontSize: 12.5 }}>
-                      Aplicar
-                    </button>
-                  ) : (
-                    <span style={{ fontSize: 12, color: COLORS.slate }}>{registoAlunos[ep].semana1Fixa ? "definida por ti" : "primeira data do ficheiro"}</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -12910,8 +12865,8 @@ const SECCOES_GERAL = [
 ];
 const LS_REL_GERAL = "df-relatorio-geral-seccoes";
 
-// Ordem dos meses numa época (julho a junho).
-const MESES_EPOCA = [6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5];
+// Ordem dos meses numa época (agosto a julho).
+const MESES_EPOCA = [7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6];
 const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 const diasEntreRel = (a, b) => Math.round((new Date(String(b).slice(0, 10) + "T00:00:00") - new Date(String(a).slice(0, 10) + "T00:00:00")) / 86400000);
@@ -13292,7 +13247,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                 )}
 
                 {ver("momentos") && (
-                  <SeccaoRel titulo="Ao longo da época" nota="Por mês, de julho a junho">
+                  <SeccaoRel titulo="Ao longo da época" nota="Por mês, de agosto a julho">
                     <div className="relGrelha">
                       {[
                         ["Reclamações recebidas", serieMensal(reclamacoes, (r) => r.receivedDate)],
@@ -14158,10 +14113,10 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} cor={vazias.length ? COLORS.warn : COLORS.ink} />
               {(() => {
                 const pv = preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis: niveis || DEFAULT_NIVEIS, hoje: isoDe(new Date()) });
-                if (pv.insuficiente) return <KpiRel label="Previsão para junho" valor="—" comparacao="Faltam retratos semanais" />;
+                if (pv.insuficiente) return <KpiRel label="Previsão para julho" valor="—" comparacao="Faltam retratos semanais" />;
                 return (
                   <KpiRel
-                    label="Previsão para junho"
+                    label="Previsão para julho"
                     valor={fmtNum(pv.previsao)}
                     cor={pv.variacao === null ? COLORS.ink : pv.variacao >= 0 ? COLORS.ok : COLORS.danger}
                     comparacao={`entre ${pv.baixo} e ${pv.alto}${pv.variacao !== null ? ` · ${pv.variacao > 0 ? "+" : ""}${fmtNum(pv.variacao, 1)}% vs época passada` : ""}`}
@@ -15734,9 +15689,9 @@ function BibliotecaRespostas({ biblioteca, historico, onGuardar, onRemover, noti
 // ======================================================================
 // Painel reutilizável: escolhe duas épocas e mostra cada métrica lado a lado.
 // Com a época atual em curso compara, por defeito, até à mesma data em ambas
-// (ex.: 1 jul–2 out de cada época), para não comparar meia época com uma inteira.
+// (ex.: 1 ago–2 out de cada época), para não comparar meia época com uma inteira.
 
-const inicioEpoca = (ep) => `${String(ep).slice(0, 4)}-07-01`;
+const inicioEpoca = (ep) => `${String(ep).slice(0, 4)}-08-01`;
 
 // Data limite para a época `ep` quando se compara "até à mesma data".
 function limiteEpoca(ep, epAtual) {
@@ -16505,7 +16460,7 @@ function PainelCausas({ itens, titulo }) {
 // ======================================================================
 // ---------- Previsão de fim de época ----------
 // ======================================================================
-// Projeta os inscritos de cada escola até 30 de junho a partir de:
+// Projeta os inscritos de cada escola até 31 de julho a partir de:
 // - o último retrato semanal (ponto de partida);
 // - o ritmo das últimas semanas: novas inscrições e desistências por semana;
 // - as experiências por avaliar, multiplicadas pela taxa de conversão da escola.
@@ -16516,7 +16471,7 @@ const SEMANAS_RITMO = 8;
 const ABRANDAMENTO_ENTRADAS = 0.92;
 
 function fimDeEpoca(ep) {
-  return `${Number(String(ep).slice(0, 4)) + 1}-06-30`;
+  return `${Number(String(ep).slice(0, 4)) + 1}-07-31`;
 }
 
 // Segunda-feira de uma semana ISO (aaaa-Wnn).
@@ -16613,7 +16568,7 @@ function observacoesPrevisao(previsoes, limites) {
       return {
         nivel: cls.key === "critico" ? "alarme" : "atencao",
         titulo: `A este ritmo, ${p.escola} acaba ${Math.abs(p.variacao).toLocaleString("pt-PT")}% abaixo da época passada`,
-        texto: `Previsão de ${p.previsao} alunos em junho (entre ${p.baixo} e ${p.alto}), contra ${p.ant}. Para igualar, faltam ${p.falta} inscrições, cerca de ${p.porSemana} por semana.`,
+        texto: `Previsão de ${p.previsao} alunos no fim de julho (entre ${p.baixo} e ${p.alto}), contra ${p.ant}. Para igualar, faltam ${p.falta} inscrições, cerca de ${p.porSemana} por semana.`,
       };
     })
     .filter(Boolean);
@@ -16725,7 +16680,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 720 }}>
             <thead>
               <tr>
-                {["Escola", "Agora", "Época passada", "Previsão em junho", "Variação", "", "Para igualar a época passada", "Ritmo semanal"].map((c, i) => (
+                {["Escola", "Agora", "Época passada", "Previsão em julho", "Variação", "", "Para igualar a época passada", "Ritmo semanal"].map((c, i) => (
                   <th key={i} style={{ textAlign: "left", fontSize: 11, fontWeight: 600, color: COLORS.slate, padding: "6px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
                     {c}
                   </th>
@@ -17483,7 +17438,7 @@ function AppPrincipal({ onSair }) {
     // Experiências registadas à mão: convertem-se se o código aparecer nos inscritos.
     const expManuais = experiencias.filter((x) => x.origem === "manual" && x.epoca === ep && x.alunoId && !r.experiencias[x.alunoId]);
     expManuais.forEach((x) => (r.experiencias[x.alunoId] = { id: x.alunoId, escola: x.escola, data: x.data }));
-    const reg = { semana1: r.semana1, semana1Fixa: r.semana1Fixa, alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
+    const reg = { semana1: r.semana1, alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
     const al = Object.values(r.alunos);
 
     // Listas: escolas novas, nomes de turmas, turmas de cada escola, motivos e correspondências.
@@ -17600,14 +17555,6 @@ function AppPrincipal({ onSair }) {
     persistOptions({ ...options, turmasDistintas: desfazer ? atual.filter((x) => x !== k) : [...new Set([...atual, k])] });
   };
 
-  // Mudar o início da semana 1 de uma época: as semanas recalculam-se pelas datas.
-  const definirSemana1 = (ep, data) => {
-    const r = registoAlunos[ep];
-    if (!r || !data) return;
-    gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...r, semana1: data, semana1Fixa: true }));
-    notificar(`Semana 1 de ${ep} começa a ${ddmm(data)}.`);
-  };
-
   const epocasComDados = [...new Set([...Object.keys(registoAlunos), ...desistencias.map((d) => d.epoca), ...experiencias.map((x) => x.epoca), ...Object.values(inscritos).flatMap((l) => (l || []).map((x) => epocaDe(inicioSemanaISO(x.semana))))].filter(Boolean))].sort().reverse();
   const escolasComDados = [...new Set([...Object.values(registoAlunos).flatMap((r) => Object.values(r.alunos || {}).map((a) => a.escola)), ...desistencias.map((d) => d.escola), ...experiencias.map((x) => x.escola), ...Object.keys(inscritos).filter((e) => (inscritos[e] || []).length), ...turmasAlunos.map((t) => t.escola)].filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
 
@@ -17671,7 +17618,7 @@ function AppPrincipal({ onSair }) {
     if (r0 && r0.alunos[reg.alunoId]) {
       persistRegistoAlunos({
         ...registoAlunos,
-        [reg.epoca]: { ...r0, alunos: { ...r0.alunos, [reg.alunoId]: { ...r0.alunos[reg.alunoId], estado: "desistiu", saida: reg.data, semSaida: semanaDaEpoca(reg.data, r0.semana1 || semana1Padrao(reg.epoca)), motivo: reg.motivo } } },
+        [reg.epoca]: { ...r0, alunos: { ...r0.alunos, [reg.alunoId]: { ...r0.alunos[reg.alunoId], estado: "desistiu", saida: reg.data, semSaida: semanaDaEpoca(reg.data, semana1Padrao(reg.epoca)), motivo: reg.motivo } } },
       });
     }
     const t = turmasAlunos.find((x) => x.escola === reg.escola && x.turma === reg.turma);
@@ -18515,7 +18462,7 @@ function AppPrincipal({ onSair }) {
             registoAlunos={registoAlunos}
             onImportarInscritos={importarInscritos}
             onCapacidade={definirCapacidade}
-            gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, distintas: marcarTurmasDistintas, semana1: definirSemana1, epocas: epocasComDados, escolasComDados }}
+            gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, distintas: marcarTurmasDistintas, epocas: epocasComDados, escolasComDados }}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
             onSaveTurma={saveTurmaAlunos}
