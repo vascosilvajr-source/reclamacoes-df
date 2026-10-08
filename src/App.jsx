@@ -5694,7 +5694,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
     const doMes = experiencias.filter((x) => mesDeData(x.data) === m && (fEsc === "todas" || x.escola === fEsc));
     const f = soma(doMes.filter((x) => x.resultado !== "pendente"));
     const s = soma(doMes.filter((x) => x.resultado === "sucesso"));
-    return { name: m, realizadas: soma(doMes), convertidas: s, taxa: f ? Math.round((s / f) * 100) : 0 };
+    return { name: `${MES_CURTO[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`, realizadas: soma(doMes), convertidas: s, taxa: f ? Math.round((s / f) * 100) : 0 };
   });
 
   const guardar = () => {
@@ -7847,7 +7847,7 @@ function agregaSerie(registos, periodo) {
 }
 
 const SECOES_GESTAO = [
-  ["registo", "Turmas e lotação"],
+  ["registo", "Painel"],
   ["experiencias", "Experiências"],
   ["desistencias", "Desistências"],
   ["desvinc", "Desvinculações"],
@@ -8111,37 +8111,70 @@ const proximaSemana = (key) => {
 };
 const ddmm = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
-// Balanço de cada semana: entradas, desistências, experiências e alunos no fim da semana.
-function balancoSemanal(reg, escola) {
+// Semanas da época desportiva: a semana 1 começa na segunda-feira da semana de
+// 24 de junho (em 2026/27, 22/06). É a numeração da coluna "Semana" dos Excel.
+function semana1Padrao(epoca) {
+  const ano = Number(String(epoca).slice(0, 4)) || new Date().getFullYear();
+  const d = new Date(Date.UTC(ano, 5, 24));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+const semanaDaEpoca = (iso, s1) => (iso ? Math.max(1, Math.floor((Date.parse(String(iso).slice(0, 10) + "T00:00:00Z") - Date.parse(s1 + "T00:00:00Z")) / (7 * 86400000)) + 1) : null);
+const inicioSemanaEpoca = (k, s1) => {
+  const d = new Date(s1 + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + (k - 1) * 7);
+  return d.toISOString().slice(0, 10);
+};
+const semanaEntradaDe = (a, s1) => a.semEntrada || semanaDaEpoca(a.entrada, s1);
+const semanaSaidaDe = (a, s1) => (a.estado === "desistiu" ? a.semSaida || semanaDaEpoca(a.saida, s1) : null);
+
+// Balanço de cada semana da época: entradas, desistências, experiências e alunos no fim.
+function balancoSemanal(reg, escola, epoca) {
   if (!reg) return [];
+  const s1 = reg.semana1 || semana1Padrao(epoca);
   const alunos = Object.values(reg.alunos || {}).filter((a) => !escola || a.escola === escola);
   const exps = Object.values(reg.experiencias || {}).filter((x) => !escola || x.escola === escola);
-  const datas = [...alunos.map((a) => a.entrada), ...exps.map((x) => x.data)].filter(Boolean).sort();
-  if (!datas.length) return [];
-  const hojeSem = semanaISO(new Date());
+  if (!alunos.length && !exps.length) return [];
+  const sems = [...alunos.map((a) => semanaEntradaDe(a, s1)), ...alunos.map((a) => semanaSaidaDe(a, s1)), ...exps.map((x) => x.semana || semanaDaEpoca(x.data, s1))].filter(Boolean);
+  const emCurso = epocaDe(isoDe(new Date())) === epoca;
+  const ultima = Math.min(53, emCurso ? Math.max(semanaDaEpoca(isoDe(new Date()), s1), ...sems) : Math.max(...sems));
   const linhas = [];
-  let sem = semanaISO(new Date(datas[0] + "T00:00:00"));
-  for (let i = 0; i < 60 && sem <= hojeSem; i++) {
-    const { ini, fim } = limitesSemana(sem);
-    const dentro = (d) => d && d >= ini && d <= fim;
-    const entradas = alunos.filter((a) => dentro(a.entrada));
-    const saidas = alunos.filter((a) => a.estado === "desistiu" && dentro(a.saida));
-    const ativos = alunos.filter((a) => a.entrada && a.entrada <= fim && !(a.estado === "desistiu" && a.saida && a.saida <= fim)).length;
-    const ex = exps.filter((x) => dentro(x.data));
+  for (let k = 1; k <= ultima; k++) {
+    const ini = inicioSemanaEpoca(k, s1);
+    const fimD = new Date(ini + "T00:00:00Z");
+    fimD.setUTCDate(fimD.getUTCDate() + 6);
+    const entradas = alunos.filter((a) => semanaEntradaDe(a, s1) === k);
+    const saidas = alunos.filter((a) => semanaSaidaDe(a, s1) === k);
+    const ativos = alunos.filter((a) => semanaEntradaDe(a, s1) <= k && !(semanaSaidaDe(a, s1) && semanaSaidaDe(a, s1) <= k)).length;
     linhas.push({
-      semana: sem,
+      k,
+      semana: semanaISO(new Date(ini + "T12:00:00")),
       ini,
-      fim,
+      fim: fimD.toISOString().slice(0, 10),
       entradas: entradas.length,
       novos: entradas.filter((a) => a.rubrica !== "renov").length,
       renov: entradas.filter((a) => a.rubrica === "renov").length,
       desist: saidas.length,
-      exp: ex.length,
+      exp: exps.filter((x) => (x.semana || semanaDaEpoca(x.data, s1)) === k).length,
       ativos,
     });
-    sem = proximaSemana(sem);
   }
-  return linhas.map((l, i) => ({ ...l, variacao: i ? l.ativos - linhas[i - 1].ativos : l.ativos }));
+  // As semanas antes da primeira entrada não interessam.
+  const primeira = linhas.findIndex((l) => l.ativos || l.exp || l.desist);
+  const uteis = primeira > 0 ? linhas.slice(primeira) : linhas;
+  return uteis.map((l, i) => ({ ...l, variacao: i ? l.ativos - uteis[i - 1].ativos : l.ativos }));
+}
+
+// Renovações entre épocas: inscritos no fim da época anterior que voltaram
+// (o mesmo código) com a rubrica Renovação. Por escola da época anterior.
+function renovacoesEntreEpocas(regAnt, regAtual, escola) {
+  if (!regAnt || !regAtual) return null;
+  const base = Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo" && (!escola || a.escola === escola));
+  if (!base.length) return null;
+  const atual = regAtual.alunos || {};
+  const voltaram = base.filter((a) => atual[a.id]);
+  const renovaram = voltaram.filter((a) => atual[a.id].rubrica === "renov");
+  return { base: base.length, voltaram: voltaram.length, renovaram: renovaram.length, taxa: Math.round((renovaram.length / base.length) * 100), mudaramEscola: voltaram.filter((a) => atual[a.id].escola !== a.escola).length };
 }
 
 // Colunas reconhecidas nas folhas do ficheiro de inscritos.
@@ -8154,6 +8187,8 @@ const COLUNAS_FICHA_ALUNOS = {
   equipa: ["equipas do atleta", "equipa do atleta", "equipa/turma", "turma/equipa", "equipas", "equipa", "turma", "escalao"],
   data: ["data de entrada", "data de inscricao", "data", "data entrada"],
   motivo: ["motivo desistencia", "motivo de desistencia", "motivo da desistencia", "motivo"],
+  semana: ["semana", "semana da epoca", "n semana"],
+  mes: ["mes", "mês"],
 };
 
 function lerFichaAlunos(linhas) {
@@ -8203,13 +8238,15 @@ function lerFichaAlunos(linhas) {
       equipa: v(l, "equipa"),
       data: dataDeCelula(v(l, "data")) || null,
       motivo: v(l, "motivo"),
+      semana: Number(v(l, "semana")) || null,
+      mes: Number(v(l, "mes")) || null,
       linha: l.__linha,
     }))
     .filter((r) => r.id && r.escola);
   return { mapa, registos, titulos: linhas[iCab] };
 }
 
-function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, onImportar, onFechar }) {
+function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, onImportar, onFechar, epocaInicial }) {
   const [folhas, setFolhas] = useState(null);
   const [papel, setPapel] = useState({ alunos: -1, desist: -1, exp: -1 });
   const [mapaEscola, setMapaEscola] = useState({});
@@ -8220,7 +8257,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
   const [nomeFicheiro, setNomeFicheiro] = useState("");
-  const [epocaManual, setEpocaManual] = useState("");
+  const [epocaManual, setEpocaManual] = useState(epocaInicial || "");
 
   const carregar = async (e) => {
     const f = e.target.files && e.target.files[0];
@@ -8304,6 +8341,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const epocaDetetada = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
     const epoca = epocaManual || epocaDetetada;
     const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
+    const s1 = anterior.semana1 || semana1Padrao(epoca);
+    const semHoje = semanaDaEpoca(hoje, s1);
     const alunos = {};
     // Alunos de importações anteriores que não estão neste ficheiro (podem ter saído).
     const vistos = new Set();
@@ -8318,6 +8357,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         genero: r.genero || prev?.genero || "",
         rubrica: r.rubrica || prev?.rubrica || "",
         entrada: [prev?.entrada, r.data].filter(Boolean).sort()[0] || hoje,
+        semEntrada: Math.min(...[prev?.semEntrada, r.semana || semanaDaEpoca(r.data || hoje, s1)].filter(Boolean)),
         estado: "ativo",
         saida: null,
         motivo: null,
@@ -8335,10 +8375,12 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         genero: r.genero || prev?.genero || "",
         rubrica: r.rubrica || prev?.rubrica || "",
         entrada: prev?.entrada || r.data || hoje,
+        semEntrada: prev?.semEntrada || semanaDaEpoca(prev?.entrada || r.data || hoje, s1),
         estado: "desistiu",
-        // A folha de desistências não traz a data da saída (a coluna Data é a da entrada):
-        // conta a partir da importação em que a desistência aparece pela primeira vez.
-        saida: prev && prev.estado === "desistiu" && prev.saida ? prev.saida : hoje,
+        // A semana da desistência é a coluna "Semana" (semana da época); a coluna Data é a da entrada.
+        // Sem ela, conta a partir da importação em que a desistência aparece pela primeira vez.
+        semSaida: r.semana || (prev && prev.estado === "desistiu" && prev.semSaida) || semHoje,
+        saida: r.semana ? inicioSemanaEpoca(r.semana, s1) : prev && prev.estado === "desistiu" && prev.saida ? prev.saida : hoje,
         motivo: r.motivo || "Não definido",
       };
     });
@@ -8346,7 +8388,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     emFalta.forEach((a) => {
       alunos[a.id] =
         faltaComo === "desistencia"
-          ? { ...a, estado: "desistiu", saida: hoje, motivo: "Saiu sem registo (não consta do ficheiro)" }
+          ? { ...a, estado: "desistiu", saida: hoje, semSaida: semHoje, motivo: "Saiu sem registo (não consta do ficheiro)" }
           : { ...a, emFalta: hoje };
     });
     // Desistências antigas que não voltaram a aparecer mantêm-se.
@@ -8355,7 +8397,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     });
     const experiencias = { ...anterior.experiencias };
     expF.forEach((r) => {
-      experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || hoje };
+      experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || hoje, semana: r.semana || semanaDaEpoca(r.data || hoje, s1) };
     });
     const convertidas = Object.values(experiencias).filter((x) => alunos[x.id]).length;
     const novos = alunosF.filter((r) => !anterior.alunos[r.id]).length;
@@ -8363,6 +8405,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const turmasFinais = new Set(Object.values(alunos).map((a) => `${a.escola}|${a.turma}`));
     return {
       epoca,
+      semana1: s1,
       alunos,
       experiencias,
       ativos,
@@ -8393,7 +8436,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }} onClick={onFechar}>
       <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Importar inscritos da época</h2>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{epocaInicial ? `Importar época ${epocaInicial}` : "Importar inscritos da época"}</h2>
           <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
             <X size={18} />
           </button>
@@ -8728,84 +8771,139 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const epocasReg = Object.keys(registoAlunos || {}).sort().reverse();
   const [epoca, setEpoca] = useState(epocasReg.includes(epocaHoje) ? epocaHoje : epocasReg[0] || epocaHoje);
   const reg = (registoAlunos || {})[epoca];
-  const [importar, setImportar] = useState(false);
-  const [escolaBal, setEscolaBal] = useState("");
+  const epAnt = `${Number(epoca.slice(0, 4)) - 1}/${epoca.slice(2, 4)}`;
+  const regAnt = (registoAlunos || {})[epAnt];
+  const [importar, setImportar] = useState(null);
+  const [aba, setAba] = useState("escolas");
+  const [escolaSel, setEscolaSel] = useState("");
   const [escolaAberta, setEscolaAberta] = useState(null);
+  const [ordem, setOrdem] = useState("inscritos");
   const [hEsc, setHEsc] = useState(escolas[0] || "");
   const [hIns, setHIns] = useState("");
   const [hDes, setHDes] = useState("");
 
-  const alunos = Object.values(reg?.alunos || {});
-  const ativos = alunos.filter((a) => a.estado === "ativo");
-  const exps = Object.values(reg?.experiencias || {});
-  const ultima = reg?.importacoes?.[reg.importacoes.length - 1];
-  // Transição de época: inscritos da época anterior (pelo código) que estão nesta.
-  const epAnt = `${Number(epoca.slice(0, 4)) - 1}/${epoca.slice(2, 4)}`;
-  const regAnt = (registoAlunos || {})[epAnt];
-  const finaisAnt = regAnt ? Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo") : [];
-  const voltaram = (escola) => {
-    const base = finaisAnt.filter((a) => !escola || a.escola === escola);
-    if (!base.length) return null;
-    const n = base.filter((a) => reg?.alunos?.[a.id] && reg.alunos[a.id].estado === "ativo").length;
-    return { n, de: base.length, pct: Math.round((n / base.length) * 100) };
-  };
-  const balanco = useMemo(() => balancoSemanal(reg, escolaBal || null), [reg, escolaBal]);
-  const escolasReg = [...new Set(alunos.map((a) => a.escola))].sort((a, b) => a.localeCompare(b, "pt"));
   const capacidades = options.capacidades || {};
+  const todos = Object.values(reg?.alunos || {});
+  const alunos = todos.filter((a) => !escolaSel || a.escola === escolaSel);
+  const ativos = alunos.filter((a) => a.estado === "ativo");
+  const desist = alunos.filter((a) => a.estado === "desistiu");
+  const exps = Object.values(reg?.experiencias || {}).filter((x) => !escolaSel || x.escola === escolaSel);
+  const convertidas = exps.filter((x) => reg?.alunos?.[x.id]).length;
+  const ultima = reg?.importacoes?.[reg.importacoes.length - 1];
+  const escolasReg = [...new Set(todos.map((a) => a.escola))].sort((a, b) => a.localeCompare(b, "pt"));
+
+  const balanco = useMemo(() => balancoSemanal(reg, escolaSel || null, epoca), [reg, escolaSel, epoca]);
+  const balancoAnt = useMemo(() => balancoSemanal(regAnt, escolaSel || null, epAnt), [regAnt, escolaSel, epAnt]);
+  // Semana atual; se ainda não tem movimento, mostra a última que teve.
+  const atualSem = (() => {
+    const ult = balanco[balanco.length - 1];
+    if (!ult || ult.entradas || ult.desist || ult.exp) return ult;
+    return [...balanco].reverse().find((b) => b.entradas || b.desist || b.exp) || ult;
+  })();
+  // Mesma semana da época passada, para comparar com justiça.
+  const homologo = atualSem && balancoAnt.find((b) => b.k === atualSem.k);
+  const renov = renovacoesEntreEpocas(regAnt, reg, escolaSel || null);
+
+  // Evolução: esta época e a anterior, pela semana da época.
+  const serie = (() => {
+    const ks = [...new Set([...balanco.map((b) => b.k), ...balancoAnt.map((b) => b.k)])].sort((a, b) => a - b);
+    return ks.map((k) => ({ name: `S${k}`, [epoca]: balanco.find((b) => b.k === k)?.ativos ?? null, [epAnt]: balancoAnt.find((b) => b.k === k)?.ativos ?? null }));
+  })();
+
+  const linhaEscola = (e) => {
+    const al = todos.filter((a) => a.escola === e);
+    const at = al.filter((a) => a.estado === "ativo");
+    const ex = Object.values(reg.experiencias || {}).filter((x) => x.escola === e);
+    const ts = [...new Set(at.map((a) => a.turma))];
+    const capT = ts.reduce((n, t) => n + (capacidades[`${e}|${t}`] || capacidadeSugerida(t, niveis)), 0);
+    const bal = balancoSemanal(reg, e, epoca);
+    const k = bal.length ? bal[bal.length - 1].k : null;
+    const antK = regAnt ? balancoSemanal(regAnt, e, epAnt).find((b) => b.k === k) : null;
+    const ant = antK ? antK.ativos : (epocaAnterior[e] || {}).inscritos || null;
+    const rv = renovacoesEntreEpocas(regAnt, reg, e);
+    return {
+      e,
+      inscritos: at.length,
+      variacao: ant ? Math.round(((at.length - ant) / ant) * 1000) / 10 : null,
+      antTxt: antK ? `na semana ${k} de ${epAnt}` : ant ? `no fim de ${epAnt}` : "",
+      renovacao: rv ? rv.taxa : null,
+      novos: at.filter((a) => a.rubrica !== "renov").length,
+      desist: al.filter((a) => a.estado === "desistiu").length,
+      exp: ex.length,
+      conv: ex.filter((x) => reg.alunos[x.id]).length,
+      ocupacao: capT ? Math.round((at.length / capT) * 100) : null,
+    };
+  };
+  const linhasEscolas = reg ? escolasReg.map(linhaEscola) : [];
+  const ordenar = {
+    inscritos: (a, b) => b.inscritos - a.inscritos,
+    variacao: (a, b) => (a.variacao ?? 999) - (b.variacao ?? 999),
+    renovacao: (a, b) => (a.renovacao ?? 999) - (b.renovacao ?? 999),
+    desist: (a, b) => b.desist - a.desist,
+    ocupacao: (a, b) => (a.ocupacao ?? 999) - (b.ocupacao ?? 999),
+    nome: (a, b) => a.e.localeCompare(b.e, "pt"),
+  };
+
+  // Escalões: inscritos, género, turmas e ocupação.
+  const porEscalao = (() => {
+    const g = {};
+    ativos.forEach((a) => {
+      const k = escalaoDaTurma(a.turma, niveis);
+      g[k] = g[k] || { k, n: 0, f: 0, turmas: new Set(), cap: 0, desist: 0, renov: 0 };
+      g[k].n++;
+      if (a.genero === "f") g[k].f++;
+      if (a.rubrica === "renov") g[k].renov++;
+      g[k].turmas.add(`${a.escola}|${a.turma}`);
+    });
+    desist.forEach((a) => {
+      const k = escalaoDaTurma(a.turma, niveis);
+      if (g[k]) g[k].desist++;
+    });
+    Object.values(g).forEach((x) => (x.cap = [...x.turmas].reduce((n, t) => n + (capacidades[t] || capacidadeSugerida(t.split("|")[1], niveis)), 0)));
+    const ordemEsc = (k) => {
+      const i = niveis.indexOf(k);
+      if (i >= 0) return i;
+      const m = String(k).match(/(\d+)/);
+      return m ? 100 + Number(m[1]) : 999;
+    };
+    return Object.values(g).sort((a, b) => ordemEsc(a.k) - ordemEsc(b.k));
+  })();
+
+  const motivos = (() => {
+    const c = {};
+    desist.forEach((a) => (c[a.motivo || "Não definido"] = (c[a.motivo || "Não definido"] || 0) + 1));
+    return Object.entries(c)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  })();
 
   const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "8px 9px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
   const td = { padding: "8px 9px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, fontVariantNumeric: "tabular-nums" };
-  const kpi = (l, v, sub) => (
-    <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.paperSunken, minWidth: 0 }}>
-      <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 500 }}>{l}</div>
-      <div style={{ fontSize: 24, fontWeight: 600, marginTop: 4, letterSpacing: "-0.02em" }}>{v}</div>
-      {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>{sub}</div>}
+  const corVar = (v) => (v === null || v === undefined ? COLORS.slate : v >= 0 ? COLORS.ok : COLORS.danger);
+  const fmtVar = (v) => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${fmtNum(v, 1)}%`);
+  const Kpi = ({ l, v, sub, cor }) => (
+    <div style={{ padding: "14px 16px", borderRadius: 12, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, minWidth: 0 }}>
+      <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 600 }}>{l}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4, letterSpacing: "-0.02em", color: cor || COLORS.ink, fontVariantNumeric: "tabular-nums" }}>{v}</div>
+      {sub && <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4, lineHeight: 1.4 }}>{sub}</div>}
     </div>
   );
+  const variacaoHomologa = homologo && homologo.ativos ? Math.round(((atualSem.ativos - homologo.ativos) / homologo.ativos) * 1000) / 10 : null;
 
   return (
     <div>
-      <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <div style={panelTitle}>Inscritos da época {epoca}</div>
-            <div style={{ fontSize: 12.5, color: COLORS.slate }}>
-              {ultima ? `Última importação a ${fmt(new Date(ultima.data + "T00:00:00"))}${ultima.ficheiro ? ` · ${ultima.ficheiro}` : ""}` : "Ainda sem importações nesta época."}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {epocasReg.length > 1 && (
-              <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "8px 10px" }}>
-                {epocasReg.map((e) => (
-                  <option key={e} value={e}>
-                    Época {e}
-                  </option>
-                ))}
-              </select>
-            )}
-            <button className="press" onClick={() => setImportar(true)} style={{ ...primaryBtnStyle, width: "auto", padding: "10px 16px", display: "flex", alignItems: "center", gap: 8 }}>
-              <FileText size={15} /> Importar ficheiro da semana
-            </button>
-          </div>
-        </div>
-        {reg && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginTop: 14 }}>
-            {kpi("Inscritos", ativos.length, `${escolasReg.length} escolas`)}
-            {kpi("Renovaram", `${ativos.length ? Math.round((ativos.filter((a) => a.rubrica === "renov").length / ativos.length) * 100) : 0}%`, `${ativos.filter((a) => a.rubrica === "renov").length} renovações`)}
-            {kpi("Inscrições novas", ativos.filter((a) => a.rubrica === "novo" || a.rubrica === "extra").length, `${ativos.filter((a) => a.rubrica === "extra").length} extrainscrições`)}
-            {kpi("Desistências", alunos.filter((a) => a.estado === "desistiu").length, `${alunos.length ? ((alunos.filter((a) => a.estado === "desistiu").length / alunos.length) * 100).toFixed(1) : 0}% dos alunos da época`)}
-            {voltaram() && kpi(`Vieram de ${epAnt}`, `${voltaram().pct}%`, `${voltaram().n} de ${voltaram().de} inscritos no fim de ${epAnt}`)}
-            {kpi("Experiências", exps.length, `${exps.filter((x) => reg.alunos[x.id]).length} ficaram inscritos (${exps.length ? Math.round((exps.filter((x) => reg.alunos[x.id]).length / exps.length) * 100) : 0}%)`)}
-            {ativos.some((a) => a.emFalta) && kpi("Em falta", ativos.filter((a) => a.emFalta).length, "não vieram na última importação")}
-          </div>
-        )}
-      </div>
-
-      {reg && (
-        <div style={{ ...panelStyle, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-            <div style={panelTitle}>Balanço semanal</div>
-            <select value={escolaBal} onChange={(e) => setEscolaBal(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px" }}>
+      {/* ---- cabeçalho ---- */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "8px 10px", fontWeight: 600 }} aria-label="Época">
+            {[...new Set([epocaHoje, ...epocasReg])].sort().reverse().map((e) => (
+              <option key={e} value={e}>
+                Época {e}
+              </option>
+            ))}
+          </select>
+          {reg && (
+            <select value={escolaSel} onChange={(e) => setEscolaSel(e.target.value)} style={{ ...inputStyle, width: "auto", maxWidth: 260, padding: "8px 10px" }} aria-label="Escola">
               <option value="">Todas as escolas</option>
               {escolasReg.map((e) => (
                 <option key={e} value={e}>
@@ -8813,155 +8911,287 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
                 </option>
               ))}
             </select>
-          </div>
-          {balanco.length > 1 && (
-            <ResponsiveContainer width="100%" height={170}>
-              <AreaChart data={balanco.map((b) => ({ name: ddmm(b.ini), Inscritos: b.ativos }))} margin={{ left: -10, right: 10, top: 6 }}>
-                <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                <Tooltip content={<DicaGrafico />} />
-                <Area type="monotone" dataKey="Inscritos" stroke={COLORS.navy} strokeWidth={2} fill={COLORS.navy} fillOpacity={0.08} isAnimationActive={false} />
-              </AreaChart>
-            </ResponsiveContainer>
           )}
-          <div style={{ overflowX: "auto", marginTop: 8 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  {["Semana", "Entradas", "das quais novas", "Desistências", "Experiências", "Inscritos no fim", "Variação"].map((h) => (
-                    <th key={h} style={th}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[...balanco].reverse().map((b) => (
-                  <tr key={b.semana}>
-                    <td style={td}>
-                      <strong>{semanaLabel(b.semana)}</strong> <span style={{ color: COLORS.slate }}>{ddmm(b.ini)}–{ddmm(b.fim)}</span>
-                    </td>
-                    <td style={td}>{b.entradas}</td>
-                    <td style={td}>{b.novos}</td>
-                    <td style={{ ...td, color: b.desist ? COLORS.danger : COLORS.ink }}>{b.desist}</td>
-                    <td style={td}>{b.exp}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{b.ativos}</td>
-                    <td style={{ ...td, fontWeight: 600, color: b.variacao > 0 ? COLORS.ok : b.variacao < 0 ? COLORS.danger : COLORS.slate }}>{b.variacao > 0 ? `+${b.variacao}` : b.variacao}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <span style={{ fontSize: 12, color: COLORS.slate }}>{ultima ? `Atualizado a ${fmt(new Date(ultima.data + "T00:00:00"))}` : ""}</span>
         </div>
-      )}
-
-      {reg && (
-        <div style={{ ...panelStyle, marginBottom: 16 }}>
-          <div style={panelTitle}>Escolas</div>
-          <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 10 }}>Abre uma escola para ver as turmas, a lotação e os alunos pelo código.</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  {["Escola", "Inscritos", "Renovaram", "Novos", "Desist.", "Experiências", "Turmas", "Ocupação", "Época passada"].map((h) => (
-                    <th key={h} style={th}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {escolasReg.map((e) => {
-                  const al = alunos.filter((a) => a.escola === e);
-                  const at = al.filter((a) => a.estado === "ativo");
-                  const ex = exps.filter((x) => x.escola === e);
-                  const ts = [...new Set(at.map((a) => a.turma))];
-                  const capT = ts.reduce((n, t) => n + (capacidades[`${e}|${t}`] || capacidadeSugerida(t, niveis)), 0);
-                  const ant = (epocaAnterior[e] || {}).inscritos;
-                  return (
-                    <tr key={e} className="rowHover" style={{ cursor: "pointer" }} onClick={() => setEscolaAberta(e)}>
-                      <td style={{ ...td, fontWeight: 600 }}>{e}</td>
-                      <td style={{ ...td, fontWeight: 600 }}>{at.length}</td>
-                      <td style={td}>{at.length ? Math.round((at.filter((a) => a.rubrica === "renov").length / at.length) * 100) : 0}%</td>
-                      <td style={td}>{at.filter((a) => a.rubrica !== "renov").length}</td>
-                      <td style={{ ...td, color: al.some((a) => a.estado === "desistiu") ? COLORS.danger : COLORS.ink }}>{al.filter((a) => a.estado === "desistiu").length}</td>
-                      <td style={td}>
-                        {ex.length} <span style={{ color: COLORS.slate }}>({ex.filter((x) => reg.alunos[x.id]).length} inscr.)</span>
-                      </td>
-                      <td style={td}>{ts.length}</td>
-                      <td style={td}>{capT ? `${Math.round((at.length / capT) * 100)}%` : "—"}</td>
-                      <td style={{ ...td, color: COLORS.slate }}>{ant ? `${ant} (${at.length >= ant ? "+" : ""}${(((at.length - ant) / ant) * 100).toFixed(1)}%)` : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {!reg && (
-        <div style={{ ...panelStyle, marginBottom: 16 }}>
-          <Vazio icon={Users} titulo="Ainda sem alunos nesta época" texto="Importa o Excel da semana: a app cria as escolas, as turmas e o balanço semanal a partir dele." acao="Importar ficheiro da semana" onAcao={() => setImportar(true)} />
-          {turmasAlunos.length > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>Há {turmasAlunos.length} registos de turmas de importações antigas (só contagens). Continuam a contar até importares o ficheiro com os códigos.</div>}
-        </div>
-      )}
-
-      <div style={panelStyle}>
-        <div style={panelTitle}>Época passada (referência)</div>
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>Introduz uma vez por época. É daqui que sai a taxa de crescimento homóloga.</div>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-            <select value={hEsc} onChange={(e) => setHEsc(e.target.value)} style={{ ...inputStyle, width: 220 }}>
-              {escolas.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos no final</label>
-            <input type="number" min="0" value={hIns} onChange={(e) => setHIns(e.target.value)} style={{ ...inputStyle, width: 140 }} placeholder={String((epocaAnterior[hEsc] || {}).inscritos ?? "112")} />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Desistências na época</label>
-            <input type="number" min="0" value={hDes} onChange={(e) => setHDes(e.target.value)} style={{ ...inputStyle, width: 155 }} placeholder={String((epocaAnterior[hEsc] || {}).desist ?? "18")} />
-          </div>
-          <button
-            onClick={() => {
-              if (!hEsc || hIns === "") return;
-              onSaveEpocaAnterior(hEsc, { inscritos: Number(hIns), ...(hDes !== "" ? { desist: Number(hDes) } : {}) });
-              setHIns("");
-              setHDes("");
-            }}
-            style={{ ...secondaryBtnStyle, flex: "none", width: "auto", padding: "9px 16px" }}
-          >
-            Guardar
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="press" onClick={() => setImportar(epAntDe(epocaHoje))} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+            Importar época anterior
+          </button>
+          <button className="press" onClick={() => setImportar("semana")} style={{ ...primaryBtnStyle, width: "auto", padding: "9px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+            <FileText size={15} /> Importar ficheiro da semana
           </button>
         </div>
       </div>
+
+      {!reg ? (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <Vazio icon={Users} titulo={`Ainda sem alunos em ${epoca}`} texto="Importa o Excel da semana: a app cria as escolas, as turmas e o balanço semanal a partir dele. Para comparar com épocas anteriores, importa também os ficheiros dessas épocas." acao="Importar ficheiro da semana" onAcao={() => setImportar(epoca === epocaHoje ? "semana" : epoca)} />
+        </div>
+      ) : (
+        <>
+          {/* ---- estado atual ---- */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
+            <Kpi l="Inscritos" v={fmtNum(ativos.length)} sub={variacaoHomologa !== null ? <span style={{ color: corVar(variacaoHomologa), fontWeight: 600 }}>{fmtVar(variacaoHomologa)} vs semana {atualSem.k} de {epAnt}</span> : `${escolaSel ? "" : `${escolasReg.length} escolas · `}${new Set(ativos.map((a) => `${a.escola}|${a.turma}`)).size} turmas`} />
+            {renov ? (
+              <Kpi l={`Renovaram de ${epAnt}`} v={`${renov.taxa}%`} sub={`${renov.renovaram} de ${renov.base} inscritos no fim de ${epAnt}${renov.mudaramEscola ? ` · ${renov.mudaramEscola} mudaram de escola` : ""}`} cor={renov.taxa >= 70 ? COLORS.ok : renov.taxa >= 50 ? COLORS.warn : COLORS.danger} />
+            ) : (
+              <Kpi l="Renovações" v={`${ativos.length ? Math.round((ativos.filter((a) => a.rubrica === "renov").length / ativos.length) * 100) : 0}%`} sub={`dos inscritos são renovações · importa ${epAnt} para a taxa de renovação`} />
+            )}
+            <Kpi l="Inscrições novas" v={fmtNum(ativos.filter((a) => a.rubrica !== "renov").length)} sub={`${ativos.filter((a) => a.rubrica === "extra").length} extrainscrições`} />
+            <Kpi l="Desistências" v={fmtNum(desist.length)} sub={`${alunos.length ? fmtNum((desist.length / alunos.length) * 100, 1) : 0}% · ${motivos[0] ? `mais frequente: ${motivos[0].name.toLowerCase()}` : ""}`} cor={desist.length ? COLORS.danger : COLORS.ink} />
+            <Kpi l="Experiências" v={fmtNum(exps.length)} sub={`${convertidas} ficaram inscritos (${exps.length ? Math.round((convertidas / exps.length) * 100) : 0}%)`} />
+            {atualSem && <Kpi l={`Semana ${atualSem.k}`} v={`${atualSem.variacao > 0 ? "+" : ""}${atualSem.variacao}`} sub={`${atualSem.entradas} entradas · ${atualSem.desist} desistências · ${atualSem.exp} experiências`} cor={atualSem.variacao > 0 ? COLORS.ok : atualSem.variacao < 0 ? COLORS.danger : COLORS.ink} />}
+          </div>
+
+          {/* ---- evolução ---- */}
+          <div style={{ ...panelStyle, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <div style={panelTitle}>Inscritos por semana da época{escolaSel ? ` · ${escolaSel}` : ""}</div>
+              <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: COLORS.ink2 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 16, borderTop: `2px solid ${COLORS.navy}` }} /> {epoca}
+                </span>
+                {balancoAnt.length > 0 && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 16, borderTop: `2px dashed ${COLORS.slate}` }} /> {epAnt}
+                  </span>
+                )}
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={serie} margin={{ left: -6, right: 10, top: 8 }}>
+                <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                <Tooltip content={<DicaGrafico />} />
+                {balancoAnt.length > 0 && <Line type="monotone" dataKey={epAnt} name={epAnt} stroke={COLORS.slate} strokeWidth={1.5} strokeDasharray="5 4" dot={false} isAnimationActive={false} connectNulls />}
+                <Line type="monotone" dataKey={epoca} name={epoca} stroke={COLORS.navy} strokeWidth={2.4} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* ---- análises ---- */}
+          <div style={panelStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2 }}>
+                {[
+                  ["escolas", "Escolas"],
+                  ["semanas", "Semanas"],
+                  ["escaloes", "Escalões"],
+                  ["desistencias", "Desistências"],
+                ].map(([k, l]) => (
+                  <button key={k} onClick={() => setAba(k)} className="pill" style={{ background: aba === k ? COLORS.paperRaised : "transparent", border: "none", borderRadius: 7, padding: "6px 13px", fontSize: 13, fontWeight: aba === k ? 600 : 500, color: aba === k ? COLORS.ink : COLORS.ink2, cursor: "pointer", boxShadow: aba === k ? "0 1px 3px rgba(0,0,0,0.12)" : "none" }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {aba === "escolas" && (
+                <select value={ordem} onChange={(e) => setOrdem(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 12.5 }} aria-label="Ordenar">
+                  <option value="inscritos">Mais inscritos</option>
+                  <option value="variacao">Pior variação</option>
+                  <option value="renovacao">Pior renovação</option>
+                  <option value="desist">Mais desistências</option>
+                  <option value="ocupacao">Menor ocupação</option>
+                  <option value="nome">Nome</option>
+                </select>
+              )}
+            </div>
+
+            {aba === "escolas" && (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Escola", "Inscritos", `vs ${epAnt}`, "Renovação", "Novos", "Desist.", "Experiências", "Ocupação"].map((h) => (
+                        <th key={h} style={th}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...linhasEscolas].sort(ordenar[ordem]).map((x) => (
+                      <tr key={x.e} className="rowHover" style={{ cursor: "pointer" }} onClick={() => setEscolaAberta(x.e)} title="Ver turmas e alunos">
+                        <td style={{ ...td, fontWeight: 600 }}>{x.e}</td>
+                        <td style={{ ...td, fontWeight: 600 }}>{x.inscritos}</td>
+                        <td style={{ ...td, color: corVar(x.variacao), fontWeight: 600 }} title={x.antTxt}>
+                          {fmtVar(x.variacao)}
+                        </td>
+                        <td style={{ ...td, color: x.renovacao === null ? COLORS.slate : x.renovacao >= 70 ? COLORS.ok : x.renovacao >= 50 ? COLORS.warn : COLORS.danger }}>{x.renovacao === null ? "—" : `${x.renovacao}%`}</td>
+                        <td style={td}>{x.novos}</td>
+                        <td style={{ ...td, color: x.desist ? COLORS.danger : COLORS.ink }}>{x.desist}</td>
+                        <td style={td}>
+                          {x.exp} <span style={{ color: COLORS.slate }}>({x.conv} inscr.)</span>
+                        </td>
+                        <td style={td}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 110 }}>
+                            <div style={{ flex: 1, height: 5, borderRadius: 3, background: COLORS.ruleSoft }}>
+                              <div style={{ width: `${Math.min(100, x.ocupacao || 0)}%`, height: "100%", borderRadius: 3, background: x.ocupacao >= 95 ? COLORS.warn : x.ocupacao < 50 ? COLORS.slate : COLORS.navy }} />
+                            </div>
+                            <span style={{ fontSize: 12, width: 34, textAlign: "right" }}>{x.ocupacao ?? "—"}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {aba === "semanas" && (
+              <div style={{ overflowX: "auto", maxHeight: 520, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Semana", "Entradas", "das quais novas", "Desistências", "Experiências", "Inscritos no fim", "Variação", ...(balancoAnt.length ? [`${epAnt} (mesma semana)`] : [])].map((h) => (
+                        <th key={h} style={{ ...th, position: "sticky", top: 0, background: COLORS.paperRaised }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...balanco].reverse().map((b) => {
+                      const ant = balancoAnt.find((x) => x.k === b.k);
+                      return (
+                        <tr key={b.k}>
+                          <td style={td}>
+                            <strong>Semana {b.k}</strong> <span style={{ color: COLORS.slate }}>{ddmm(b.ini)}–{ddmm(b.fim)}</span>
+                          </td>
+                          <td style={td}>{b.entradas}</td>
+                          <td style={td}>{b.novos}</td>
+                          <td style={{ ...td, color: b.desist ? COLORS.danger : COLORS.ink }}>{b.desist}</td>
+                          <td style={td}>{b.exp}</td>
+                          <td style={{ ...td, fontWeight: 600 }}>{b.ativos}</td>
+                          <td style={{ ...td, fontWeight: 600, color: b.variacao > 0 ? COLORS.ok : b.variacao < 0 ? COLORS.danger : COLORS.slate }}>{b.variacao > 0 ? `+${b.variacao}` : b.variacao}</td>
+                          {balancoAnt.length > 0 && <td style={{ ...td, color: COLORS.slate }}>{ant ? ant.ativos : "—"}</td>}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {aba === "escaloes" && (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Escalão", "Inscritos", "Raparigas", "Renovações", "Turmas", "Ocupação", "Desist."].map((h) => (
+                        <th key={h} style={th}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {porEscalao.map((x) => {
+                      const oc = x.cap ? Math.round((x.n / x.cap) * 100) : null;
+                      return (
+                        <tr key={x.k}>
+                          <td style={{ ...td, fontWeight: 600 }}>{x.k}</td>
+                          <td style={{ ...td, fontWeight: 600 }}>{x.n}</td>
+                          <td style={td}>
+                            {x.f} <span style={{ color: COLORS.slate }}>({Math.round((x.f / x.n) * 100)}%)</span>
+                          </td>
+                          <td style={td}>{Math.round((x.renov / x.n) * 100)}%</td>
+                          <td style={td}>{x.turmas.size}</td>
+                          <td style={{ ...td, color: oc >= 95 ? COLORS.warn : COLORS.ink }}>{oc ?? "—"}%</td>
+                          <td style={{ ...td, color: x.desist ? COLORS.danger : COLORS.ink }}>{x.desist}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {aba === "desistencias" && (
+              <div className="relGrelha" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 18 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Motivos</div>
+                  <BarrasRel dados={motivos} largura={210} cor={COLORS.danger} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Por semana da época</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={balanco.map((b) => ({ name: `S${b.k}`, value: b.desist }))} margin={{ left: -20, right: 8 }}>
+                      <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+                      <Bar dataKey="value" name="Desistências" fill={COLORS.danger} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ---- referência manual, só quando não há ficheiro da época passada ---- */}
+      {!regAnt && (
+        <details style={{ ...panelStyle, marginTop: 14 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLORS.ink2 }}>Referência da época passada sem ficheiro (escrever à mão)</summary>
+          <div style={{ fontSize: 12.5, color: COLORS.slate, margin: "10px 0 12px" }}>Só é preciso se não tiveres o Excel de {epAnt}. Com o ficheiro importado, a comparação é feita semana a semana e pelo código dos alunos.</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+              <select value={hEsc} onChange={(e) => setHEsc(e.target.value)} style={{ ...inputStyle, width: 220 }}>
+                {escolas.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos no final</label>
+              <input type="number" min="0" value={hIns} onChange={(e) => setHIns(e.target.value)} style={{ ...inputStyle, width: 140 }} placeholder={String((epocaAnterior[hEsc] || {}).inscritos ?? "112")} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Desistências na época</label>
+              <input type="number" min="0" value={hDes} onChange={(e) => setHDes(e.target.value)} style={{ ...inputStyle, width: 155 }} placeholder={String((epocaAnterior[hEsc] || {}).desist ?? "18")} />
+            </div>
+            <button
+              onClick={() => {
+                if (!hEsc || hIns === "") return;
+                onSaveEpocaAnterior(hEsc, { inscritos: Number(hIns), ...(hDes !== "" ? { desist: Number(hDes) } : {}) });
+                setHIns("");
+                setHDes("");
+              }}
+              style={{ ...secondaryBtnStyle, flex: "none", width: "auto", padding: "9px 16px" }}
+            >
+              Guardar
+            </button>
+          </div>
+        </details>
+      )}
 
       {importar && (
         <ImportarInscritos
           escolas={escolas}
           niveis={niveis}
           registoAtual={registoAlunos}
+          epocaInicial={importar === "semana" ? "" : importar}
           mapaTurmasGuardado={options.mapaTurmasAlunos || {}}
-          onFechar={() => setImportar(false)}
+          onFechar={() => setImportar(null)}
           onImportar={(r) => {
             onImportarInscritos(r);
             setEpoca(r.epoca);
-            setImportar(false);
+            setImportar(null);
           }}
         />
       )}
-      {escolaAberta && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} onFechar={() => setEscolaAberta(null)} />}
+      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} onFechar={() => setEscolaAberta(null)} />}
     </div>
   );
 }
+
+const epAntDe = (ep) => `${Number(ep.slice(0, 4)) - 1}/${ep.slice(2, 4)}`;
 
 function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niveis, desistencias, experiencias, satisfacao }) {
   const [fEsc, setFEsc] = useState("todas");
@@ -16729,7 +16959,7 @@ function AppPrincipal({ onSair }) {
     // Experiências registadas à mão: convertem-se se o código aparecer nos inscritos.
     const expManuais = experiencias.filter((x) => x.origem === "manual" && x.epoca === ep && x.alunoId && !r.experiencias[x.alunoId]);
     expManuais.forEach((x) => (r.experiencias[x.alunoId] = { id: x.alunoId, escola: x.escola, data: x.data }));
-    const reg = { alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
+    const reg = { semana1: r.semana1, alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
     persistRegistoAlunos({ ...registoAlunos, [ep]: reg });
     const al = Object.values(r.alunos);
     const capacidades = options.capacidades || {};
@@ -16781,7 +17011,7 @@ function AppPrincipal({ onSair }) {
       persistTurmas([...turmasAlunos.filter((t) => !escolasReg.has(t.escola)), ...grupos.values()]);
       const prox = { ...inscritos };
       escolasReg.forEach((e) => {
-        const bal = balancoSemanal(reg, e);
+        const bal = balancoSemanal(reg, e, ep);
         const fora = (prox[e] || []).filter((x) => !bal.some((b) => b.semana === x.semana));
         prox[e] = [...fora, ...bal.map((b) => ({ semana: b.semana, total: b.ativos, novas: b.entradas, desist: b.desist }))].sort((x, y) => x.semana.localeCompare(y.semana));
       });
@@ -16876,7 +17106,7 @@ function AppPrincipal({ onSair }) {
     if (r0 && r0.alunos[reg.alunoId]) {
       persistRegistoAlunos({
         ...registoAlunos,
-        [reg.epoca]: { ...r0, alunos: { ...r0.alunos, [reg.alunoId]: { ...r0.alunos[reg.alunoId], estado: "desistiu", saida: reg.data, motivo: reg.motivo } } },
+        [reg.epoca]: { ...r0, alunos: { ...r0.alunos, [reg.alunoId]: { ...r0.alunos[reg.alunoId], estado: "desistiu", saida: reg.data, semSaida: semanaDaEpoca(reg.data, r0.semana1 || semana1Padrao(reg.epoca)), motivo: reg.motivo } } },
       });
     }
     const t = turmasAlunos.find((x) => x.escola === reg.escola && x.turma === reg.turma);
