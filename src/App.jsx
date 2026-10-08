@@ -198,7 +198,7 @@ function epocasDisponiveis(extra) {
   const anoBase = hoje.getMonth() >= 6 ? hoje.getFullYear() : hoje.getFullYear() - 1;
   const lista = [];
   for (let a = anoBase + 1; a >= anoBase - 8; a--) lista.push(`${a}/${String(a + 1).slice(2)}`);
-  (extra || []).forEach((e) => {
+  (Array.isArray(extra) ? extra : [extra]).forEach((e) => {
     if (e && !lista.includes(e)) lista.push(e);
   });
   return lista.sort().reverse();
@@ -7874,6 +7874,7 @@ function InscritosPage({
   registoAlunos,
   onImportarInscritos,
   onCapacidade,
+  onLimparEpoca,
   onGuardarMapaEscaloes,
   notificar,
   onSaveTurma,
@@ -8022,6 +8023,7 @@ function InscritosPage({
           onImportarInscritos={onImportarInscritos}
           onCapacidade={onCapacidade}
           onSaveEpocaAnterior={onSaveEpocaAnterior}
+          onLimparEpoca={onLimparEpoca}
         />
       ) : (
         <InscritosAnalise
@@ -8341,7 +8343,32 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const epocaDetetada = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
     const epoca = epocaManual || epocaDetetada;
     const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
-    const s1 = anterior.semana1 || semana1Padrao(epoca);
+    // Semana 1 igual à do Excel: a segunda-feira que põe o maior número de linhas na semana indicada na coluna "Semana".
+    const s1 = (() => {
+      const pares = [...alunosF, ...desistF, ...expF].filter((r) => r.semana && r.data);
+      if (!pares.length) return anterior.semana1 || semana1Padrao(epoca);
+      const conta = {};
+      pares.forEach((r) => {
+        const d = new Date(r.data + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) - (r.semana - 1) * 7);
+        const k = d.toISOString().slice(0, 10);
+        conta[k] = (conta[k] || 0) + 1;
+      });
+      const candidatos = Object.entries(conta)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([k]) => k);
+      let melhor = candidatos[0];
+      let acertos = -1;
+      candidatos.forEach((c) => {
+        const n = pares.filter((r) => semanaDaEpoca(r.data, c) === r.semana).length;
+        if (n > acertos) {
+          acertos = n;
+          melhor = c;
+        }
+      });
+      return melhor;
+    })();
     const semHoje = semanaDaEpoca(hoje, s1);
     const alunos = {};
     // Alunos de importações anteriores que não estão neste ficheiro (podem ter saído).
@@ -8395,11 +8422,24 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     Object.values(anterior.alunos).forEach((a) => {
       if (!alunos[a.id]) alunos[a.id] = a;
     });
+    // Experiências: quem converte sai da página das experiências e entra na época como
+    // Extrainscrição. As das 3 últimas semanas do ficheiro ainda estão por decidir; as
+    // mais antigas que não passaram para a época contam como não convertidas. Em épocas
+    // passadas não há pendentes.
+    const emCurso = epoca === epocaDe(hoje);
+    const ultimaSemana = Math.max(0, ...[...alunosF, ...expF, ...desistF].map((r) => r.semana || 0));
+    const limitePendente = emCurso ? (ultimaSemana || semHoje) - 2 : Infinity;
     const experiencias = { ...anterior.experiencias };
     expF.forEach((r) => {
       experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || hoje, semana: r.semana || semanaDaEpoca(r.data || hoje, s1) };
     });
-    const convertidas = Object.values(experiencias).filter((x) => alunos[x.id]).length;
+    Object.values(alunos).forEach((a) => {
+      if (a.rubrica === "extra" && !experiencias[a.id]) experiencias[a.id] = { id: a.id, escola: a.escola, ano: a.ano, genero: a.genero, data: a.entrada, semana: a.semEntrada, origem: "extrainscricao" };
+    });
+    Object.values(experiencias).forEach((x) => {
+      x.resultado = alunos[x.id] ? "sucesso" : (x.semana || 0) >= limitePendente ? "pendente" : "insucesso";
+    });
+    const convertidas = Object.values(experiencias).filter((x) => x.resultado === "sucesso").length;
     const novos = alunosF.filter((r) => !anterior.alunos[r.id]).length;
     const ativos = Object.values(alunos).filter((a) => a.estado === "ativo").length;
     const turmasFinais = new Set(Object.values(alunos).map((a) => `${a.escola}|${a.turma}`));
@@ -8413,6 +8453,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       desistNovas,
       emFalta: emFalta.length,
       convertidas,
+      pendentesExp: Object.values(experiencias).filter((x) => x.resultado === "pendente").length,
       primeira: !Object.keys(anterior.alunos).length,
       nTurmas: turmasFinais.size,
       importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: expF.length }],
@@ -8593,7 +8634,14 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                   <div style={{ fontSize: 14, fontWeight: 600 }}>
                     Época {resultado.epoca}: {resultado.ativos} alunos inscritos em {resultado.nTurmas} turmas
                   </div>
-                  {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências ({resultado.convertidas} já inscritas).
+                  <div style={{ color: COLORS.ink2 }}>
+                    Semana 1 da época: {ddmm(resultado.semana1)} a {ddmm((() => {
+                      const d = new Date(resultado.semana1 + "T00:00:00Z");
+                      d.setUTCDate(d.getUTCDate() + 6);
+                      return d.toISOString().slice(0, 10);
+                    })())}, como na coluna Semana do ficheiro.
+                  </div>
+                  {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências na folha · {resultado.convertidas} convertidas (extrainscrições) · {resultado.pendentesExp} por decidir (últimas 3 semanas).
                   {novasEscolas.length > 0 && <div>Escolas novas a criar: {novasEscolas.join(", ")}</div>}
                 </div>
               </>
@@ -8638,7 +8686,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
           <div>
             <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{escola}</h2>
             <div style={{ fontSize: 12.5, color: COLORS.slate, marginTop: 4 }}>
-              {ativos.length} inscritos · {ativos.filter((a) => a.rubrica === "renov").length} renovações · {alunos.filter((a) => a.estado === "desistiu").length} desistências · {exps.length} experiências ({exps.filter((x) => reg.alunos[x.id]).length} inscritas)
+              {ativos.length} inscritos · {ativos.filter((a) => a.rubrica === "renov").length} renovações · {alunos.filter((a) => a.estado === "desistiu").length} desistências · {exps.length} experiências ({exps.filter((x) => x.resultado === "sucesso" || reg.alunos[x.id]).length} convertidas)
             </div>
           </div>
           <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
@@ -8765,7 +8813,8 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   );
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior }) {
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior, onLimparEpoca }) {
+  const [confirmarLimpar, setConfirmarLimpar] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const epocaHoje = epocaDe(isoDe(new Date()));
   const epocasReg = Object.keys(registoAlunos || {}).sort().reverse();
@@ -8788,7 +8837,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const ativos = alunos.filter((a) => a.estado === "ativo");
   const desist = alunos.filter((a) => a.estado === "desistiu");
   const exps = Object.values(reg?.experiencias || {}).filter((x) => !escolaSel || x.escola === escolaSel);
-  const convertidas = exps.filter((x) => reg?.alunos?.[x.id]).length;
+  const convertidas = exps.filter((x) => x.resultado === "sucesso" || reg?.alunos?.[x.id]).length;
+  const pendentesExp = exps.filter((x) => x.resultado === "pendente").length;
   const ultima = reg?.importacoes?.[reg.importacoes.length - 1];
   const escolasReg = [...new Set(todos.map((a) => a.escola))].sort((a, b) => a.localeCompare(b, "pt"));
 
@@ -8830,7 +8880,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
       novos: at.filter((a) => a.rubrica !== "renov").length,
       desist: al.filter((a) => a.estado === "desistiu").length,
       exp: ex.length,
-      conv: ex.filter((x) => reg.alunos[x.id]).length,
+      conv: ex.filter((x) => x.resultado === "sucesso" || reg.alunos[x.id]).length,
       ocupacao: capT ? Math.round((at.length / capT) * 100) : null,
     };
   };
@@ -8913,6 +8963,28 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
             </select>
           )}
           <span style={{ fontSize: 12, color: COLORS.slate }}>{ultima ? `Atualizado a ${fmt(new Date(ultima.data + "T00:00:00"))}` : ""}</span>
+          {reg && onLimparEpoca && !confirmarLimpar && (
+            <button onClick={() => setConfirmarLimpar(true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.danger }}>
+              Apagar dados de {epoca}
+            </button>
+          )}
+          {confirmarLimpar && (
+            <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "6px 10px", borderRadius: 8, background: COLORS.dangerBg, color: COLORS.danger }}>
+              Apagar alunos, turmas, balanço semanal, desistências e experiências importadas de {epoca}?
+              <button
+                onClick={() => {
+                  onLimparEpoca(epoca);
+                  setConfirmarLimpar(false);
+                }}
+                style={{ ...primaryBtnStyle, width: "auto", padding: "4px 10px", fontSize: 12, background: COLORS.danger }}
+              >
+                Apagar
+              </button>
+              <button onClick={() => setConfirmarLimpar(false)} style={{ ...secondaryBtnStyle, width: "auto", padding: "4px 10px", fontSize: 12 }}>
+                Cancelar
+              </button>
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="press" onClick={() => setImportar(epAntDe(epocaHoje))} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
@@ -8940,7 +9012,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
             )}
             <Kpi l="Inscrições novas" v={fmtNum(ativos.filter((a) => a.rubrica !== "renov").length)} sub={`${ativos.filter((a) => a.rubrica === "extra").length} extrainscrições`} />
             <Kpi l="Desistências" v={fmtNum(desist.length)} sub={`${alunos.length ? fmtNum((desist.length / alunos.length) * 100, 1) : 0}% · ${motivos[0] ? `mais frequente: ${motivos[0].name.toLowerCase()}` : ""}`} cor={desist.length ? COLORS.danger : COLORS.ink} />
-            <Kpi l="Experiências" v={fmtNum(exps.length)} sub={`${convertidas} ficaram inscritos (${exps.length ? Math.round((convertidas / exps.length) * 100) : 0}%)`} />
+            <Kpi l="Experiências" v={fmtNum(exps.length)} sub={`${convertidas} convertidas (${exps.length - pendentesExp ? Math.round((convertidas / (exps.length - pendentesExp)) * 100) : 0}% das decididas) · ${pendentesExp} por decidir`} />
             {atualSem && <Kpi l={`Semana ${atualSem.k}`} v={`${atualSem.variacao > 0 ? "+" : ""}${atualSem.variacao}`} sub={`${atualSem.entradas} entradas · ${atualSem.desist} desistências · ${atualSem.exp} experiências`} cor={atualSem.variacao > 0 ? COLORS.ok : atualSem.variacao < 0 ? COLORS.danger : COLORS.ink} />}
           </div>
 
@@ -9022,7 +9094,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
                         <td style={td}>{x.novos}</td>
                         <td style={{ ...td, color: x.desist ? COLORS.danger : COLORS.ink }}>{x.desist}</td>
                         <td style={td}>
-                          {x.exp} <span style={{ color: COLORS.slate }}>({x.conv} inscr.)</span>
+                          {x.exp} <span style={{ color: COLORS.slate }}>({x.conv} conv.)</span>
                         </td>
                         <td style={td}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 110 }}>
@@ -11363,7 +11435,7 @@ function PlanoForm({ inicial, epoca, tipologias, tiposEvento, eventosUsados, pub
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="pl-epoca">Época</label>
             <select id="pl-epoca" value={f.epoca} onChange={set("epoca")} style={inputStyle}>
-              {epocasDisponiveis(f.epoca).map((e) => (
+              {epocasDisponiveis([f.epoca]).map((e) => (
                 <option key={e} value={e}>
                   {e}
                 </option>
@@ -17036,7 +17108,7 @@ function AppPrincipal({ onSair }) {
         turma: aluno ? aluno.turma : "",
         n: 1,
         data: x.data,
-        resultado: aluno ? "sucesso" : ant && ant.resultado !== "sucesso" ? ant.resultado : "pendente",
+        resultado: x.resultado === "pendente" && ant && ant.resultado !== "pendente" && ant.resultado !== "sucesso" ? ant.resultado : x.resultado || (aluno ? "sucesso" : "pendente"),
         entraram: aluno ? 1 : 0,
         origem: "importacao",
       };
@@ -17044,6 +17116,24 @@ function AppPrincipal({ onSair }) {
     const idsExp = new Set(expNovas.map((x) => String(x.alunoId)));
     persistExperiencias([...experiencias.filter((x) => !(x.origem === "importacao" && x.epoca === ep) && !(x.alunoId && x.epoca === ep && idsExp.has(String(x.alunoId)))), ...expNovas]);
     notificar(`${r.ativos} alunos importados · ${r.desistNovas} desistências novas · ${expNovas.length} experiências.`);
+  };
+
+  // Apaga tudo o que veio dos ficheiros de uma época, para voltar a importar de raiz.
+  // As desistências e experiências registadas à mão mantêm-se.
+  const limparEpocaAlunos = (ep) => {
+    const { [ep]: _fora, ...resto } = registoAlunos;
+    persistRegistoAlunos(resto);
+    persistDesistencias(desistencias.filter((d) => !(d.origem === "importacao" && d.epoca === ep)));
+    persistExperiencias(experiencias.filter((x) => !(x.origem === "importacao" && x.epoca === ep)));
+    if (ep === epocaDe(isoDe(new Date()))) {
+      persistTurmas([]);
+      const s1 = semana1Padrao(ep);
+      const ini = semanaISO(new Date(s1 + "T12:00:00"));
+      const prox = {};
+      Object.entries(inscritos).forEach(([e, l]) => (prox[e] = (l || []).filter((r) => r.semana < ini)));
+      persistInscritos(prox);
+    }
+    notificar(`Dados de ${ep} apagados. Já podes importar de novo.`);
   };
 
   const definirCapacidade = (escola, turma, cap) => {
@@ -17950,6 +18040,7 @@ function AppPrincipal({ onSair }) {
             registoAlunos={registoAlunos}
             onImportarInscritos={importarInscritos}
             onCapacidade={definirCapacidade}
+            onLimparEpoca={limparEpocaAlunos}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
             onSaveTurma={saveTurmaAlunos}
