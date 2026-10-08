@@ -3868,12 +3868,20 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     setALer(true);
     setErro("");
     try {
-      const ls = (/\.xlsx?$/i.test(f.name) ? await lerExcelInq(f) : lerCSVInq(await f.text())).filter((l) => l.some((c) => String(c ?? "").trim()));
+      const brutas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f) : lerCSVInq(await f.text());
+      const ls = brutas
+        .map((l, i) => {
+          const x = [...l];
+          x.__linha = l.__linha || i + 1;
+          return x;
+        })
+        .filter((l) => l.some((c) => String(c ?? "").trim()));
       if (!ls.length) throw new Error("o ficheiro está vazio");
-      // A linha de títulos é a primeira (nas 10 primeiras) que reconhece mais colunas.
+      // A linha de títulos é a que reconhece mais colunas (procura nas 25 primeiras;
+      // o Excel pode ter um cabeçalho com logótipo e título antes da tabela).
       let melhor = 0;
       let pontos = -1;
-      ls.slice(0, 10).forEach((l, i) => {
+      ls.slice(0, 25).forEach((l, i) => {
         const n = Object.keys(colunasAuditoria(l)).length;
         if (n > pontos) {
           pontos = n;
@@ -3943,7 +3951,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       const epocaCol = normEpoca(v(l, "epoca"));
       const tipo = tipoConstatacao(v(l, "tipo"));
       const assunto = v(l, "assunto");
-      const linhaN = iCab + i + 2;
+      const linhaN = l.__linha || iCab + i + 2;
       // Nada fica de fora: o que estiver incompleto entra e corrige-se depois na app.
       if (!bruto) problemas.push(`Linha ${linhaN}: sem escola`);
       if (!data) problemas.push(`Linha ${linhaN}: sem data da visita${v(l, "data") ? ` ("${v(l, "data")}")` : ""}`);
@@ -4041,7 +4049,25 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
 
         {linhas && (
           <>
-            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Que coluna é o quê</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "16px 0 0", fontSize: 12.5, color: COLORS.ink2 }}>
+              Títulos das colunas na linha
+              <select
+                value={iCab}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setICab(n);
+                  setMapa(colunasAuditoria(linhas[n]));
+                }}
+                style={{ ...inputStyle, width: "auto", padding: "4px 8px" }}
+              >
+                {linhas.slice(0, 25).map((l, i) => (
+                  <option key={i} value={i}>
+                    {(l.__linha || i + 1)}: {l.filter((c) => String(c ?? "").trim()).slice(0, 3).join(" · ").slice(0, 50) || "(vazia)"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 8px" }}>Que coluna é o quê</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
               {COLUNAS_AUDIT_IMP.map((c) => (
                 <div key={c.chave}>
@@ -8725,6 +8751,8 @@ async function lerExcelInq(ficheiro) {
       linha[colNum(c.getAttribute("r") || "")] = valor;
     });
     for (let i = 0; i < linha.length; i++) if (linha[i] === undefined) linha[i] = "";
+    // Número da linha no Excel, para as mensagens apontarem a linha certa.
+    linha.__linha = Number(row.getAttribute("r")) || undefined;
     linhas.push(linha);
   });
   return linhas.filter((l) => l.some((c) => String(c).trim() !== ""));
