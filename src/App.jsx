@@ -3869,6 +3869,29 @@ const ambitoDoNome = (t) => {
 };
 const ambitoAud = (a) => a.ambito || ambitoDoNome(a.school) || "escola";
 
+// Área / departamento sugerido para um assunto, pelas palavras que contém.
+const PISTAS_AREA = [
+  [/fisio|medic|saude|socorr|lesao|enferm/, ["medica"]],
+  [/instala|equipamen|material|seguran|balneari|baliz|estrutur|limpez|campo|espaco/, ["instalacoes"]],
+  [/treinador|tecnic|treino|planeamento|exercic|sessao|coordenador tecnico|metodolog/, ["tecnica"]],
+  [/secretari|administr|documenta|registo|ficha|inscri|pagamento|organizacao|processo|sgq|gestao da qualidade|software|arquivo|decoracao|publicidade/, ["administrativa"]],
+  [/escolar|social|pais|encarregad|comunicac|atendimento|evento|alunos/, ["escolar", "social"]],
+];
+function areaSugerida(assunto, areas, mapa) {
+  const n = normChave(assunto);
+  if (!n) return "";
+  if (mapa && mapa[n] && areas.includes(mapa[n])) return mapa[n];
+  const exata = areas.find((a) => normChave(a) === n);
+  if (exata) return exata;
+  for (const [re, chaves] of PISTAS_AREA) {
+    if (re.test(n)) {
+      const a = areas.find((x) => chaves.some((c) => normChave(x).includes(c)));
+      if (a) return a;
+    }
+  }
+  return "";
+}
+
 const PALAVRAS_PEQUENAS = ["de", "da", "do", "das", "dos", "e"];
 function nomeEscolaProposto(bruto) {
   const t = String(bruto || "").trim();
@@ -3912,7 +3935,7 @@ function colunasAuditoria(cab) {
   return mapa;
 }
 
-function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, onFechar }) {
+function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onImportar, onFechar }) {
   const [linhas, setLinhas] = useState(null);
   const [folhas, setFolhas] = useState([]);
   const [iFolha, setIFolha] = useState(0);
@@ -4043,14 +4066,14 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       const codEficacia = v(l, "eficacia").toUpperCase();
       const analise = v(l, "causas");
       const causaLista = (CAUSAS_ATUAIS || []).find((c) => normChave(c) === normChave(analise));
-      const areaLista = areas.find((a) => normChave(a) === normChave(assunto));
+      const areaLista = areaSugerida(assunto, areas, mapaAreas);
       const catLista = categorias.find((c) => normChave(c) === normChave(assunto));
       const chave = data ? `${escola}|${data}` : `${escola}|sem data|${epoca}`;
       visitas[chave] = visitas[chave] || { escola, ambito, data: data || null, epoca, findings: [] };
       visitas[chave].findings.push({
         id: `f_imp_${Date.now().toString(36)}_${i}`,
         classification: tipo || "",
-        category: catLista || (areaLista ? "" : assunto),
+        category: catLista || assunto,
         area: areaLista || "",
         description: assunto || "(sem assunto)",
         resolvida: !!fecho || !!codEficacia,
@@ -4362,10 +4385,105 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
   );
 }
 
-function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions, areaOptions, auditCategoryOptions }) {
-  const [view, setView] = useState("registo");
+// Associa a cada assunto (categoria) a sua área / departamento, em todas as constatações de uma vez.
+function AreasConstatacoes({ audits, areas, mapaGuardado, onAplicar, onFechar, onGerirLista }) {
+  const assuntos = useMemo(() => {
+    const c = {};
+    audits.forEach((a) =>
+      (a.findings || []).forEach((f) => {
+        const k = f.category || f.description || "";
+        if (!k) return;
+        c[k] = c[k] || { n: 0, areas: {} };
+        c[k].n++;
+        if (f.area) c[k].areas[f.area] = (c[k].areas[f.area] || 0) + 1;
+      })
+    );
+    return Object.entries(c).sort((x, y) => y[1].n - x[1].n);
+  }, [audits]);
+  const [mapa, setMapa] = useState(() =>
+    Object.fromEntries(
+      assuntos.map(([k, x]) => {
+        const atual = Object.entries(x.areas).sort((p, q) => q[1] - p[1])[0];
+        return [k, atual ? atual[0] : areaSugerida(k, areas, mapaGuardado)];
+      })
+    )
+  );
+  const semArea = assuntos.filter(([k]) => !mapa[k]).length;
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(720px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Áreas e categorias</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 12 }}>
+          Cada assunto passa a ser uma categoria. Escolhe a área / departamento de cada um e aplica a todas as constatações com esse assunto. A app sugere pelas palavras do assunto; confirma antes de aplicar.{" "}
+          <button onClick={() => onGerirLista("auditAreas")} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+            Gerir lista de áreas
+          </button>
+        </div>
+        <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+          {assuntos.map(([k, x], i) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 13 }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {k} <span style={{ color: COLORS.slate }}>· {x.n}</span>
+              </span>
+              <select value={mapa[k] || ""} onChange={(e) => setMapa((m) => ({ ...m, [k]: e.target.value }))} style={{ ...inputStyle, width: 230, padding: "6px 8px", borderColor: mapa[k] ? undefined : COLORS.warn }}>
+                <option value="">Sem área</option>
+                {areas.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}>
+          <span style={{ flex: 1, fontSize: 12, color: semArea ? COLORS.warn : COLORS.slate }}>{semArea ? `${semArea} assuntos sem área` : "Todos os assuntos com área"}</span>
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", padding: "10px 16px" }}>
+            Cancelar
+          </button>
+          <button onClick={() => onAplicar(mapa)} style={{ ...primaryBtnStyle, width: "auto", padding: "10px 16px" }}>
+            Aplicar a {assuntos.reduce((n, [, x]) => n + x.n, 0)} constatações
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const sorted = [...audits].sort((a, b) => String(b.date || `${epocaAud(b)}`).localeCompare(String(a.date || `${epocaAud(a)}`)));
+function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, schoolOptions, areaOptions, auditCategoryOptions }) {
+  const [view, setView] = useState("registo");
+  const [fEpoca, setFEpoca] = useState("todas");
+  const [fEscola, setFEscola] = useState("todas");
+  const [fTipo, setFTipo] = useState("todos");
+  const [fEstado, setFEstado] = useState("todos");
+  const [fArea, setFArea] = useState("todas");
+  const [fTexto, setFTexto] = useState("");
+
+  const epocasLista = [...new Set(audits.map((a) => epocaAud(a)).filter(Boolean))].sort().reverse();
+  const escolasLista = [...new Set(audits.map((a) => a.school).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
+  const areasLista = [...new Set(audits.flatMap((a) => (a.findings || []).map((f) => f.area)).filter(Boolean))].sort();
+  const temFiltroConst = fTipo !== "todos" || fArea !== "todas" || fTexto.trim();
+  const passaConst = (f) =>
+    (fTipo === "todos" || (fTipo === "sem" ? !f.classification : f.classification === fTipo)) &&
+    (fArea === "todas" || (fArea === "sem" ? !f.area : f.area === fArea)) &&
+    (!fTexto.trim() || normChave([f.description, f.category, f.area, f.analiseCausas, f.acao, f.responsavel].join(" ")).includes(normChave(fTexto)));
+  const filtradas = audits.filter((a) => {
+    if (fEpoca !== "todas" && epocaAud(a) !== fEpoca) return false;
+    if (fEscola !== "todas" && a.school !== fEscola) return false;
+    const fs = a.findings || [];
+    if (temFiltroConst && !fs.some(passaConst)) return false;
+    if (fEstado === "pendentes" && !fs.some((f) => !f.resolvida && (!temFiltroConst || passaConst(f)))) return false;
+    if (fEstado === "resolvidas" && fs.some((f) => !f.resolvida)) return false;
+    return true;
+  });
+  const sorted = [...filtradas].sort((a, b) => String(b.date || `${epocaAud(b)}`).localeCompare(String(a.date || `${epocaAud(a)}`)));
+  const nConst = filtradas.reduce((n, a) => n + (a.findings || []).filter((f) => !temFiltroConst || passaConst(f)).length, 0);
+  const filtroSel = { ...inputStyle, width: "auto", minWidth: 0, padding: "7px 9px", fontSize: 13 };
 
   return (
     <div>
@@ -4411,7 +4529,12 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions
         <AuditsAnalysis audits={audits} schoolOptions={schoolOptions} areaOptions={areaOptions} auditCategoryOptions={auditCategoryOptions} />
       ) : (
         <>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            {onAreas && audits.length > 0 && (
+              <button onClick={onAreas} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px" }}>
+                Áreas e categorias
+              </button>
+            )}
             {onImportar && (
               <button onClick={onImportar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7 }}>
                 <FileText size={15} /> Importar Excel
@@ -4437,7 +4560,57 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions
             </button>
           </div>
 
-          {sorted.length === 0 ? (
+          {audits.length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+              <select value={fEpoca} onChange={(e) => setFEpoca(e.target.value)} style={filtroSel} aria-label="Época">
+                <option value="todas">Todas as épocas</option>
+                {epocasLista.map((e) => (
+                  <option key={e} value={e}>
+                    Época {e}
+                  </option>
+                ))}
+              </select>
+              <select value={fEscola} onChange={(e) => setFEscola(e.target.value)} style={{ ...filtroSel, maxWidth: 240 }} aria-label="Escola">
+                <option value="todas">Todas as escolas</option>
+                {escolasLista.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={filtroSel} aria-label="Tipo">
+                <option value="todos">Todos os tipos</option>
+                {Object.entries(CLASSIFICATION_META).map(([k, m]) => (
+                  <option key={k} value={k}>
+                    {k} · {m.label}
+                  </option>
+                ))}
+                <option value="sem">Sem tipo</option>
+              </select>
+              <select value={fArea} onChange={(e) => setFArea(e.target.value)} style={{ ...filtroSel, maxWidth: 220 }} aria-label="Área">
+                <option value="todas">Todas as áreas</option>
+                {areasLista.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+                <option value="sem">Sem área</option>
+              </select>
+              <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={filtroSel} aria-label="Estado">
+                <option value="todos">Todos os estados</option>
+                <option value="pendentes">Com constatações por resolver</option>
+                <option value="resolvidas">Todas resolvidas</option>
+              </select>
+              <input value={fTexto} onChange={(e) => setFTexto(e.target.value)} placeholder="Procurar nas constatações…" style={{ ...filtroSel, flex: 1, minWidth: 180 }} />
+              <span style={{ fontSize: 12, color: COLORS.slate, whiteSpace: "nowrap" }}>
+                {sorted.length} visitas · {nConst} constatações
+              </span>
+            </div>
+          )}
+
+          {audits.length > 0 && sorted.length === 0 ? (
+            <div style={{ fontSize: 13, color: COLORS.slate, padding: "20px 0" }}>Nenhuma visita com estes filtros.</div>
+          ) : sorted.length === 0 ? (
             <Vazio
               icon={ClipboardList}
               titulo="Ainda sem auditorias"
@@ -6628,6 +6801,7 @@ function normChave(t) {
 function anoNascimento(valor) {
   const t = String(valor || "").trim();
   if (!t) return null;
+  if (/^\d{5}(\.\d+)?$/.test(t)) return new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(t)) * 86400000).getUTCFullYear();
   const soDigitos = t.replace(/\D/g, "");
   if (/^\d{4}$/.test(t)) return Number(t);
   const iso = t.match(/^(\d{4})[-/.]\d{1,2}[-/.]\d{1,2}/);
@@ -6668,6 +6842,10 @@ function adivinharTurma(bruto, turmas, niveis) {
   }
   const nivel = (niveis || []).find((n) => t.startsWith(normChave(n)));
   if (nivel) return nivel;
+  // Nomes como "26/27 INICIAÇÃO B1" ou "B1 - Intermédio (3ª/6ª 18:30)": o nível aparece no meio.
+  const semEpoca = t.replace(/^\d{2}\s*\/\s*\d{2}\s*-?\s*/, "");
+  const noMeio = (niveis || []).find((n) => new RegExp(`(^|[^a-z])${normChave(n)}([^a-z]|$)`).test(semEpoca));
+  if (noMeio) return noMeio;
   return null;
 }
 
@@ -6693,10 +6871,24 @@ const COLUNAS_LISTA = [
   { chave: "genero", rotulo: "Género", sinonimos: ["genero", "genero (m ou f)", "genero (m/f)", "sexo", "gender", "m/f", "masc/fem"] },
   { chave: "nascimento", rotulo: "Nascimento (ano ou data)", sinonimos: ["ano de nascimento", "ano", "data de nascimento", "nascimento", "nasc", "data nasc", "data nasc.", "datanascimento", "dn", "aniversario"] },
   {
+    chave: "rubrica",
+    rotulo: "Rubrica (renovação / inscrição)",
+    opcional: true,
+    sinonimos: ["rubricas/artigos", "rubricas", "rubrica", "artigos", "tipo de inscricao", "tipo inscricao"],
+    ajuda: "Conta quantos renovaram e quantos são inscrições novas.",
+  },
+  {
+    chave: "entrada",
+    rotulo: "Data de entrada",
+    opcional: true,
+    sinonimos: ["data de entrada", "data de inscricao", "data inscricao", "data entrada", "data"],
+    ajuda: "Monta a evolução semanal de inscritos a partir das datas de entrada.",
+  },
+  {
     chave: "periodo",
     rotulo: "Período (mês ou semana)",
     opcional: true,
-    sinonimos: ["mes", "mês", "periodo", "semana", "data"],
+    sinonimos: ["mes", "mês", "periodo", "semana"],
     ajuda: "Se o ficheiro tem uma linha por atleta e por período, escolhe aqui a coluna para importares só um período.",
   },
   {
@@ -6861,6 +7053,26 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       });
     }
 
+    if (modo === "lista") {
+      const amostra = linhasDados.slice(0, 300);
+      const validos = (i) => {
+        const vs = amostra.map((l) => (l[Number(i)] || "").trim()).filter(Boolean);
+        return vs.length ? vs.filter((v) => anoNascimento(v) && anoNascimento(v) > 1990).length / vs.length : 0;
+      };
+      // "Ano de Nascimento" com erros (#VALUE!): usa a coluna da data, de onde se tira o ano.
+      if (novo.nascimento !== undefined && validos(novo.nascimento) < 0.6) {
+        const alt = tabela[0]
+          .map((h, i) => ({ h: normChave(h), i }))
+          .find((x) => String(x.i) !== novo.nascimento && /nasc/.test(x.h) && validos(x.i) >= 0.6);
+        if (alt) novo.nascimento = String(alt.i);
+      }
+      // Uma linha por atleta (IDs que não se repetem): o mês/semana é da entrada, não um período a filtrar.
+      if (novo.periodo !== undefined && novo.identificador !== undefined) {
+        const ids = linhasDados.map((l) => (l[Number(novo.identificador)] || "").trim()).filter(Boolean);
+        if (ids.length && new Set(ids).size / ids.length > 0.95) delete novo.periodo;
+      }
+    }
+
     setMapaCol((atual) => {
       const igual = Object.keys(novo).length === Object.keys(atual).length && Object.entries(novo).every(([k, v]) => atual[k] === v);
       return igual ? atual : novo;
@@ -6918,8 +7130,9 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       let mudou = false;
       escolasBrutas.forEach(([bruto]) => {
         if (novo[bruto] !== undefined) return;
-        const exata = escolas.find((e) => normChave(e) === normChave(bruto));
-        const parcial = escolas.find((e) => normChave(e).includes(normChave(bruto)) || normChave(bruto).includes(normChave(e)));
+        const semPrefixo = (t) => normChave(t).replace(/^(dragon force|df)\s*[-–·:]?\s*/, "");
+        const exata = escolas.find((e) => normChave(e) === normChave(bruto) || semPrefixo(e) === semPrefixo(bruto));
+        const parcial = escolas.find((e) => semPrefixo(e).length >= 3 && semPrefixo(bruto).length >= 3 && (semPrefixo(e).includes(semPrefixo(bruto)) || semPrefixo(bruto).includes(semPrefixo(e))));
         novo[bruto] = exata || parcial || "";
         mudou = true;
       });
@@ -7002,6 +7215,9 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
     const vistos = new Set();
     const temPeriodo = mapaCol.periodo !== undefined && mapaCol.periodo !== "" && periodoEscolhido;
     const temId = mapaCol.identificador !== undefined && mapaCol.identificador !== "";
+    const temRubrica = mapaCol.rubrica !== undefined && mapaCol.rubrica !== "";
+    const temEntrada = mapaCol.entrada !== undefined && mapaCol.entrada !== "";
+    const entradas = {};
 
     linhasDados.forEach((l) => {
       // Só o período escolhido, para não somar vários meses do mesmo atleta.
@@ -7040,7 +7256,33 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       const atual = grupos.get(chave) || { escola, turma, ano: ano || 0, m: 0, f: 0 };
       if (g === "f") atual.f += 1;
       else atual.m += 1; // sem género indicado, entra em masculinos
+      if (temRubrica) {
+        const r = normChave(valorDe(l, "rubrica"));
+        const k = r.startsWith("renov") ? "renov" : r.startsWith("extra") ? "extra" : r.startsWith("inscri") || r.startsWith("nova") ? "novos" : null;
+        if (k) atual[k] = (atual[k] || 0) + 1;
+      }
       grupos.set(chave, atual);
+      if (temEntrada) {
+        const d = dataDeCelula(valorDe(l, "entrada"));
+        if (d) {
+          const sem = semanaISO(new Date(d + "T00:00:00"));
+          entradas[escola] = entradas[escola] || {};
+          entradas[escola][sem] = (entradas[escola][sem] || 0) + 1;
+        }
+      }
+    });
+    // Evolução semanal: total acumulado de entradas em cada semana, por escola.
+    const serie = {};
+    const semanaHoje = semanaISO(new Date());
+    Object.entries(entradas).forEach(([escola, porSem]) => {
+      let acum = 0;
+      serie[escola] = Object.keys(porSem)
+        .sort()
+        .filter((sem) => sem <= semanaHoje)
+        .map((sem) => {
+          acum += porSem[sem];
+          return { semana: sem, total: acum, novas: porSem[sem] };
+        });
     });
     return {
       linhas: [...grupos.values()].sort((a, b) => a.escola.localeCompare(b.escola) || a.turma.localeCompare(b.turma) || a.ano - b.ano),
@@ -7049,6 +7291,8 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       semGenero,
       semAno,
       repetidos,
+      serie,
+      rubricas: temRubrica,
     };
   }, [linhasDados, mapaCol, mapaEscalao, mapaEscola, modo, escolas, turmas, periodoEscolhido, escolaUnica]);
 
@@ -7084,7 +7328,8 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
       setErro("Não há nada para importar. Confirma o mapeamento das colunas e dos escalões.");
       return;
     }
-    onImportar(resultado.linhas);
+    // Lista completa de alunos: as turmas destas escolas passam a ser só as do ficheiro.
+    onImportar(resultado.linhas, modo === "lista" ? { substituirEscolas: [...new Set(resultado.linhas.map((l) => l.escola))], serie: resultado.serie } : {});
     if (modo === "lista" && onGuardarMapa) {
       // Guarda as correspondências para a próxima importação já vir resolvida.
       const mapa = {};
@@ -7416,6 +7661,20 @@ function ImportarAlunos({ escolas, turmas, niveis, mapaGuardado, onImportar, onG
               {resultado.semGenero > 0 && <Tag label={`${resultado.semGenero} sem género`} color={COLORS.warn} bg={COLORS.warnBg} />}
               {resultado.semAno > 0 && <Tag label={`${resultado.semAno} sem ano`} color={COLORS.warn} bg={COLORS.warnBg} />}
               {resultado.repetidos > 0 && <Tag label={`${resultado.repetidos} repetido(s) removido(s)`} color={COLORS.slate} bg={COLORS.doneBg} />}
+              {resultado.rubricas && (() => {
+                const soma = (k) => resultado.linhas.reduce((t, l) => t + (l[k] || 0), 0);
+                const r = soma("renov");
+                return (
+                  <>
+                    <Tag label={`${r} renovações (${totalAtletas ? Math.round((r / totalAtletas) * 100) : 0}%)`} color={COLORS.navySoft} bg={COLORS.navyWash} />
+                    <Tag label={`${soma("novos")} inscrições novas`} color={COLORS.navySoft} bg={COLORS.navyWash} />
+                    {soma("extra") > 0 && <Tag label={`${soma("extra")} extrainscrições`} color={COLORS.slate} bg={COLORS.doneBg} />}
+                  </>
+                );
+              })()}
+              {resultado.serie && Object.keys(resultado.serie).length > 0 && (
+                <Tag label={`evolução semanal de ${Object.keys(resultado.serie).length} escola(s) a partir das datas de entrada`} color={COLORS.slate} bg={COLORS.doneBg} />
+              )}
             </div>
 
             {Object.keys(resultado.motivos).length > 0 && (
@@ -8919,27 +9178,91 @@ async function lerExcelInq(ficheiro, opcoes = {}) {
     for (const ch of letras) n = n * 26 + (ch.charCodeAt(0) - 64);
     return n - 1;
   };
+  // Lê a folha em fluxo, linha a linha, sem montar o XML inteiro na memória:
+  // há ficheiros com fórmulas copiadas até à linha 1 048 576 (centenas de MB).
+  // Pára quando encontra 3000 linhas seguidas com menos de dois valores.
+  const desfazer = (t) => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (x, n) => String.fromCharCode(Number(n))).replace(/&amp;/g, "&");
   const lerFolha = async (caminho) => {
-  const folhaXml = await ler(caminho);
-  if (!folhaXml) return null;
-  const linhas = [];
-  [...xml(folhaXml).getElementsByTagName("row")].forEach((row) => {
-    const linha = [];
-    [...row.getElementsByTagName("c")].forEach((c) => {
-      const t = c.getAttribute("t");
-      const v = c.getElementsByTagName("v")[0];
-      let valor = "";
-      if (t === "s") valor = partilhadas[Number(v?.textContent)] ?? "";
-      else if (t === "inlineStr") valor = [...c.getElementsByTagName("t")].map((x) => x.textContent).join("");
-      else valor = v ? v.textContent : "";
-      linha[colNum(c.getAttribute("r") || "")] = valor;
-    });
-    for (let i = 0; i < linha.length; i++) if (linha[i] === undefined) linha[i] = "";
-    // Número da linha no Excel, para as mensagens apontarem a linha certa.
-    linha.__linha = Number(row.getAttribute("r")) || undefined;
-    linhas.push(linha);
-  });
-  return linhas.filter((l) => l.some((c) => String(c).trim() !== ""));
+    const e = entradas[caminho];
+    if (!e) return null;
+    const ini = e.offLocal + 30 + dv.getUint16(e.offLocal + 26, true) + dv.getUint16(e.offLocal + 28, true);
+    const dados = buf.subarray(ini, ini + e.tamComp);
+    const linhas = [];
+    let fracas = 0;
+    let parar = false;
+    const reCel = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    const tratarLinha = (rowXml) => {
+      const mR = rowXml.match(/^<row\b[^>]*?\br="(\d+)"/);
+      const linha = [];
+      let cheias = 0;
+      let m;
+      reCel.lastIndex = 0;
+      while ((m = reCel.exec(rowXml))) {
+        const attrs = m[1];
+        const ref = (attrs.match(/\br="([A-Z]+)\d*"/) || [])[1];
+        const t = (attrs.match(/\bt="(\w+)"/) || [])[1];
+        const corpo = m[2] || "";
+        let valor = "";
+        if (t === "inlineStr") valor = desfazer([...corpo.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
+        else {
+          const v = (corpo.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+          if (v !== undefined) valor = t === "s" ? partilhadas[Number(v)] ?? "" : desfazer(v);
+        }
+        if (ref) linha[colNum(ref)] = valor;
+        else linha.push(valor);
+        if (String(valor).trim() !== "") cheias++;
+      }
+      for (let i = 0; i < linha.length; i++) if (linha[i] === undefined) linha[i] = "";
+      linha.__linha = mR ? Number(mR[1]) : undefined;
+      linha.__cheias = cheias;
+      linhas.push(linha);
+      fracas = cheias < 2 ? fracas + 1 : 0;
+      if (fracas >= 3000) parar = true;
+    };
+    let resto = "";
+    const consumir = (texto, fim) => {
+      resto += texto;
+      let i = 0;
+      for (;;) {
+        const ab = resto.indexOf("<row", i);
+        if (ab < 0) {
+          resto = fim ? "" : resto.slice(Math.max(i, resto.length - 10));
+          return;
+        }
+        const fechoTag = resto.indexOf(">", ab);
+        if (fechoTag < 0) break;
+        let fimRow;
+        if (resto[fechoTag - 1] === "/") fimRow = fechoTag + 1;
+        else {
+          const f = resto.indexOf("</row>", fechoTag);
+          if (f < 0) break;
+          fimRow = f + 6;
+        }
+        tratarLinha(resto.slice(ab, fimRow));
+        i = fimRow;
+        if (parar) return;
+      }
+      resto = resto.slice(i);
+    };
+    if (e.metodo === 0) consumir(dec.decode(dados), true);
+    else {
+      const leitor = new Blob([dados]).stream().pipeThrough(new DecompressionStream("deflate-raw")).pipeThrough(new TextDecoderStream()).getReader();
+      for (;;) {
+        const { done, value } = await leitor.read();
+        if (done) {
+          consumir("", true);
+          break;
+        }
+        consumir(value, false);
+        if (parar) {
+          leitor.cancel().catch(() => {});
+          break;
+        }
+      }
+    }
+    // Tira o lixo do fim (linhas só com uma fórmula por preencher) e as vazias.
+    while (linhas.length && linhas[linhas.length - 1].__cheias < 2) linhas.pop();
+    return linhas.filter((l) => l.__cheias > 0);
   };
 
   if (opcoes.todas) {
@@ -11049,8 +11372,11 @@ function metricasEscola(e, periodo, d) {
   const xpSuc = xp.filter((x) => x.resultado === "sucesso").reduce((n, x) => n + x.n, 0);
   const xpAval = xp.filter((x) => x.resultado !== "pendente").reduce((n, x) => n + x.n, 0);
 
+  const comRubrica = turmas.reduce((n, t) => n + (t.renov || 0) + (t.novos || 0) + (t.extra || 0), 0);
   return {
     alunos,
+    renovPct: comRubrica ? Math.round((turmas.reduce((n, t) => n + (t.renov || 0), 0) / comRubrica) * 100) : null,
+    novos: comRubrica ? turmas.reduce((n, t) => n + (t.novos || 0), 0) : null,
     crescimento: ant && alunos ? Math.round(((alunos - ant) / ant) * 1000) / 10 : null,
     reclamacoes: recl.length,
     reclPor100: por100(recl.length, alunos),
@@ -11515,6 +11841,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   const COL_ESC = [
     { k: "alunos", label: "Alunos", v: (x) => x.m.alunos || null },
     { k: "crescimento", label: "Cresc.", v: (x) => x.m.crescimento, un: "%", dec: 1, bom: "alto" },
+    { k: "renovPct", label: "Renov.", v: (x) => x.m.renovPct, un: "%", bom: "alto" },
     { k: "reclPor100", label: "Recl./100", v: (x) => x.m.reclPor100, dec: 1, bom: "baixo" },
     { k: "prazo", label: "No prazo", v: (x) => x.m.prazo, un: "%", bom: "alto" },
     { k: "constat", label: "Constat.", v: (x) => x.constat, bom: "baixo" },
@@ -12617,6 +12944,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={epocaAnterior[escola]?.inscritos ? `${fmtNum(epocaAnterior[escola].inscritos)} na época passada` : null} />
               <KpiRel label="Escolinha" valor={fmtNum(pct(escolinha, masc + fem))} unidade="%" comparacao={`${fmtNum(escolinha)} alunos · ${fmtNum(masc + fem - escolinha)} em competição`} />
               <KpiRel label="Raparigas" valor={fmtNum(pct(fem, masc + fem))} unidade="%" comparacao={`${fmtNum(fem)} de ${fmtNum(masc + fem)}`} />
+              {m.renovPct !== null && <KpiRel label="Renovaram" valor={fmtNum(m.renovPct)} unidade="%" comparacao={`${fmtNum(m.novos)} inscrições novas`} />}
               <KpiRel label="Turmas cheias" valor={fmtNum(cheias.length)} comparacao="95% ou mais da capacidade" cor={cheias.length ? COLORS.warn : COLORS.ink} />
               <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} cor={vazias.length ? COLORS.warn : COLORS.ink} />
               {(() => {
@@ -15472,6 +15800,7 @@ function AppPrincipal({ onSair }) {
   const [showForm, setShowForm] = useState(false);
   const [showAuditForm, setShowAuditForm] = useState(false);
   const [importarAud, setImportarAud] = useState(false);
+  const [areasAud, setAreasAud] = useState(false);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
@@ -15846,14 +16175,29 @@ function AppPrincipal({ onSair }) {
     persistOptions({ ...options, mapaEscaloes: { ...(options.mapaEscaloes || {}), ...mapa } });
   };
 
-  const importarTurmas = (linhas) => {
-    let atual = [...turmasAlunos];
+  const importarTurmas = (linhas, extra = {}) => {
+    const substituir = new Set(extra.substituirEscolas || []);
+    let atual = turmasAlunos.filter((r) => !substituir.has(r.escola));
     linhas.forEach((reg) => {
       const i = atual.findIndex((r) => r.escola === reg.escola && r.turma === reg.turma && r.ano === reg.ano);
       if (i >= 0) atual[i] = reg;
       else atual.push(reg);
     });
     persistTurmas(atual);
+    // Evolução semanal a partir das datas de entrada (mantém as desistências já registadas).
+    if (extra.serie && Object.keys(extra.serie).length) {
+      const proximo = { ...inscritos };
+      Object.entries(extra.serie).forEach(([escola, semanas]) => {
+        const lista = [...(proximo[escola] || [])];
+        semanas.forEach((x) => {
+          const i = lista.findIndex((r) => r.semana === x.semana);
+          if (i >= 0) lista[i] = { ...lista[i], total: x.total, novas: x.novas };
+          else lista.push({ semana: x.semana, total: x.total, novas: x.novas, desist: 0 });
+        });
+        proximo[escola] = lista.sort((a, b) => a.semana.localeCompare(b.semana));
+      });
+      persistInscritos(proximo);
+    }
   };
 
   const saveTurmaAlunos = (registo) => {
@@ -16677,6 +17021,7 @@ function AppPrincipal({ onSair }) {
             audits={auditsVista}
             onNewAudit={() => setShowAuditForm(true)}
             onImportar={() => setImportarAud(true)}
+            onAreas={() => setAreasAud(true)}
             onOpenAudit={(a) => setViewingAudit(a)}
             schoolOptions={options.schools}
             areaOptions={options.auditAreas}
@@ -17067,17 +17412,53 @@ function AppPrincipal({ onSair }) {
         />
       )}
 
+      {areasAud && (
+        <AreasConstatacoes
+          audits={audits}
+          areas={options.auditAreas || []}
+          mapaGuardado={options.mapaAreasAud || {}}
+          onGerirLista={setListaAberta}
+          onFechar={() => setAreasAud(false)}
+          onAplicar={(mapa) => {
+            let n = 0;
+            persistAudits(
+              audits.map((a) => ({
+                ...a,
+                findings: (a.findings || []).map((f) => {
+                  const k = f.category || f.description || "";
+                  if (!k || mapa[k] === undefined) return f;
+                  n++;
+                  return { ...f, category: f.category || k, area: mapa[k] };
+                }),
+              }))
+            );
+            const cats = Object.keys(mapa).filter((k) => !(options.auditCategories || []).includes(k));
+            const guardar = Object.fromEntries(Object.entries(mapa).filter(([, v]) => v).map(([k, v]) => [normChave(k), v]));
+            persistOptions({ ...options, auditCategories: [...(options.auditCategories || []), ...cats], mapaAreasAud: { ...(options.mapaAreasAud || {}), ...guardar } });
+            setAreasAud(false);
+            notificar(`Área e categoria atualizadas em ${n} constatações.`);
+          }}
+        />
+      )}
+
       {importarAud && (
         <ImportarAuditorias
           audits={audits}
           escolas={options.schools}
           categorias={options.auditCategories || []}
           areas={options.auditAreas || []}
+          mapaAreas={options.mapaAreasAud || {}}
           onFechar={() => setImportarAud(false)}
           onImportar={(novas, acrescentos, novasEscolas) => {
             const n = novas.reduce((t, a) => t + a.findings.length, 0) + Object.values(acrescentos).reduce((t, l) => t + l.length, 0);
             persistAudits([...audits.map((a) => (acrescentos[a.id] ? { ...a, findings: [...(a.findings || []), ...acrescentos[a.id]] } : a)), ...novas]);
-            if (novasEscolas.length) persistOptions({ ...options, schools: [...options.schools, ...novasEscolas.filter((e) => !options.schools.includes(e))] });
+            // Os assuntos do Excel passam a fazer parte da lista de categorias.
+            const assuntos = [...new Set([...novas.flatMap((a) => a.findings), ...Object.values(acrescentos).flat()].map((f) => f.category).filter(Boolean))];
+            persistOptions({
+              ...options,
+              schools: [...options.schools, ...novasEscolas.filter((e) => !options.schools.includes(e))],
+              auditCategories: [...(options.auditCategories || []), ...assuntos.filter((x) => !(options.auditCategories || []).includes(x))],
+            });
             setImportarAud(false);
             notificar(`${n} constatações importadas em ${novas.length} visitas novas${Object.keys(acrescentos).length ? ` e ${Object.keys(acrescentos).length} já existentes` : ""}.`);
           }}
