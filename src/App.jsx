@@ -5469,7 +5469,8 @@ function SemDados({ texto, icon, titulo, acao, onAcao }) {
 }
 
 // ---------- Desistências ----------
-function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onGerirLista }) {
+function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onGerirLista, procurarAluno }) {
+  const [codigo, setCodigo] = useState("");
   const [escola, setEscola] = useState(escolas[0] || "");
   const [turma, setTurma] = useState("");
   const [motivo, setMotivo] = useState(motivos[0] || "");
@@ -5496,24 +5497,48 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
     .sort((a, b) => b.n - a.n);
 
   const guardar = () => {
+    const cod = codigo.trim();
+    if (!cod) {
+      setErro("Indica o código do atleta.");
+      return;
+    }
     if (!turma) {
       setErro("Escolhe a turma.");
       return;
     }
-    if (n === "" || Number(n) < 1) {
-      setErro("Indica quantas desistências.");
+    const hojeIso = isoDe(new Date());
+    if (desistencias.some((d) => String(d.alunoId) === cod && d.epoca === epocaDe(hojeIso))) {
+      setErro(`O atleta ${cod} já tem uma desistência registada nesta época.`);
       return;
     }
     setErro("");
-    onSave({ id: `d_${Date.now()}`, escola, turma, motivo, n: Math.round(Number(n)), data: new Date().toISOString().slice(0, 10) });
-    setN("1");
+    onSave({ id: `d_${Date.now()}`, alunoId: cod, epoca: epocaDe(hojeIso), escola, turma, motivo, n: 1, data: hojeIso, origem: "manual" });
+    setCodigo("");
   };
 
   return (
     <div>
       <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Registar desistências</div>
+        <div style={panelTitle}>Registar desistência</div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Código do atleta</label>
+            <input
+              value={codigo}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCodigo(v);
+                setErro("");
+                const a = procurarAluno && procurarAluno(v.trim());
+                if (a) {
+                  setEscola(a.escola);
+                  setTurma(a.turma || "");
+                }
+              }}
+              placeholder="ex.: 22534"
+              style={{ ...inputStyle, width: 140 }}
+            />
+          </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
             <select value={escola} onChange={(e) => { setEscola(e.target.value); setTurma(""); }} style={{ ...inputStyle, width: 170 }}>
@@ -5542,15 +5567,12 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
               ))}
             </select>
           </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Quantos</label>
-            <input type="number" min="1" value={n} onChange={(e) => { setN(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 95 }} />
-          </div>
+
           <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
         </div>
         {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
         <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
-          Registam-se contagens e motivos — sem nomes nem identificação de atletas.
+          Ao escrever um código que já está nos inscritos, a escola e a turma preenchem-se sozinhas e o atleta passa a contar como desistência.
         </div>
       </div>
 
@@ -5635,7 +5657,9 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
 }
 
 // ---------- Experiências ----------
-function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUpdate, onRemove }) {
+function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUpdate, onRemove, procurarAluno }) {
+  const [codigo, setCodigo] = useState("");
+  const [fCod, setFCod] = useState("");
   const [aviso, setAviso] = useState("");
   const avaliar = (id, resultado) => setAviso(onUpdate(id, resultado) || "");
   const [escola, setEscola] = useState(escolas[0] || "");
@@ -5653,6 +5677,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
 
   const lista = experiencias
     .filter((x) => (fEsc === "todas" ? true : x.escola === fEsc))
+    .filter((x) => !fCod.trim() || String(x.alunoId || "").includes(fCod.trim()))
     .filter((x) => (fRes === "todos" ? true : x.resultado === fRes))
     .filter((x) => (fMes === "todos" ? true : mesDeData(x.data) === fMes))
     .sort((a, b) => String(b.data).localeCompare(String(a.data)));
@@ -5673,17 +5698,18 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
   });
 
   const guardar = () => {
-    if (!turma) {
-      setErro("Escolhe a turma.");
+    const cod = codigo.trim();
+    if (!cod) {
+      setErro("Indica o código do atleta.");
       return;
     }
-    if (n === "" || Number(n) < 1) {
-      setErro("Indica pelo menos 1 atleta.");
+    if (experiencias.some((x) => String(x.alunoId) === cod && x.epoca === epocaDe(data))) {
+      setErro(`Já existe uma experiência do atleta ${cod} nesta época.`);
       return;
     }
     setErro("");
-    onSave({ id: `x_${Date.now()}`, escola, turma, n: Math.round(Number(n)), resultado: "pendente", data });
-    setN("1");
+    onSave({ id: `x_${Date.now()}`, alunoId: cod, epoca: epocaDe(data), escola, turma, n: 1, resultado: "pendente", data, origem: "manual" });
+    setCodigo("");
   };
 
   return (
@@ -5709,8 +5735,22 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
             </select>
           </div>
           <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Nº de atletas</label>
-            <input type="number" min="1" value={n} onChange={(e) => { setN(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 110 }} />
+            <label style={{ ...labelStyle, marginTop: 0 }}>Código do atleta</label>
+            <input
+              value={codigo}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCodigo(v);
+                setErro("");
+                const a = procurarAluno && procurarAluno(v.trim());
+                if (a) {
+                  setEscola(a.escola);
+                  setTurma(a.turma || "");
+                }
+              }}
+              placeholder="ex.: 22534"
+              style={{ ...inputStyle, width: 140 }}
+            />
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Data</label>
@@ -5725,6 +5765,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
       </div>
 
       <Filtros>
+        <input value={fCod} onChange={(e) => setFCod(e.target.value)} placeholder="Procurar código" style={{ ...inputStyle, width: 160 }} />
         <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
           <option value="todas">Todas as escolas</option>
           {escolas.map((e) => (
@@ -5813,7 +5854,7 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Data", "Escola", "Turma", "Atletas", "Resultado", "Avaliar", ""].map((h) => (
+                  {["Data", "Código", "Escola", "Turma", "Resultado", "Avaliar", ""].map((h) => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -5823,10 +5864,10 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
                   const meta = XP_RESULTADO_META[x.resultado] || XP_RESULTADO_META.pendente;
                   return (
                     <tr key={x.id}>
-                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{x.data}</td>
+                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{x.data ? fmt(new Date(x.data + "T00:00:00")) : "—"}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{x.alunoId || (x.n > 1 ? `${x.n} atletas` : "—")}</td>
                       <td style={tdStyle}>{x.escola}</td>
-                      <td style={tdStyle}>{x.turma}</td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>{x.n}</td>
+                      <td style={tdStyle}>{x.turma || "—"}</td>
                       <td style={tdStyle}>
                         <Tag label={meta.label} color={meta.color} bg={meta.bg} />
                       </td>
@@ -7860,6 +7901,15 @@ function InscritosPage({
   const [view, setView] = useState("registo");
   const escolas = options.schools || [];
   const niveis = options.niveis || DEFAULT_NIVEIS;
+  // Procura um atleta pelo código: primeiro na época mais recente.
+  const procurarAluno = (cod) => {
+    if (!cod) return null;
+    for (const ep of Object.keys(registoAlunos || {}).sort().reverse()) {
+      const a = registoAlunos[ep].alunos?.[cod];
+      if (a) return a;
+    }
+    return null;
+  };
 
   return (
     <div>
@@ -7908,6 +7958,7 @@ function InscritosPage({
         />
       ) : view === "experiencias" ? (
         <SecaoExperiencias
+          procurarAluno={procurarAluno}
           escolas={escolas}
           turmas={turmasAlunos}
           niveis={niveis}
@@ -7918,6 +7969,7 @@ function InscritosPage({
         />
       ) : view === "desistencias" ? (
         <SecaoDesistencias
+          procurarAluno={procurarAluno}
           escolas={escolas}
           turmas={turmasAlunos}
           niveis={niveis}
@@ -8168,6 +8220,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
   const [nomeFicheiro, setNomeFicheiro] = useState("");
+  const [epocaManual, setEpocaManual] = useState("");
 
   const carregar = async (e) => {
     const f = e.target.files && e.target.files[0];
@@ -8248,7 +8301,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     if (!folhas) return null;
     const hoje = isoDe(new Date());
     const datas = alunosF.map((r) => r.data).filter(Boolean).sort();
-    const epoca = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
+    const epocaDetetada = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
+    const epoca = epocaManual || epocaDetetada;
     const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
     const alunos = {};
     // Alunos de importações anteriores que não estão neste ficheiro (podem ter saído).
@@ -8320,7 +8374,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       nTurmas: turmasFinais.size,
       importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: expF.length }],
     };
-  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual, epocaManual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
   const opcoesNovas = [...new Set([...escolasBrutas.map(([b]) => nomeEscolaProposto(b)), ...novasEscolas])].filter((n) => !escolas.includes(n)).sort((a, b) => a.localeCompare(b, "pt"));
@@ -8374,6 +8428,18 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                   </select>
                 </div>
               ))}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 12.5, color: COLORS.ink2 }}>
+              Época dos dados
+              <select value={epocaManual || (resultado ? resultado.epoca : "")} onChange={(e) => setEpocaManual(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "5px 8px" }}>
+                {epocasDisponiveis([resultado?.epoca].filter(Boolean)).map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              <span style={{ color: COLORS.slate }}>detetada pelas datas de entrada; muda se for de outra época</span>
             </div>
 
             <div style={titulo}>Escolas</div>
@@ -8673,6 +8739,16 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const ativos = alunos.filter((a) => a.estado === "ativo");
   const exps = Object.values(reg?.experiencias || {});
   const ultima = reg?.importacoes?.[reg.importacoes.length - 1];
+  // Transição de época: inscritos da época anterior (pelo código) que estão nesta.
+  const epAnt = `${Number(epoca.slice(0, 4)) - 1}/${epoca.slice(2, 4)}`;
+  const regAnt = (registoAlunos || {})[epAnt];
+  const finaisAnt = regAnt ? Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo") : [];
+  const voltaram = (escola) => {
+    const base = finaisAnt.filter((a) => !escola || a.escola === escola);
+    if (!base.length) return null;
+    const n = base.filter((a) => reg?.alunos?.[a.id] && reg.alunos[a.id].estado === "ativo").length;
+    return { n, de: base.length, pct: Math.round((n / base.length) * 100) };
+  };
   const balanco = useMemo(() => balancoSemanal(reg, escolaBal || null), [reg, escolaBal]);
   const escolasReg = [...new Set(alunos.map((a) => a.escola))].sort((a, b) => a.localeCompare(b, "pt"));
   const capacidades = options.capacidades || {};
@@ -8718,6 +8794,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
             {kpi("Renovaram", `${ativos.length ? Math.round((ativos.filter((a) => a.rubrica === "renov").length / ativos.length) * 100) : 0}%`, `${ativos.filter((a) => a.rubrica === "renov").length} renovações`)}
             {kpi("Inscrições novas", ativos.filter((a) => a.rubrica === "novo" || a.rubrica === "extra").length, `${ativos.filter((a) => a.rubrica === "extra").length} extrainscrições`)}
             {kpi("Desistências", alunos.filter((a) => a.estado === "desistiu").length, `${alunos.length ? ((alunos.filter((a) => a.estado === "desistiu").length / alunos.length) * 100).toFixed(1) : 0}% dos alunos da época`)}
+            {voltaram() && kpi(`Vieram de ${epAnt}`, `${voltaram().pct}%`, `${voltaram().n} de ${voltaram().de} inscritos no fim de ${epAnt}`)}
             {kpi("Experiências", exps.length, `${exps.filter((x) => reg.alunos[x.id]).length} ficaram inscritos (${exps.length ? Math.round((exps.filter((x) => reg.alunos[x.id]).length / exps.length) * 100) : 0}%)`)}
             {ativos.some((a) => a.emFalta) && kpi("Em falta", ativos.filter((a) => a.emFalta).length, "não vieram na última importação")}
           </div>
@@ -16649,6 +16726,9 @@ function AppPrincipal({ onSair }) {
 
   const importarInscritos = (r) => {
     const ep = r.epoca;
+    // Experiências registadas à mão: convertem-se se o código aparecer nos inscritos.
+    const expManuais = experiencias.filter((x) => x.origem === "manual" && x.epoca === ep && x.alunoId && !r.experiencias[x.alunoId]);
+    expManuais.forEach((x) => (r.experiencias[x.alunoId] = { id: x.alunoId, escola: x.escola, data: x.data }));
     const reg = { alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
     persistRegistoAlunos({ ...registoAlunos, [ep]: reg });
     const al = Object.values(r.alunos);
@@ -16670,6 +16750,17 @@ function AppPrincipal({ onSair }) {
       mapaTurmasAlunos: { ...(options.mapaTurmasAlunos || {}), ...r.mapaTurmas },
       motivosDesistencia: [...motivosAtuais, ...r.motivos.filter((m) => !motivosAtuais.includes(m))],
     });
+
+    // Época passada: os totais finais de cada escola passam a ser a referência homóloga.
+    const anoHoje = Number(epocaDe(isoDe(new Date())).slice(0, 4));
+    if (ep === `${anoHoje - 1}/${String(anoHoje).slice(2)}`) {
+      const prox = { ...epocaAnterior };
+      [...new Set(al.map((a) => a.escola))].forEach((e) => {
+        const daEscola = al.filter((a) => a.escola === e);
+        prox[e] = { ...(prox[e] || {}), inscritos: daEscola.filter((a) => a.estado === "ativo").length, desist: daEscola.filter((a) => a.estado === "desistiu").length };
+      });
+      persistEpocaAnterior(prox);
+    }
 
     // Época em curso: as contagens por turma e o balanço semanal saem dos alunos.
     if (ep === epocaDe(isoDe(new Date()))) {
@@ -16701,8 +16792,9 @@ function AppPrincipal({ onSair }) {
     const desistNovas = al
       .filter((a) => a.estado === "desistiu")
       .map((a) => ({ id: `d_${ep}_${a.id}`, alunoId: a.id, epoca: ep, escola: a.escola, turma: a.turma, n: 1, motivo: a.motivo || "Não definido", data: a.saida, origem: "importacao" }));
-    persistDesistencias([...desistencias.filter((d) => !(d.origem === "importacao" && d.epoca === ep)), ...desistNovas]);
-    const antigas = Object.fromEntries(experiencias.filter((x) => x.origem === "importacao" && x.epoca === ep).map((x) => [x.alunoId, x]));
+    const idsDesist = new Set(desistNovas.map((d) => String(d.alunoId)));
+    persistDesistencias([...desistencias.filter((d) => !(d.origem === "importacao" && d.epoca === ep) && !(d.alunoId && idsDesist.has(String(d.alunoId)) && d.epoca === ep)), ...desistNovas]);
+    const antigas = Object.fromEntries(experiencias.filter((x) => x.alunoId && x.epoca === ep).map((x) => [String(x.alunoId), x]));
     const expNovas = Object.values(r.experiencias).map((x) => {
       const aluno = r.alunos[x.id];
       const ant = antigas[x.id];
@@ -16719,7 +16811,8 @@ function AppPrincipal({ onSair }) {
         origem: "importacao",
       };
     });
-    persistExperiencias([...experiencias.filter((x) => !(x.origem === "importacao" && x.epoca === ep)), ...expNovas]);
+    const idsExp = new Set(expNovas.map((x) => String(x.alunoId)));
+    persistExperiencias([...experiencias.filter((x) => !(x.origem === "importacao" && x.epoca === ep) && !(x.alunoId && x.epoca === ep && idsExp.has(String(x.alunoId)))), ...expNovas]);
     notificar(`${r.ativos} alunos importados · ${r.desistNovas} desistências novas · ${expNovas.length} experiências.`);
   };
 
@@ -16778,6 +16871,14 @@ function AppPrincipal({ onSair }) {
   // masculinas, porque não guardamos o género de quem saiu.
   const saveDesistencia = (reg) => {
     persistDesistencias([...desistencias, reg]);
+    // Se o atleta está nos inscritos da época, passa a desistente.
+    const r0 = reg.alunoId && registoAlunos[reg.epoca];
+    if (r0 && r0.alunos[reg.alunoId]) {
+      persistRegistoAlunos({
+        ...registoAlunos,
+        [reg.epoca]: { ...r0, alunos: { ...r0.alunos, [reg.alunoId]: { ...r0.alunos[reg.alunoId], estado: "desistiu", saida: reg.data, motivo: reg.motivo } } },
+      });
+    }
     const t = turmasAlunos.find((x) => x.escola === reg.escola && x.turma === reg.turma);
     if (t) {
       let resta = Math.min(reg.n, t.m + t.f);
@@ -16812,7 +16913,13 @@ function AppPrincipal({ onSair }) {
     persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, resultado, entraram } : e)));
     return aviso;
   };
-  const saveExperiencia = (reg) => persistExperiencias([...experiencias, reg]);
+  const saveExperiencia = (reg) => {
+    persistExperiencias([...experiencias, reg]);
+    if (reg.alunoId && reg.epoca) {
+      const r0 = registoAlunos[reg.epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
+      persistRegistoAlunos({ ...registoAlunos, [reg.epoca]: { ...r0, experiencias: { ...r0.experiencias, [reg.alunoId]: { id: reg.alunoId, escola: reg.escola, data: reg.data } } } });
+    }
+  };
   const removeExperiencia = (id) => persistExperiencias(experiencias.filter((e) => e.id !== id));
 
   const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
