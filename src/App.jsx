@@ -2483,6 +2483,11 @@ function AuditForm({ schoolOptions, onCancel, onSave, onGerirLista }) {
         </div>
         <select value={school} onChange={(e) => setSchool(e.target.value)} style={inputStyle}>
           <option value="">{schoolOptions.length ? "Selecionar escola..." : "Sem escolas — usa 'Gerir lista'"}</option>
+          {Object.entries(AMBITOS_AUDITORIA).map(([k, a]) => (
+            <option key={k} value={`__ambito__${k}`}>
+              {a.nome} ({a.descricao.toLowerCase()})
+            </option>
+          ))}
           {schoolOptions.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -2500,7 +2505,8 @@ function AuditForm({ schoolOptions, onCancel, onSave, onGerirLista }) {
           <button
             onClick={() => {
               if (!school) return;
-              onSave({ id: `a_${Date.now()}`, school, date, findings: [] });
+              const amb = school.startsWith("__ambito__") ? school.slice(10) : null;
+              onSave({ id: `a_${Date.now()}`, school: amb ? AMBITOS_AUDITORIA[amb].nome : school, ambito: amb, date, findings: [] });
             }}
             style={primaryBtnStyle}
           >
@@ -3846,6 +3852,19 @@ function normEpoca(v) {
   return t;
 }
 
+// Visitas que não são de uma escola: eventos realizados e o Sistema de Gestão da Qualidade.
+const AMBITOS_AUDITORIA = {
+  eventos: { nome: "Eventos", descricao: "Ocorrências em eventos realizados" },
+  sgq: { nome: "SGQ geral", descricao: "Sistema de Gestão da Qualidade" },
+};
+const ambitoDoNome = (t) => {
+  const n = normChave(t).replace(/[^a-z ]/g, " ").trim();
+  if (/^eventos?\b/.test(n)) return "eventos";
+  if (/^sgq\b/.test(n) || n.startsWith("sistema de gestao")) return "sgq";
+  return null;
+};
+const ambitoAud = (a) => a.ambito || ambitoDoNome(a.school) || "escola";
+
 const PALAVRAS_PEQUENAS = ["de", "da", "do", "das", "dos", "e"];
 function nomeEscolaProposto(bruto) {
   const t = String(bruto || "").trim();
@@ -3897,6 +3916,8 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
   const [mapa, setMapa] = useState({});
   const [mapaEscola, setMapaEscola] = useState({});
   const [mapaEficacia, setMapaEficacia] = useState({});
+  // Escolas cujo nome novo está a ser escrito à mão.
+  const [aEscrever, setAEscrever] = useState({});
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
 
@@ -3988,7 +4009,8 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       const n = semPrefixo(bruto);
       const exata = escolas.find((e) => normChave(e) === normChave(bruto) || semPrefixo(e) === n);
       const parcial = n.length >= 3 && escolas.find((e) => normChave(e).includes(n));
-      novo[bruto] = exata || parcial || `__nova__${nomeEscolaProposto(bruto)}`;
+      const amb = ambitoDoNome(bruto);
+      novo[bruto] = amb ? `__ambito__${amb}` : exata || parcial || `__nova__${nomeEscolaProposto(bruto)}`;
     });
     setMapaEscola(novo);
   }, [escolasBrutas]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4010,7 +4032,8 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       if (!tipo) problemas.push(`Linha ${linhaN}: tipo "${v(l, "tipo")}" por classificar`);
       if (!data && !epocaCol) problemas.push(`Linha ${linhaN}: sem data nem época`);
       const alvo = bruto ? mapaEscola[bruto] || `__nova__${nomeEscolaProposto(bruto)}` : "Sem escola";
-      const escola = alvo.startsWith("__nova__") ? alvo.slice(8) : alvo;
+      const ambito = alvo.startsWith("__ambito__") ? alvo.slice(10) : null;
+      const escola = ambito ? AMBITOS_AUDITORIA[ambito].nome : alvo.startsWith("__nova__") ? alvo.slice(8) : alvo;
       const epoca = epocaCol || (data ? epocaDe(data) : "");
       const fecho = dataDeCelula(v(l, "fecho"));
       const codEficacia = v(l, "eficacia").toUpperCase();
@@ -4019,7 +4042,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       const areaLista = areas.find((a) => normChave(a) === normChave(assunto));
       const catLista = categorias.find((c) => normChave(c) === normChave(assunto));
       const chave = data ? `${escola}|${data}` : `${escola}|sem data|${epoca}`;
-      visitas[chave] = visitas[chave] || { escola, data: data || null, epoca, findings: [] };
+      visitas[chave] = visitas[chave] || { escola, ambito, data: data || null, epoca, findings: [] };
       visitas[chave].findings.push({
         id: `f_imp_${Date.now().toString(36)}_${i}`,
         classification: tipo || "",
@@ -4074,7 +4097,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     resultado.lista.forEach((vis, i) => {
       if (!vis.findings.length) return;
       if (vis.existente) acrescentos[vis.existente] = [...(acrescentos[vis.existente] || []), ...vis.findings];
-      else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, date: vis.data, epoca: vis.epoca || null, findings: vis.findings, origem: "importacao" });
+      else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, ambito: vis.ambito || null, date: vis.data, epoca: vis.epoca || null, findings: vis.findings, origem: "importacao" });
     });
     onImportar(novas, acrescentos, novasEscolas);
   };
@@ -4170,7 +4193,10 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
 
             {faltam.length === 0 && escolasBrutas.length > 0 && (
               <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Escolas encontradas no ficheiro</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 4px" }}>Escolas encontradas no ficheiro</div>
+                <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 8, lineHeight: 1.5 }}>
+                  Para cada nome do Excel escolhe a escola da app. Se ainda não existir, cria-a antes em Todas as listas com o nome que usas, ou escolhe "Escrever o nome…". Eventos e SGQ ficam fora das escolas.
+                </div>
                 <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
                   {escolasBrutas.map(([bruto, n], i) => (
                     <div key={bruto} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 13 }}>
@@ -4178,12 +4204,61 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
                         {bruto} <span style={{ color: COLORS.slate }}>· {n} {n === 1 ? "constatação" : "constatações"}</span>
                       </span>
                       <span style={{ color: COLORS.slate }}>→</span>
-                      <select value={mapaEscola[bruto] || ""} onChange={(e) => setMapaEscola((m) => ({ ...m, [bruto]: e.target.value }))} style={{ ...inputStyle, width: 230, padding: "6px 8px" }}>
+                      {aEscrever[bruto] ? (
+                        <span style={{ display: "flex", gap: 6, width: 260 }}>
+                          <input
+                            autoFocus
+                            value={aEscrever[bruto].texto}
+                            onChange={(e) => setAEscrever((x) => ({ ...x, [bruto]: { texto: e.target.value } }))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && aEscrever[bruto].texto.trim()) {
+                                setMapaEscola((m) => ({ ...m, [bruto]: `__nova__${aEscrever[bruto].texto.trim()}` }));
+                                setAEscrever((x) => ({ ...x, [bruto]: null }));
+                              }
+                            }}
+                            placeholder="Nome da escola"
+                            style={{ ...inputStyle, padding: "6px 8px" }}
+                          />
+                          <button
+                            onClick={() => {
+                              if (aEscrever[bruto].texto.trim()) setMapaEscola((m) => ({ ...m, [bruto]: `__nova__${aEscrever[bruto].texto.trim()}` }));
+                              setAEscrever((x) => ({ ...x, [bruto]: null }));
+                            }}
+                            style={{ ...primaryBtnStyle, width: "auto", padding: "0 10px" }}
+                            aria-label="Usar este nome"
+                          >
+                            <Check size={14} />
+                          </button>
+                        </span>
+                      ) : (
+                      <select
+                        value={mapaEscola[bruto] || ""}
+                        onChange={(e) => {
+                          if (e.target.value === "__escrever__") {
+                            const atual = mapaEscola[bruto] || "";
+                            setAEscrever((x) => ({ ...x, [bruto]: { texto: atual.startsWith("__nova__") ? atual.slice(8) : nomeEscolaProposto(bruto) } }));
+                            return;
+                          }
+                          setMapaEscola((m) => ({ ...m, [bruto]: e.target.value }));
+                        }}
+                        style={{ ...inputStyle, width: 260, padding: "6px 8px" }}
+                      >
+                        <optgroup label="Escolas da app">
                         {escolas.map((e) => (
                           <option key={e} value={e}>
                             {e}
                           </option>
                         ))}
+                        </optgroup>
+                        <optgroup label="Não é uma escola">
+                          {Object.entries(AMBITOS_AUDITORIA).map(([k, a]) => (
+                            <option key={k} value={`__ambito__${k}`}>
+                              {a.nome} · {a.descricao.toLowerCase()}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Criar escola nova">
+                          <option value="__escrever__">Escrever o nome…</option>
                         {/* Escolas novas propostas a partir de todo o ficheiro: permite juntar
                             nomes diferentes da mesma escola (ex.: "CTROFA" e "Colégio da Trofa"). */}
                         {[...new Set(escolasBrutas.map(([b0]) => nomeEscolaProposto(b0)))]
@@ -4191,10 +4266,20 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
                           .sort((a, b) => a.localeCompare(b, "pt"))
                           .map((n) => (
                             <option key={n} value={`__nova__${n}`}>
-                              Nova escola: {n}
+                              Nova: {n}
                             </option>
                           ))}
+                        {/* Nomes escritos à mão também aparecem, para juntar outras linhas a eles. */}
+                        {[...new Set(Object.values(mapaEscola).filter((x) => x && x.startsWith("__nova__")).map((x) => x.slice(8)))]
+                          .filter((n) => !escolas.includes(n) && !escolasBrutas.some(([b0]) => nomeEscolaProposto(b0) === n))
+                          .map((n) => (
+                            <option key={`m_${n}`} value={`__nova__${n}`}>
+                              Nova: {n}
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -4233,6 +4318,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
                   </div>
                   <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 6, lineHeight: 1.6 }}>
                     {resultado.novasVisitas} visitas novas
+                    {resultado.lista.some((x) => x.ambito) ? ` (das quais ${resultado.lista.filter((x) => x.ambito).length} de eventos ou SGQ, fora das escolas)` : ""}
                     {resultado.juntas ? ` · ${resultado.juntas} visitas que já existiam recebem constatações` : ""}
                     {resultado.repetidas ? ` · ${resultado.repetidas} repetidas ignoradas` : ""}
                     <br />
@@ -4378,7 +4464,10 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 14.5 }}>{a.school}</div>
+                      <div style={{ fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 8 }}>
+                        {a.school}
+                        {ambitoAud(a) !== "escola" && <Tag label={ambitoAud(a) === "eventos" ? "Evento" : "SGQ"} color={COLORS.slate} bg={COLORS.paperSunken} />}
+                      </div>
                       <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
                         {dataAud(a)} · {fs.length} constatações{a.epoca && a.date && a.epoca !== epocaDe(a.date) ? ` · época ${a.epoca}` : !a.date && a.epoca ? ` · época ${a.epoca}` : ""}
                       </div>
@@ -11740,7 +11829,14 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                 )}
 
                 {ver("auditorias") && (
-                  <SeccaoRel titulo="Auditorias" nota={`${visitas.length} visitas e ${constat.length} constatações no período`}>
+                  <SeccaoRel
+                    titulo="Auditorias"
+                    nota={`${visitas.length} visitas e ${constat.length} constatações no período${
+                      visitas.some((a) => ambitoAud(a) !== "escola")
+                        ? `, incluindo ${visitas.filter((a) => ambitoAud(a) !== "escola").reduce((n, a) => n + (a.findings || []).length, 0)} de eventos e SGQ`
+                        : ""
+                    }`}
+                  >
                     <div className="relGrelha">
                       <div>
                         <div className="relSub">Constatações por tipo e época</div>
