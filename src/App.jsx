@@ -14113,7 +14113,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} cor={vazias.length ? COLORS.warn : COLORS.ink} />
               {(() => {
                 const pv = preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis: niveis || DEFAULT_NIVEIS, hoje: isoDe(new Date()) });
-                if (pv.insuficiente) return <KpiRel label="Previsão para julho" valor="—" comparacao="Faltam retratos semanais" />;
+                if (pv.insuficiente) return <KpiRel label="Previsão para julho" valor="—" comparacao="Faltam semanas desta época" />;
                 return (
                   <KpiRel
                     label="Previsão para julho"
@@ -14139,7 +14139,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div style={{ fontSize: 12.5, color: COLORS.slate }}>Faz retratos semanais em Inscritos para ver a evolução.</div>
+                  <div style={{ fontSize: 12.5, color: COLORS.slate }}>Importa o ficheiro de inscritos desta época para ver a evolução.</div>
                 )}
               </div>
               <div>
@@ -16460,8 +16460,9 @@ function PainelCausas({ itens, titulo }) {
 // ======================================================================
 // ---------- Previsão de fim de época ----------
 // ======================================================================
-// Projeta os inscritos de cada escola até 31 de julho a partir de:
-// - o último retrato semanal (ponto de partida);
+// Projeta os inscritos de cada escola até 31 de julho. Com a época passada importada,
+// segue a forma dessa época (ver preverEscola). Sem ela, usa:
+// - a última semana importada (ponto de partida);
 // - o ritmo das últimas semanas: novas inscrições e desistências por semana;
 // - as experiências por avaliar, multiplicadas pela taxa de conversão da escola.
 // As entradas vão abrandando ao longo da época (8% por semana); as saídas
@@ -16482,10 +16483,44 @@ function inicioSemanaISO(chave) {
   return d.toISOString().slice(0, 10);
 }
 
+// Época a que pertence uma semana (pelo domingo, para a semana de 1 de agosto contar na época nova).
+function epocaDaSemanaISO(chave) {
+  const d = new Date(inicioSemanaISO(chave) + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 6);
+  return epocaDe(d.toISOString().slice(0, 10));
+}
+
+// Curva da época passada (inscritos no fim de cada semana da época), por escola e no
+// total. A App preenche-a a partir dos alunos importados da época anterior.
+let CURVA_EPOCA_ANTERIOR = null;
+function curvaEpocaAnterior(reg, ep) {
+  if (!reg) return null;
+  const paraMapa = (bal) => Object.fromEntries(bal.map((b) => [b.k, b.ativos]));
+  const escolas = {};
+  [...new Set(Object.values(reg.alunos || {}).map((a) => a.escola))].forEach((e) => (escolas[e] = paraMapa(balancoSemanal(reg, e, ep))));
+  return { epoca: ep, escolas, total: paraMapa(balancoSemanal(reg, null, ep)) };
+}
+// Valor da curva na semana k (ou o último antes dela).
+function valorCurva(c, k) {
+  let v = null;
+  Object.keys(c)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .forEach((j) => {
+      if (j <= k) v = c[j];
+    });
+  return v;
+}
+
+// Previsão de fim de época de uma escola.
+// Com a época passada importada: os inscritos de hoje seguem a mesma forma da época
+// passada a partir desta semana (quanto cresceu, ou caiu, daqui até 31 de julho).
+// A faixa vai da evolução da escola à do total da Dragon Force.
+// Sem época passada: ritmo das últimas semanas, com as entradas a abrandar.
 function preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis, hoje }) {
   const ep = epocaDe(hoje);
   const serie = [...(inscritos[escola] || [])]
-    .filter((r) => epocaDe(inicioSemanaISO(r.semana)) === ep)
+    .filter((r) => epocaDaSemanaISO(r.semana) === ep)
     .sort((a, b) => a.semana.localeCompare(b.semana));
   if (serie.length < 3) return { escola, insuficiente: true, semanasComDados: serie.length };
 
@@ -16512,23 +16547,58 @@ function preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAl
   const limitar = (v) => Math.max(0, capacidade ? Math.min(capacidade, v) : v);
 
   const fim = fimDeEpoca(ep);
-  const semanas = Math.max(0, Math.ceil((new Date(fim + "T00:00:00") - new Date(hoje + "T00:00:00")) / (7 * 86400000)));
-
-  let central = atual + deExperiencias;
-  let alto = atual + deExperiencias;
-  let baixo = atual;
+  const s1 = semana1Padrao(ep);
+  const semanaChave = (j) => semanaISO(new Date(inicioSemanaEpoca(j, s1) + "T12:00:00"));
+  const kHoje = semanaDaEpoca([hoje, fim].sort()[0], s1);
+  const kFim = semanaDaEpoca(fim, s1);
+  const semanas = Math.max(0, kFim - kHoje);
   const trajetoria = [];
-  const segunda = new Date(inicioSemanaISO(serie[serie.length - 1].semana) + "T00:00:00Z");
-  for (let w = 1; w <= semanas; w++) {
-    central = limitar(central + entradas * Math.pow(ABRANDAMENTO_ENTRADAS, w) - saidas);
-    alto = limitar(alto + entradas - saidas);
-    baixo = limitar(baixo - saidas);
-    const d = new Date(segunda);
-    d.setUTCDate(d.getUTCDate() + 7 * w);
-    trajetoria.push({ semana: semanaISO(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), central: Math.round(central), baixo: Math.round(baixo), alto: Math.round(alto) });
+  let central;
+  let alto;
+  let baixo;
+  let metodo = "ritmo";
+
+  const curva = CURVA_EPOCA_ANTERIOR && CURVA_EPOCA_ANTERIOR.epoca === epAntDe(ep) ? CURVA_EPOCA_ANTERIOR : null;
+  const cEsc = curva && curva.escolas[escola];
+  const cTot = curva && curva.total;
+  const fator = (c, j) => {
+    const base = c && valorCurva(c, kHoje);
+    const v = c && valorCurva(c, j);
+    return base >= 20 && v !== null ? v / base : null;
+  };
+  if (cTot && fator(cTot, kFim) !== null) {
+    metodo = "epocaPassada";
+    const usaEsc = fator(cEsc, kFim) !== null;
+    // Peso da escola: escolas pequenas ou com um arranque diferente no ano passado
+    // puxam-se para a evolução do total.
+    const peso = usaEsc ? Math.min(1, valorCurva(cEsc, kHoje) / 150) : 0;
+    for (let j = kHoje + 1; j <= kFim; j++) {
+      const fT = fator(cTot, j);
+      // A escola não se afasta mais de 20 pontos da evolução do total.
+      const fE = usaEsc ? Math.min(fT + 0.2, Math.max(fT - 0.2, fator(cEsc, j))) : fT;
+      const c = limitar(atual * (peso * fE + (1 - peso) * fT));
+      const lo = limitar(atual * Math.min(fE, fT) * 0.97);
+      const hi = limitar(atual * Math.max(fE, fT) * 1.03);
+      trajetoria.push({ semana: semanaChave(j), central: Math.round(c), baixo: Math.round(lo), alto: Math.round(hi) });
+    }
+    const ult = trajetoria[trajetoria.length - 1];
+    central = ult ? ult.central : atual;
+    baixo = ult ? ult.baixo : atual;
+    alto = ult ? ult.alto : atual;
+  } else {
+    central = atual + deExperiencias;
+    alto = atual + deExperiencias;
+    baixo = atual;
+    for (let w = 1; w <= semanas; w++) {
+      central = limitar(central + entradas * Math.pow(ABRANDAMENTO_ENTRADAS, w) - saidas);
+      alto = limitar(alto + entradas * Math.pow(ABRANDAMENTO_ENTRADAS, w / 2) - saidas);
+      baixo = limitar(baixo - saidas);
+      trajetoria.push({ semana: semanaChave(kHoje + w), central: Math.round(central), baixo: Math.round(baixo), alto: Math.round(alto) });
+    }
   }
 
-  const ant = (epocaAnterior[escola] || {}).inscritos || null;
+  const antCurva = cEsc ? valorCurva(cEsc, kFim) : null;
+  const ant = (epocaAnterior[escola] || {}).inscritos || antCurva || null;
   const prev = Math.round(central);
   const variacao = ant ? Math.round(((prev - ant) / ant) * 1000) / 10 : null;
   const falta = ant ? Math.max(0, ant - prev) : null;
@@ -16550,6 +16620,7 @@ function preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAl
     fim,
     serie,
     trajetoria,
+    metodo,
     semanasRitmo: recentes.length,
   };
 }
@@ -16582,30 +16653,36 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
   const fim = fimDeEpoca(epocaDe(hoje));
   const fimTxt = new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long" }).format(new Date(fim + "T00:00:00"));
 
-  // Gráfico: soma das escolas visíveis, semana a semana (real + projeção).
-  const porSemana = new Map();
-  validas.forEach((p) => {
-    p.serie.forEach((r) => {
-      const x = porSemana.get(r.semana) || { semana: r.semana };
-      x.real = (x.real || 0) + r.total;
-      porSemana.set(r.semana, x);
+  // Gráfico: soma das escolas visíveis, semana a semana (real + projeção). Cada escola
+  // conta em todas as semanas com o último valor que tem, para a soma não cair quando
+  // uma escola tem menos semanas do que outra.
+  const ateSemana = (lista, w, campo) => {
+    let v = null;
+    lista.forEach((r) => {
+      if (r.semana <= w) v = r[campo];
     });
-    const ultima = p.serie[p.serie.length - 1];
-    const x0 = porSemana.get(ultima.semana);
-    x0.central = (x0.central || 0) + ultima.total;
-    x0.faixaB = (x0.faixaB || 0) + ultima.total;
-    x0.faixaA = (x0.faixaA || 0) + ultima.total;
-    p.trajetoria.forEach((t) => {
-      const x = porSemana.get(t.semana) || { semana: t.semana };
-      x.central = (x.central || 0) + t.central;
-      x.faixaB = (x.faixaB || 0) + t.baixo;
-      x.faixaA = (x.faixaA || 0) + t.alto;
-      porSemana.set(t.semana, x);
-    });
-  });
-  const dadosGraf = [...porSemana.values()]
-    .sort((a, b) => a.semana.localeCompare(b.semana))
-    .map((x) => ({ ...x, name: semanaLabel(x.semana), faixa: x.faixaB !== undefined ? [x.faixaB, x.faixaA] : undefined }));
+    return v;
+  };
+  const semanasReais = [...new Set(validas.flatMap((p) => p.serie.map((r) => r.semana)))].sort();
+  const ultimaReal = semanasReais[semanasReais.length - 1];
+  const semanasProj = [...new Set(validas.flatMap((p) => p.trajetoria.map((t) => t.semana)))].filter((w) => w > ultimaReal).sort();
+  const projDe = (p, w, campo) => {
+    const ultSerie = p.serie[p.serie.length - 1];
+    if (w <= ultSerie.semana) return ateSemana(p.serie, w, "total") || 0;
+    const t = ateSemana(p.trajetoria, w, campo);
+    return t !== null ? t : ultSerie.total;
+  };
+  const dadosGraf = [
+    ...semanasReais.map((w) => {
+      const real = validas.reduce((t, p) => t + (ateSemana(p.serie, w, "total") || 0), 0);
+      return w === ultimaReal ? { semana: w, real, central: real, faixa: [real, real] } : { semana: w, real };
+    }),
+    ...semanasProj.map((w) => ({
+      semana: w,
+      central: validas.reduce((t, p) => t + projDe(p, w, "central"), 0),
+      faixa: [validas.reduce((t, p) => t + projDe(p, w, "baixo"), 0), validas.reduce((t, p) => t + projDe(p, w, "alto"), 0)],
+    })),
+  ].map((x) => ({ ...x, name: semanaLabel(x.semana) }));
   const antSoma = validas.reduce((t, p) => t + (p.ant || 0), 0);
   const total = validas.reduce(
     (t, p) => ({ atual: t.atual + p.atual, previsao: t.previsao + p.previsao, baixo: t.baixo + p.baixo, alto: t.alto + p.alto }),
@@ -16633,7 +16710,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
 
       {validas.length === 0 ? (
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginTop: 6 }}>
-          São precisos pelo menos 3 retratos semanais desta época para prever o fim de época. Faz o retrato semanal em Registo.
+          São precisas pelo menos 3 semanas desta época para prever o fim de época. Importa o ficheiro de inscritos no Painel.
         </div>
       ) : (
         <>
@@ -16669,7 +16746,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
               <span style={{ width: 16, height: 0, borderTop: `2px dashed ${COLORS.navy}` }} /> Previsão
             </span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 14, height: 10, background: COLORS.navy, opacity: 0.15, borderRadius: 2 }} /> Intervalo: sem novas inscrições a ritmo atual mantido
+              <span style={{ width: 14, height: 10, background: COLORS.navy, opacity: 0.15, borderRadius: 2 }} /> {validas.some((p) => p.metodo === "epocaPassada") ? `Intervalo: evolução da escola e do total DF em ${epAntDe(epocaDe(hoje))}, desta semana a 31 de julho` : "Intervalo: sem novas inscrições a ritmo atual mantido"}
             </span>
           </div>
         </>
@@ -16694,7 +16771,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
                     <tr key={p.escola}>
                       <td style={{ padding: "7px 8px", fontWeight: 600 }}>{p.escola}</td>
                       <td colSpan={7} style={{ padding: "7px 8px", color: COLORS.slate }}>
-                        Faltam retratos semanais ({p.semanasComDados} de 3).
+                        {p.semanasComDados ? `Só ${p.semanasComDados === 1 ? "1 semana" : `${p.semanasComDados} semanas`} com alunos nesta época; são precisas 3 para prever.` : "Sem alunos importados nesta época."}
                       </td>
                     </tr>
                   );
@@ -16950,6 +17027,27 @@ function AppPrincipal({ onSair }) {
   const [inscritos, setInscritos] = useState({});
   const [turmasAlunos, setTurmasAlunos] = useState([]);
   const [registoAlunos, setRegistoAlunos] = useState({});
+  // Curva da época passada para a previsão de fim de época.
+  const curvaAnt = useMemo(() => {
+    const epA = epAntDe(epocaDe(isoDe(new Date())));
+    return curvaEpocaAnterior(registoAlunos[epA], epA);
+  }, [registoAlunos]);
+  CURVA_EPOCA_ANTERIOR = curvaAnt;
+
+  // Evolução semanal: na época em curso sai sempre dos alunos importados.
+  const inscritosVista = useMemo(() => {
+    const ep = epocaDe(isoDe(new Date()));
+    const reg = registoAlunos[ep];
+    if (!reg) return inscritos;
+    const prox = { ...inscritos };
+    [...new Set(Object.values(reg.alunos || {}).map((a) => a.escola))].forEach((e) => {
+      const bal = balancoSemanal(reg, e, ep);
+      const antes = (prox[e] || []).filter((x) => epocaDaSemanaISO(x.semana) !== ep);
+      prox[e] = [...antes, ...bal.map((b) => ({ semana: b.semana, total: b.ativos, novas: b.entradas, desist: b.desist }))].sort((x, y) => x.semana.localeCompare(y.semana));
+    });
+    return prox;
+  }, [inscritos, registoAlunos]);
+
   const [epocaAnterior, setEpocaAnterior] = useState({});
   const [desistencias, setDesistencias] = useState([]);
   const [experiencias, setExperiencias] = useState([]);
@@ -17475,7 +17573,7 @@ function AppPrincipal({ onSair }) {
     const alvoDesistReg = (d) => naEpoca(d) && daEscola(d) && (tipo === "tudo" || tipo === "desist" || (tipo === "turma" && d.turma === turma) || (tipo === "aluno" && idOk(d.alunoId)));
     const alvoExpReg = (x) => naEpoca(x) && daEscola(x) && (tipo === "tudo" || tipo === "exp" || (tipo === "aluno" && idOk(x.alunoId)));
     // Semanas do registo semanal antigo (antes dos ficheiros) só saem quando se apaga tudo.
-    const alvoSemana = (e, w) => tipo === "tudo" && (!escola || e === escola) && epocas.includes(epocaDe(inicioSemanaISO(w)));
+    const alvoSemana = (e, w) => tipo === "tudo" && (!escola || e === escola) && epocas.includes(epocaDaSemanaISO(w));
 
     const conta = { alunos: 0, desist: 0, exps: 0, semanas: 0 };
     epocas.forEach((ep) => {
@@ -17555,7 +17653,7 @@ function AppPrincipal({ onSair }) {
     persistOptions({ ...options, turmasDistintas: desfazer ? atual.filter((x) => x !== k) : [...new Set([...atual, k])] });
   };
 
-  const epocasComDados = [...new Set([...Object.keys(registoAlunos), ...desistencias.map((d) => d.epoca), ...experiencias.map((x) => x.epoca), ...Object.values(inscritos).flatMap((l) => (l || []).map((x) => epocaDe(inicioSemanaISO(x.semana))))].filter(Boolean))].sort().reverse();
+  const epocasComDados = [...new Set([...Object.keys(registoAlunos), ...desistencias.map((d) => d.epoca), ...experiencias.map((x) => x.epoca), ...Object.values(inscritos).flatMap((l) => (l || []).map((x) => epocaDaSemanaISO(x.semana)))].filter(Boolean))].sort().reverse();
   const escolasComDados = [...new Set([...Object.values(registoAlunos).flatMap((r) => Object.values(r.alunos || {}).map((a) => a.escola)), ...desistencias.map((d) => d.escola), ...experiencias.map((x) => x.escola), ...Object.keys(inscritos).filter((e) => (inscritos[e] || []).length), ...turmasAlunos.map((t) => t.escola)].filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
 
   const definirCapacidade = (escola, turma, cap) => {
@@ -17961,7 +18059,7 @@ function AppPrincipal({ onSair }) {
 
   const contagemHoje = (() => {
     try {
-      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
+      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
       return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
     } catch (e) {
       return 0;
@@ -18431,7 +18529,7 @@ function AppPrincipal({ onSair }) {
           />
         ) : page === "inscritos" ? (
           <InscritosPage
-            inscritos={inscritos}
+            inscritos={inscritosVista}
             turmasAlunos={turmasAlunos}
             epocaAnterior={epocaAnterior}
             options={options}
@@ -18482,7 +18580,7 @@ function AppPrincipal({ onSair }) {
             desistencias={desistencias}
             desvinculacoes={desvinculacoes}
             turmasAlunos={turmasAlunos}
-            inscritos={inscritos}
+            inscritos={inscritosVista}
             epocaAnterior={epocaAnterior}
             escolas={options.schools || []}
             sanctions={sanctions}
@@ -18499,7 +18597,7 @@ function AppPrincipal({ onSair }) {
             reclamacoes={withStatus}
             audits={auditsVista}
             sanctions={sanctions}
-            inscritos={inscritos}
+            inscritos={inscritosVista}
             turmasAlunos={turmasAlunos}
             epocaAnterior={epocaAnterior}
             desistencias={desistencias}
