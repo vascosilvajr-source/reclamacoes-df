@@ -8121,7 +8121,7 @@ function semana1Padrao(epoca) {
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d.toISOString().slice(0, 10);
 }
-const semanaDaEpoca = (iso, s1) => (iso ? Math.max(1, Math.floor((Date.parse(String(iso).slice(0, 10) + "T00:00:00Z") - Date.parse(s1 + "T00:00:00Z")) / (7 * 86400000)) + 1) : null);
+const semanaDaEpoca = (iso, s1) => (iso ? Math.min(53, Math.max(1, Math.floor((Date.parse(String(iso).slice(0, 10) + "T00:00:00Z") - Date.parse(s1 + "T00:00:00Z")) / (7 * 86400000)) + 1)) : null);
 const inicioSemanaEpoca = (k, s1) => {
   const d = new Date(s1 + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + (k - 1) * 7);
@@ -8191,6 +8191,7 @@ const COLUNAS_FICHA_ALUNOS = {
   equipa: ["equipas do atleta", "equipa do atleta", "equipa/turma", "turma/equipa", "equipas", "equipa", "turma", "escalao"],
   data: ["data de entrada", "data de inscricao", "data", "data entrada"],
   motivo: ["motivo desistencia", "motivo de desistencia", "motivo da desistencia", "motivo"],
+  saida: ["data de desistencia", "data desistencia", "data da desistencia", "data de saida", "data saida"],
   semana: ["semana", "semana da epoca", "n semana"],
   mes: ["mes", "mês"],
 };
@@ -8242,11 +8243,13 @@ function lerFichaAlunos(linhas) {
       equipa: v(l, "equipa"),
       data: dataDeCelula(v(l, "data")) || null,
       motivo: v(l, "motivo"),
+      saida: mapa.saida !== undefined ? dataDeCelula(v(l, "saida")) || null : null,
       semana: Number(v(l, "semana")) || null,
       mes: Number(v(l, "mes")) || null,
       linha: l.__linha,
     }))
-    .filter((r) => r.id && r.escola);
+    // Linhas de títulos repetidas a meio da folha não são alunos.
+    .filter((r) => r.id && r.escola && /\d/.test(r.id));
   return { mapa, registos, titulos: linhas[iCab] };
 }
 
@@ -8348,7 +8351,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
     // Semana 1: começa na primeira data do ficheiro (ou na data escolhida, ou na que ficou
     // fixada no Painel). As semanas de entrada, experiência e desistência saem das datas.
-    const primeiraData = [...alunosF, ...desistF, ...expF].map((r) => r.data).filter(Boolean).sort()[0];
+    const primeiraData = [...alunosF, ...desistF, ...expF].map((r) => r.data).filter((d) => d && d >= `${epoca.slice(0, 4)}-06-01`).sort()[0];
     const s1Ficheiro = primeiraData || anterior.semana1 || semana1Padrao(epoca);
     const s1 = semana1Manual || (anterior.semana1Fixa && anterior.semana1) || s1Ficheiro;
     const semHoje = semanaDaEpoca(hoje, s1);
@@ -8373,6 +8376,12 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       };
     });
     let desistNovas = 0;
+    // Folha com "Data de inscrição" e "Data de desistência" (25/26): cada uma no seu sítio.
+    // Folha só com "Data" (26/27): é a data da desistência.
+    const saidaDe = (r) => (r.saida !== null && r.saida !== undefined ? r.saida : r.data);
+    const entradaDe = (r) => (r.saida !== null && r.saida !== undefined ? r.data : null);
+    const fimEpoca = `${Number(epoca.slice(0, 4)) + 1}-07-31`;
+    const foraEpoca = desistF.filter((r) => saidaDe(r) && (saidaDe(r) < s1 || saidaDe(r) > fimEpoca));
     desistF.forEach((r) => {
       const prev = alunos[r.id] || anterior.alunos[r.id];
       if (!(prev && prev.estado === "desistiu")) desistNovas++;
@@ -8385,11 +8394,11 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         rubrica: r.rubrica || prev?.rubrica || "",
         // Na folha das desistências a Data é a da desistência; a entrada vem das importações
         // anteriores (pelo código) ou, sem elas, conta desde o início da época.
-        entrada: prev?.entrada || s1,
-        semEntrada: semanaDaEpoca(prev?.entrada || s1, s1),
+        entrada: prev?.entrada || entradaDe(r) || s1,
+        semEntrada: semanaDaEpoca(prev?.entrada || entradaDe(r) || s1, s1),
         estado: "desistiu",
-        saida: r.data || (prev && prev.estado === "desistiu" && prev.saida) || hoje,
-        semSaida: semanaDaEpoca(r.data || (prev && prev.estado === "desistiu" && prev.saida) || hoje, s1),
+        saida: saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || hoje,
+        semSaida: semanaDaEpoca(saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || hoje, s1),
         motivo: r.motivo || "Não definido",
       };
     });
@@ -8409,7 +8418,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     // mais antigas que não passaram para a época contam como não convertidas. Em épocas
     // passadas não há pendentes.
     const emCurso = epoca === epocaDe(hoje);
-    const ultimaSemana = Math.max(0, ...[...alunosF, ...expF, ...desistF].filter((r) => r.data).map((r) => semanaDaEpoca(r.data, s1)));
+    const ultimaSemana = Math.max(0, ...[...alunosF, ...expF].filter((r) => r.data).map((r) => semanaDaEpoca(r.data, s1)), ...desistF.filter((r) => saidaDe(r) && saidaDe(r) <= fimEpoca).map((r) => semanaDaEpoca(saidaDe(r), s1)));
     const limitePendente = emCurso ? (ultimaSemana || semHoje) - 2 : Infinity;
     const experiencias = { ...anterior.experiencias };
     expF.forEach((r) => {
@@ -8438,6 +8447,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       emFalta: emFalta.length,
       convertidas,
       pendentesExp: Object.values(experiencias).filter((x) => x.resultado === "pendente").length,
+      foraEpoca: foraEpoca.map((r) => ({ id: r.id, data: saidaDe(r), linha: r.linha })),
       primeira: !Object.keys(anterior.alunos).length,
       nTurmas: turmasFinais.size,
       importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: expF.length }],
@@ -8632,6 +8642,12 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                   </div>
                   {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências na folha · {resultado.convertidas} convertidas (extrainscrições) · {resultado.pendentesExp} por decidir (últimas 3 semanas).
                   {novasEscolas.length > 0 && <div>Escolas novas a criar: {novasEscolas.join(", ")}</div>}
+                  {resultado.foraEpoca.length > 0 && (
+                    <div style={{ color: COLORS.warn }}>
+                      {resultado.foraEpoca.length === 1 ? "1 desistência tem" : `${resultado.foraEpoca.length} desistências têm`} data fora da época (provável engano no Excel):{" "}
+                      {resultado.foraEpoca.map((x) => `${x.id} · ${ddmm(x.data)}/${x.data.slice(2, 4)}${x.linha ? ` (linha ${x.linha})` : ""}`).join("; ")}.
+                    </div>
+                  )}
                 </div>
               </>
             )}
