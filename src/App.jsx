@@ -290,6 +290,8 @@ const XP_RESULTADO_META = {
 function capacidadeSugerida(turma, niveis) {
   const mapa = { "Raíz": 12, "Iniciação": 14, "Básico": 16, "Intermédio": 16, "Avançado": 18, "Expert": 18 };
   if (mapa[turma]) return mapa[turma];
+  const esc = escalaoDaTurma(turma, niveis);
+  if (mapa[esc]) return mapa[esc];
   return ehEscolinha(turma, niveis) ? 16 : 20;
 }
 
@@ -7828,6 +7830,9 @@ function InscritosPage({
   onSaveSemana,
   onRetrato,
   onImportarTurmas,
+  registoAlunos,
+  onImportarInscritos,
+  onCapacidade,
   onGuardarMapaEscaloes,
   notificar,
   onSaveTurma,
@@ -7961,18 +7966,10 @@ function InscritosPage({
           turmasAlunos={turmasAlunos}
           epocaAnterior={epocaAnterior}
           options={options}
-          onSaveSemana={onSaveSemana}
-          onRetrato={onRetrato}
-          onImportarTurmas={onImportarTurmas}
-          onGuardarMapaEscaloes={onGuardarMapaEscaloes}
-          notificar={notificar}
-          onSaveTurma={onSaveTurma}
-          onRemoveTurma={onRemoveTurma}
+          registoAlunos={registoAlunos}
+          onImportarInscritos={onImportarInscritos}
+          onCapacidade={onCapacidade}
           onSaveEpocaAnterior={onSaveEpocaAnterior}
-          onToggleTurmaEscola={onToggleTurmaEscola}
-          onAddOption={onAddOption}
-          onRemoveOption={onRemoveOption}
-          onGerirLista={onGerirLista}
         />
       ) : (
         <InscritosAnalise
@@ -7991,366 +7988,856 @@ function InscritosPage({
   );
 }
 
-function InscritosRegisto({
-  escolas,
-  inscritos,
-  turmasAlunos,
-  epocaAnterior,
-  options,
-  onImportarTurmas,
-  onGuardarMapaEscaloes,
-  onRetrato,
-  notificar,
-  onSaveSemana,
-  onSaveTurma,
-  onRemoveTurma,
-  onSaveEpocaAnterior,
-  onToggleTurmaEscola,
-  onAddOption,
-  onRemoveOption,
-}) {
-  const hoje = new Date();
-  const semanaAtual = (() => {
-    const d = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()));
-    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-    const inicio = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const n = Math.ceil(((d - inicio) / 86400000 + 1) / 7);
-    return `${d.getUTCFullYear()}-W${String(n).padStart(2, "0")}`;
-  })();
+// ======================================================================
+// ---------- Registo de alunos por ID (inscritos da época) ----------
+// ======================================================================
+// Cada importação traz a lista de alunos da época com o código do atleta.
+// Guardamos, por aluno: código, escola, turma, ano de nascimento, género,
+// rubrica (renovação/inscrição), data de entrada e, se desistiu, a data e o
+// motivo. Nada mais (sem nomes nem datas de nascimento completas). Com o
+// código, cada importação nova sabe quem entrou, quem saiu e que experiências
+// passaram a inscrição.
 
-  const turmas = options.turmas || DEFAULT_TURMAS;
+const STORAGE_ALUNOS_KEY = "reclamacoes:alunos";
+
+// "26/27 BÁSICO B1" → "Básico B1"; "B1 - Intermédio (3ª/6ª 18:30)" → "Intermédio B1";
+// "SUB 15A" → "Sub-15 A"; "SUB 13 - FUT11" → "Sub-13 Fut11"; "SUB 17B. NB" → "Sub-17 B (NB)".
+function nomeTurmaProposto(bruto, niveis) {
+  let t = String(bruto || "")
+    .replace(/\([^)]*\)?/g, " ")
+    .replace(/^\s*\d{2}\s*\/\s*\d{2}\s*-?\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return "";
+  const sub = t.match(/sub\s*-?\s*(\d{1,2})\s*([a-z])?(?![a-z0-9])(.*)$/i);
+  if (sub) {
+    let nome = `Sub-${Number(sub[1])}`;
+    if (sub[2]) nome += ` ${sub[2].toUpperCase()}`;
+    const resto = sub[3] || "";
+    const fut = resto.match(/fut\s*(\d+)/i);
+    if (fut) nome += ` Fut${fut[1]}`;
+    if (/(^|[^a-z])gr([^a-z]|$)/i.test(resto)) nome += " GR";
+    const local = resto.match(/\.\s*([A-Z]{2,3})\b/);
+    if (local) nome += ` (${local[1]})`;
+    return nome;
+  }
+  const n = normChave(t);
+  const nivel = (niveis || DEFAULT_NIVEIS).find((x) => new RegExp(`(^|[^a-z])${normChave(x)}([^a-z]|$)`).test(n));
+  if (nivel) {
+    const cod = t.match(/(?:^|[^A-Za-z0-9])([A-Ea-e]\d{1,2}(?:\.\d+)?)(?![0-9])/);
+    return cod ? `${nivel} ${cod[1].toUpperCase()}` : nivel;
+  }
+  return t
+    .toLocaleLowerCase("pt-PT")
+    .replace(/(^|\s)(\p{L})/gu, (x, a, b) => a + b.toLocaleUpperCase("pt-PT"));
+}
+
+const rubricaDe = (v) => {
+  const r = normChave(v);
+  if (r.startsWith("renov")) return "renov";
+  if (r.startsWith("extra")) return "extra";
+  if (r.startsWith("experi")) return "experiencia";
+  if (r.startsWith("inscri") || r.startsWith("nova")) return "novo";
+  return "";
+};
+const ROTULO_RUBRICA = { renov: "Renovação", novo: "Inscrição", extra: "Extrainscrição", experiencia: "Experiência" };
+
+// Início (segunda) e fim (domingo) de uma semana ISO "aaaa-Wnn".
+function limitesSemana(key) {
+  const [ano, sem] = String(key).split("-W");
+  const ini = new Date(Date.UTC(+ano, 0, 4));
+  ini.setUTCDate(ini.getUTCDate() - ((ini.getUTCDay() + 6) % 7) + (+sem - 1) * 7);
+  const fim = new Date(ini);
+  fim.setUTCDate(fim.getUTCDate() + 6);
+  return { ini: ini.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+}
+const proximaSemana = (key) => {
+  const { fim } = limitesSemana(key);
+  const d = new Date(fim + "T00:00:00");
+  d.setDate(d.getDate() + 1);
+  return semanaISO(d);
+};
+const ddmm = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
+// Balanço de cada semana: entradas, desistências, experiências e alunos no fim da semana.
+function balancoSemanal(reg, escola) {
+  if (!reg) return [];
+  const alunos = Object.values(reg.alunos || {}).filter((a) => !escola || a.escola === escola);
+  const exps = Object.values(reg.experiencias || {}).filter((x) => !escola || x.escola === escola);
+  const datas = [...alunos.map((a) => a.entrada), ...exps.map((x) => x.data)].filter(Boolean).sort();
+  if (!datas.length) return [];
+  const hojeSem = semanaISO(new Date());
+  const linhas = [];
+  let sem = semanaISO(new Date(datas[0] + "T00:00:00"));
+  for (let i = 0; i < 60 && sem <= hojeSem; i++) {
+    const { ini, fim } = limitesSemana(sem);
+    const dentro = (d) => d && d >= ini && d <= fim;
+    const entradas = alunos.filter((a) => dentro(a.entrada));
+    const saidas = alunos.filter((a) => a.estado === "desistiu" && dentro(a.saida));
+    const ativos = alunos.filter((a) => a.entrada && a.entrada <= fim && !(a.estado === "desistiu" && a.saida && a.saida <= fim)).length;
+    const ex = exps.filter((x) => dentro(x.data));
+    linhas.push({
+      semana: sem,
+      ini,
+      fim,
+      entradas: entradas.length,
+      novos: entradas.filter((a) => a.rubrica !== "renov").length,
+      renov: entradas.filter((a) => a.rubrica === "renov").length,
+      desist: saidas.length,
+      exp: ex.length,
+      ativos,
+    });
+    sem = proximaSemana(sem);
+  }
+  return linhas.map((l, i) => ({ ...l, variacao: i ? l.ativos - linhas[i - 1].ativos : l.ativos }));
+}
+
+// Colunas reconhecidas nas folhas do ficheiro de inscritos.
+const COLUNAS_FICHA_ALUNOS = {
+  escola: ["recintos do atleta", "recinto do atleta", "recintos", "recinto", "escola"],
+  id: ["codigo atleta no clube", "codigo do atleta", "codigo atleta", "id do aluno", "id aluno", "id", "codigo", "n atleta", "numero de atleta"],
+  nascimento: ["data de nascimento", "ano de nascimento", "nascimento", "data nasc", "ano"],
+  genero: ["genero", "sexo", "genero (m ou f)", "genero (m/f)"],
+  rubrica: ["rubricas/artigos", "rubricas", "rubrica", "artigos", "tipo de inscricao"],
+  equipa: ["equipas do atleta", "equipa do atleta", "equipa/turma", "turma/equipa", "equipas", "equipa", "turma", "escalao"],
+  data: ["data de entrada", "data de inscricao", "data", "data entrada"],
+  motivo: ["motivo desistencia", "motivo de desistencia", "motivo da desistencia", "motivo"],
+};
+
+function lerFichaAlunos(linhas) {
+  // Linha de títulos: a que reconhece mais colunas nas 10 primeiras.
+  let iCab = -1;
+  let melhor = 0;
+  let mapa = {};
+  linhas.slice(0, 10).forEach((l, i) => {
+    const cab = l.map(normChave);
+    const m = {};
+    const usadas = new Set();
+    Object.entries(COLUNAS_FICHA_ALUNOS).forEach(([k, sins]) => {
+      for (const s0 of sins) {
+        const j = cab.findIndex((h, idx) => !usadas.has(idx) && h === s0);
+        if (j >= 0) {
+          m[k] = j;
+          usadas.add(j);
+          return;
+        }
+      }
+    });
+    if (Object.keys(m).length > melhor) {
+      melhor = Object.keys(m).length;
+      iCab = i;
+      mapa = m;
+    }
+  });
+  if (iCab < 0 || mapa.id === undefined || mapa.escola === undefined) return null;
+  const dados = linhas.slice(iCab + 1);
+  // Nascimento: se a coluna escolhida tem erros (#VALUE!), usa outra com "nasc".
+  const valida = (j) => {
+    const vs = dados.slice(0, 300).map((l) => String(l[j] ?? "").trim()).filter(Boolean);
+    return vs.length ? vs.filter((v) => (anoNascimento(v) || 0) > 1990).length / vs.length : 0;
+  };
+  if (mapa.nascimento !== undefined && valida(mapa.nascimento) < 0.6) {
+    const alt = linhas[iCab].map((h, j) => ({ h: normChave(h), j })).find((x) => x.j !== mapa.nascimento && /nasc/.test(x.h) && valida(x.j) >= 0.6);
+    if (alt) mapa.nascimento = alt.j;
+  }
+  const v = (l, k) => (mapa[k] === undefined ? "" : String(l[mapa[k]] ?? "").trim());
+  const registos = dados
+    .map((l) => ({
+      id: v(l, "id").replace(/\.0+$/, ""),
+      escola: v(l, "escola"),
+      ano: anoNascimento(v(l, "nascimento")) || null,
+      genero: generoDe(v(l, "genero")) || "",
+      rubrica: rubricaDe(v(l, "rubrica")),
+      equipa: v(l, "equipa"),
+      data: dataDeCelula(v(l, "data")) || null,
+      motivo: v(l, "motivo"),
+      linha: l.__linha,
+    }))
+    .filter((r) => r.id && r.escola);
+  return { mapa, registos, titulos: linhas[iCab] };
+}
+
+function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, onImportar, onFechar }) {
+  const [folhas, setFolhas] = useState(null);
+  const [papel, setPapel] = useState({ alunos: -1, desist: -1, exp: -1 });
+  const [mapaEscola, setMapaEscola] = useState({});
+  const [mapaTurma, setMapaTurma] = useState({});
+  const [aEscrever, setAEscrever] = useState({});
+  const [procuraTurma, setProcuraTurma] = useState("");
+  const [faltaComo, setFaltaComo] = useState("manter");
+  const [erro, setErro] = useState("");
+  const [aLer, setALer] = useState(false);
+  const [nomeFicheiro, setNomeFicheiro] = useState("");
+
+  const carregar = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setALer(true);
+    setErro("");
+    setNomeFicheiro(f.name);
+    try {
+      const lidas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f, { todas: true }) : [{ nome: f.name, linhas: lerCSVInq(await f.text()) }];
+      const fichas = lidas.map((fo) => ({ nome: fo.nome, oculta: fo.oculta, ficha: lerFichaAlunos(fo.linhas) })).filter((x) => x.ficha && x.ficha.registos.length);
+      if (!fichas.length) throw new Error("não encontrei nenhuma folha com código do atleta e escola");
+      // Papel de cada folha: desistências têm motivo; experiências têm "experi" no nome ou na rubrica; o resto são alunos.
+      const p = { alunos: -1, desist: -1, exp: -1 };
+      fichas.forEach((x, i) => {
+        const regs = x.ficha.registos;
+        const ehExp = /experi/i.test(x.nome) || regs.filter((r) => r.rubrica === "experiencia").length > regs.length / 2;
+        if (x.ficha.mapa.motivo !== undefined && p.desist < 0) p.desist = i;
+        else if (ehExp && p.exp < 0) p.exp = i;
+        else if (x.ficha.mapa.equipa !== undefined && (p.alunos < 0 || regs.length > fichas[p.alunos].ficha.registos.length)) p.alunos = i;
+      });
+      setFolhas(fichas);
+      setPapel(p);
+    } catch (err) {
+      setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const regs = (k) => (folhas && papel[k] >= 0 ? folhas[papel[k]].ficha.registos : []);
+  const alunosF = regs("alunos");
+  const desistF = regs("desist");
+  const expF = regs("exp");
+
+  // ---- escolas ----
+  const escolasBrutas = useMemo(() => {
+    const c = {};
+    [...alunosF, ...desistF, ...expF].forEach((r) => (c[r.escola] = (c[r.escola] || 0) + 1));
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [folhas, papel]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const semPrefixo = (t) => normChave(t).replace(/^(dragon force|df)\s*[-–·:]?\s*/, "");
+    setMapaEscola((atual) => {
+      const novo = {};
+      escolasBrutas.forEach(([b]) => {
+        if (atual[b]) return (novo[b] = atual[b]);
+        const exata = escolas.find((e) => normChave(e) === normChave(b) || semPrefixo(e) === semPrefixo(b));
+        novo[b] = exata || `__nova__${nomeEscolaProposto(b)}`;
+      });
+      return novo;
+    });
+  }, [escolasBrutas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- turmas ----
+  const turmasBrutas = useMemo(() => {
+    const c = {};
+    [...alunosF, ...desistF].forEach((r) => r.equipa && (c[r.equipa] = (c[r.equipa] || 0) + 1));
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [folhas, papel]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setMapaTurma((atual) => {
+      const novo = {};
+      turmasBrutas.forEach(([b]) => {
+        novo[b] = atual[b] || (mapaTurmasGuardado || {})[normChave(b)] || nomeTurmaProposto(b, niveis);
+      });
+      return novo;
+    });
+  }, [turmasBrutas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const escolaDe = (b) => {
+    const x = mapaEscola[b] || "";
+    return x.startsWith("__nova__") ? x.slice(8) : x;
+  };
+
+  // ---- resultado ----
+  const resultado = useMemo(() => {
+    if (!folhas) return null;
+    const hoje = isoDe(new Date());
+    const datas = alunosF.map((r) => r.data).filter(Boolean).sort();
+    const epoca = datas.length ? epocaDe(datas[Math.floor(datas.length / 2)]) : epocaDe(hoje);
+    const anterior = (registoAtual || {})[epoca] || { alunos: {}, experiencias: {}, importacoes: [] };
+    const alunos = {};
+    // Alunos de importações anteriores que não estão neste ficheiro (podem ter saído).
+    const vistos = new Set();
+    alunosF.forEach((r) => {
+      const prev = anterior.alunos[r.id];
+      vistos.add(r.id);
+      alunos[r.id] = {
+        id: r.id,
+        escola: escolaDe(r.escola),
+        turma: mapaTurma[r.equipa] || nomeTurmaProposto(r.equipa, niveis) || "Sem turma",
+        ano: r.ano || prev?.ano || null,
+        genero: r.genero || prev?.genero || "",
+        rubrica: r.rubrica || prev?.rubrica || "",
+        entrada: [prev?.entrada, r.data].filter(Boolean).sort()[0] || hoje,
+        estado: "ativo",
+        saida: null,
+        motivo: null,
+      };
+    });
+    let desistNovas = 0;
+    desistF.forEach((r) => {
+      const prev = alunos[r.id] || anterior.alunos[r.id];
+      if (!(prev && prev.estado === "desistiu")) desistNovas++;
+      alunos[r.id] = {
+        id: r.id,
+        escola: escolaDe(r.escola),
+        turma: mapaTurma[r.equipa] || prev?.turma || nomeTurmaProposto(r.equipa, niveis) || "Sem turma",
+        ano: r.ano || prev?.ano || null,
+        genero: r.genero || prev?.genero || "",
+        rubrica: r.rubrica || prev?.rubrica || "",
+        entrada: prev?.entrada || r.data || hoje,
+        estado: "desistiu",
+        // A folha de desistências não traz a data da saída (a coluna Data é a da entrada):
+        // conta a partir da importação em que a desistência aparece pela primeira vez.
+        saida: prev && prev.estado === "desistiu" && prev.saida ? prev.saida : hoje,
+        motivo: r.motivo || "Não definido",
+      };
+    });
+    const emFalta = Object.values(anterior.alunos).filter((a) => a.estado === "ativo" && !vistos.has(a.id) && !alunos[a.id]);
+    emFalta.forEach((a) => {
+      alunos[a.id] =
+        faltaComo === "desistencia"
+          ? { ...a, estado: "desistiu", saida: hoje, motivo: "Saiu sem registo (não consta do ficheiro)" }
+          : { ...a, emFalta: hoje };
+    });
+    // Desistências antigas que não voltaram a aparecer mantêm-se.
+    Object.values(anterior.alunos).forEach((a) => {
+      if (!alunos[a.id]) alunos[a.id] = a;
+    });
+    const experiencias = { ...anterior.experiencias };
+    expF.forEach((r) => {
+      experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || hoje };
+    });
+    const convertidas = Object.values(experiencias).filter((x) => alunos[x.id]).length;
+    const novos = alunosF.filter((r) => !anterior.alunos[r.id]).length;
+    const ativos = Object.values(alunos).filter((a) => a.estado === "ativo").length;
+    const turmasFinais = new Set(Object.values(alunos).map((a) => `${a.escola}|${a.turma}`));
+    return {
+      epoca,
+      alunos,
+      experiencias,
+      ativos,
+      novos,
+      desistNovas,
+      emFalta: emFalta.length,
+      convertidas,
+      primeira: !Object.keys(anterior.alunos).length,
+      nTurmas: turmasFinais.size,
+      importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: expF.length }],
+    };
+  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
+  const opcoesNovas = [...new Set([...escolasBrutas.map(([b]) => nomeEscolaProposto(b)), ...novasEscolas])].filter((n) => !escolas.includes(n)).sort((a, b) => a.localeCompare(b, "pt"));
+  const nomesTurma = [...new Set(Object.values(mapaTurma))].filter(Boolean);
+  const turmasVisiveis = turmasBrutas.filter(([b]) => !procuraTurma.trim() || normChave(`${b} ${mapaTurma[b] || ""}`).includes(normChave(procuraTurma)));
+
+  const confirmar = () => {
+    const mapaGuardar = {};
+    Object.entries(mapaTurma).forEach(([b, t]) => t && (mapaGuardar[normChave(b)] = t));
+    onImportar({ ...resultado, novasEscolas, mapaTurmas: mapaGuardar, motivos: [...new Set(desistF.map((r) => r.motivo).filter(Boolean))] });
+  };
+
+  const titulo = { fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 6px" };
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Importar inscritos da época</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
+          O Excel completo da semana: a folha dos alunos (escola, código do atleta, nascimento, género, rubrica, equipa e data) e, se existirem, as folhas de <strong>desistências</strong> e de <strong>experiências</strong>. Pelo código do atleta a app percebe quem entrou, quem saiu e que experiências passaram a inscrição. Guarda só o código, a escola, a turma, o ano de nascimento, o género, a rubrica e as datas.
+        </div>
+        <label style={{ ...primaryBtnStyle, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "10px 16px", width: "auto" }}>
+          <Plus size={15} /> {aLer ? "A ler…" : folhas ? "Escolher outro ficheiro" : "Escolher ficheiro Excel"}
+          <input type="file" accept=".xlsx,.csv" onChange={carregar} style={{ display: "none" }} />
+        </label>
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.danger }}>{erro}</div>}
+
+        {folhas && (
+          <>
+            <div style={titulo}>Folhas do ficheiro</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              {[
+                ["alunos", "Alunos inscritos"],
+                ["desist", "Desistências"],
+                ["exp", "Experiências"],
+              ].map(([k, l]) => (
+                <div key={k}>
+                  <label style={{ ...labelStyle, marginTop: 0 }}>{l}</label>
+                  <select value={papel[k]} onChange={(e) => setPapel((p) => ({ ...p, [k]: Number(e.target.value) }))} style={inputStyle}>
+                    <option value={-1}>— nenhuma —</option>
+                    {folhas.map((fo, i) => (
+                      <option key={i} value={i}>
+                        {fo.nome} · {fo.ficha.registos.length} linhas
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <div style={titulo}>Escolas</div>
+            <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 6 }}>Escolhe a escola da app para cada nome do Excel, ou cria-a com o nome que usas.</div>
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+              {escolasBrutas.map(([b, n], i) => (
+                <div key={b} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 13 }}>
+                  <span style={{ flex: 1 }}>
+                    {b} <span style={{ color: COLORS.slate }}>· {n}</span>
+                  </span>
+                  {aEscrever[b] ? (
+                    <span style={{ display: "flex", gap: 6, width: 270 }}>
+                      <input
+                        autoFocus
+                        value={aEscrever[b]}
+                        onChange={(e) => setAEscrever((x) => ({ ...x, [b]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && aEscrever[b].trim()) {
+                            setMapaEscola((m) => ({ ...m, [b]: `__nova__${aEscrever[b].trim()}` }));
+                            setAEscrever((x) => ({ ...x, [b]: "" }));
+                          }
+                        }}
+                        style={{ ...inputStyle, padding: "6px 8px" }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (aEscrever[b].trim()) setMapaEscola((m) => ({ ...m, [b]: `__nova__${aEscrever[b].trim()}` }));
+                          setAEscrever((x) => ({ ...x, [b]: "" }));
+                        }}
+                        style={{ ...primaryBtnStyle, width: "auto", padding: "0 10px" }}
+                        aria-label="Usar este nome"
+                      >
+                        <Check size={14} />
+                      </button>
+                    </span>
+                  ) : (
+                    <select
+                      value={mapaEscola[b] || ""}
+                      onChange={(e) => {
+                        if (e.target.value === "__escrever__") return setAEscrever((x) => ({ ...x, [b]: escolaDe(b) || nomeEscolaProposto(b) }));
+                        setMapaEscola((m) => ({ ...m, [b]: e.target.value }));
+                      }}
+                      style={{ ...inputStyle, width: 270, padding: "6px 8px" }}
+                    >
+                      <optgroup label="Escolas da app">
+                        {escolas.map((e) => (
+                          <option key={e} value={e}>
+                            {e}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Criar escola nova">
+                        <option value="__escrever__">Escrever o nome…</option>
+                        {opcoesNovas.map((n2) => (
+                          <option key={n2} value={`__nova__${n2}`}>
+                            Nova: {n2}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div style={{ ...titulo, display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <span>
+                Turmas e equipas · {turmasBrutas.length} nomes no Excel → {nomesTurma.length} turmas
+              </span>
+              <input value={procuraTurma} onChange={(e) => setProcuraTurma(e.target.value)} placeholder="Procurar…" style={{ ...inputStyle, width: 180, padding: "5px 8px", textTransform: "none", letterSpacing: 0, fontWeight: 400 }} />
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 6 }}>
+              À direita fica o nome da turma na app (ex.: Básico B1, Sub-15 A). Nomes iguais juntam-se na mesma turma. As correspondências ficam guardadas para a próxima importação.
+            </div>
+            <datalist id="lista-turmas-imp">
+              {nomesTurma.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
+              {turmasVisiveis.map(([b, n], i) => (
+                <div key={b} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 12.5 }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b}>
+                    {b} <span style={{ color: COLORS.slate }}>· {n}</span>
+                  </span>
+                  <span style={{ color: COLORS.slate }}>→</span>
+                  <input list="lista-turmas-imp" value={mapaTurma[b] || ""} onChange={(e) => setMapaTurma((m) => ({ ...m, [b]: e.target.value }))} style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }} />
+                </div>
+              ))}
+            </div>
+
+            {resultado && (
+              <>
+                {resultado.emFalta > 0 && (
+                  <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, fontSize: 13 }}>
+                    <strong>{resultado.emFalta} alunos</strong> da importação anterior não estão neste ficheiro nem nas desistências.
+                    <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+                      <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                        <input type="radio" checked={faltaComo === "manter"} onChange={() => setFaltaComo("manter")} /> Manter como inscritos (assinalados "em falta")
+                      </label>
+                      <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                        <input type="radio" checked={faltaComo === "desistencia"} onChange={() => setFaltaComo("desistencia")} /> Registar como desistência
+                      </label>
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 16, padding: "14px 16px", background: COLORS.paperSunken, borderRadius: 10, fontSize: 13, lineHeight: 1.7 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>
+                    Época {resultado.epoca}: {resultado.ativos} alunos inscritos em {resultado.nTurmas} turmas
+                  </div>
+                  {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências ({resultado.convertidas} já inscritas).
+                  {novasEscolas.length > 0 && <div>Escolas novas a criar: {novasEscolas.join(", ")}</div>}
+                </div>
+              </>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: 1 }}>
+                Cancelar
+              </button>
+              <button onClick={confirmar} disabled={!resultado || papel.alunos < 0} style={{ ...primaryBtnStyle, flex: 2, opacity: !resultado || papel.alunos < 0 ? 0.5 : 1 }}>
+                Importar {resultado ? `${resultado.ativos} alunos` : ""}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Escola em detalhe: turmas (lotação) e alunos pelo código.
+function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar }) {
+  const [aba, setAba] = useState("turmas");
+  const [procura, setProcura] = useState("");
+  const [fEstado, setFEstado] = useState("ativo");
+  const [fTurma, setFTurma] = useState("todas");
+  const alunos = Object.values(reg?.alunos || {}).filter((a) => a.escola === escola);
+  const ativos = alunos.filter((a) => a.estado === "ativo");
+  const turmas = [...new Set(alunos.map((a) => a.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const exps = Object.values(reg?.experiencias || {}).filter((x) => x.escola === escola);
+  const lista = alunos
+    .filter((a) => fEstado === "todos" || a.estado === fEstado || (fEstado === "emFalta" && a.emFalta && a.estado === "ativo"))
+    .filter((a) => fTurma === "todas" || a.turma === fTurma)
+    .filter((a) => !procura.trim() || String(a.id).includes(procura.trim()))
+    .sort((a, b) => a.turma.localeCompare(b.turma, "pt", { numeric: true }) || String(a.id).localeCompare(String(b.id)));
+  const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "7px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
+  const td = { padding: "7px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5, fontVariantNumeric: "tabular-nums" };
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{escola}</h2>
+            <div style={{ fontSize: 12.5, color: COLORS.slate, marginTop: 4 }}>
+              {ativos.length} inscritos · {ativos.filter((a) => a.rubrica === "renov").length} renovações · {alunos.filter((a) => a.estado === "desistiu").length} desistências · {exps.length} experiências ({exps.filter((x) => reg.alunos[x.id]).length} inscritas)
+            </div>
+          </div>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 9, padding: 2, margin: "14px 0" }}>
+          {[
+            ["turmas", "Turmas e lotação"],
+            ["alunos", "Alunos"],
+          ].map(([k, l]) => (
+            <button key={k} onClick={() => setAba(k)} className="pill" style={{ background: aba === k ? COLORS.paperRaised : "transparent", border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 13, fontWeight: aba === k ? 600 : 500, color: aba === k ? COLORS.ink : COLORS.ink2, cursor: "pointer" }}>
+              {l}
+            </button>
+          ))}
+        </div>
+        {aba === "turmas" ? (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                {["Turma / equipa", "Escalão", "M", "F", "Alunos", "Capacidade", "Ocupação"].map((h) => (
+                  <th key={h} style={th}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {turmas.map((t) => {
+                const at = ativos.filter((a) => a.turma === t);
+                if (!at.length) return null;
+                const cap = capacidades[`${escola}|${t}`] || capacidadeSugerida(t, niveis);
+                const p = cap ? Math.round((at.length / cap) * 100) : null;
+                return (
+                  <tr key={t}>
+                    <td style={{ ...td, fontWeight: 600 }}>{t}</td>
+                    <td style={{ ...td, color: COLORS.slate }}>{escalaoDaTurma(t, niveis)}</td>
+                    <td style={td}>{at.filter((a) => a.genero !== "f").length}</td>
+                    <td style={td}>{at.filter((a) => a.genero === "f").length}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>{at.length}</td>
+                    <td style={td}>
+                      <input
+                        type="number"
+                        min="1"
+                        defaultValue={cap}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value);
+                          if (v > 0 && v !== cap) onCapacidade(escola, t, v);
+                        }}
+                        style={{ ...inputStyle, width: 70, padding: "4px 6px" }}
+                        aria-label={`Capacidade de ${t}`}
+                      />
+                    </td>
+                    <td style={{ ...td, minWidth: 140 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1, height: 6, background: COLORS.ruleSoft, borderRadius: 3 }}>
+                          <div style={{ width: `${Math.min(100, p || 0)}%`, height: "100%", borderRadius: 3, background: p >= 95 ? COLORS.warn : p < 50 ? COLORS.slate : COLORS.navy }} />
+                        </div>
+                        <span style={{ fontSize: 12, width: 38, textAlign: "right", color: p >= 95 ? COLORS.warn : COLORS.ink2, fontWeight: p >= 95 ? 700 : 500 }}>{p}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <input value={procura} onChange={(e) => setProcura(e.target.value)} placeholder="Procurar pelo código do atleta" style={{ ...inputStyle, width: 230, padding: "7px 9px" }} />
+              <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 9px" }}>
+                <option value="ativo">Inscritos</option>
+                <option value="desistiu">Desistiram</option>
+                <option value="emFalta">Em falta na última importação</option>
+                <option value="todos">Todos</option>
+              </select>
+              <select value={fTurma} onChange={(e) => setFTurma(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 9px" }}>
+                <option value="todas">Todas as turmas</option>
+                {turmas.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <span style={{ alignSelf: "center", fontSize: 12, color: COLORS.slate }}>{lista.length} alunos</span>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Código", "Turma", "Ano", "Género", "Rubrica", "Entrada", "Estado"].map((h) => (
+                    <th key={h} style={th}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lista.slice(0, 400).map((a) => (
+                  <tr key={a.id}>
+                    <td style={{ ...td, fontWeight: 600 }}>{a.id}</td>
+                    <td style={td}>{a.turma}</td>
+                    <td style={td}>{a.ano || "—"}</td>
+                    <td style={td}>{a.genero ? a.genero.toUpperCase() : "—"}</td>
+                    <td style={td}>{ROTULO_RUBRICA[a.rubrica] || "—"}</td>
+                    <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
+                    <td style={{ ...td, color: a.estado === "desistiu" ? COLORS.danger : a.emFalta ? COLORS.warn : COLORS.ok }}>
+                      {a.estado === "desistiu" ? `Desistiu a ${fmt(new Date(a.saida + "T00:00:00"))} · ${a.motivo}` : a.emFalta ? "Em falta na última importação" : "Inscrito"}
+                    </td>
+                  </tr>
+                ))}
+                {lista.length > 400 && (
+                  <tr>
+                    <td colSpan={7} style={{ ...td, color: COLORS.slate }}>
+                      A mostrar 400 de {lista.length}. Usa a procura ou o filtro de turma.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior }) {
   const niveis = options.niveis || DEFAULT_NIVEIS;
-  const porEscola = options.turmasPorEscola || {};
-
-  const [tEsc, setTEsc] = useState(escolas[0] || "");
-  const [tTurma, setTTurma] = useState("");
-  const [tAno, setTAno] = useState(String(hoje.getFullYear() - 10));
-  const [tM, setTM] = useState("");
-  const [tF, setTF] = useState("");
-  const [erroTurma, setErroTurma] = useState("");
-
+  const epocaHoje = epocaDe(isoDe(new Date()));
+  const epocasReg = Object.keys(registoAlunos || {}).sort().reverse();
+  const [epoca, setEpoca] = useState(epocasReg.includes(epocaHoje) ? epocaHoje : epocasReg[0] || epocaHoje);
+  const reg = (registoAlunos || {})[epoca];
+  const [importar, setImportar] = useState(false);
+  const [escolaBal, setEscolaBal] = useState("");
+  const [escolaAberta, setEscolaAberta] = useState(null);
   const [hEsc, setHEsc] = useState(escolas[0] || "");
   const [hIns, setHIns] = useState("");
   const [hDes, setHDes] = useState("");
-  const [erroH, setErroH] = useState("");
 
-  const [importarAberto, setImportarAberto] = useState(false);
-  const [gEsc, setGEsc] = useState(escolas[0] || "");
-  const [novaTurma, setNovaTurma] = useState("");
-  const [novoTipo, setNovoTipo] = useState("escolinha");
-  const [erroG, setErroG] = useState("");
+  const alunos = Object.values(reg?.alunos || {});
+  const ativos = alunos.filter((a) => a.estado === "ativo");
+  const exps = Object.values(reg?.experiencias || {});
+  const ultima = reg?.importacoes?.[reg.importacoes.length - 1];
+  const balanco = useMemo(() => balancoSemanal(reg, escolaBal || null), [reg, escolaBal]);
+  const escolasReg = [...new Set(alunos.map((a) => a.escola))].sort((a, b) => a.localeCompare(b, "pt"));
+  const capacidades = options.capacidades || {};
 
-  const turmasDaEscola = porEscola[tEsc] || [];
-  const anos = [];
-  for (let a = hoje.getFullYear(); a >= hoje.getFullYear() - 20; a--) anos.push(String(a));
-
-  const guardarTurma = () => {
-    if ((tM === "" && tF === "") || Number(tM || 0) < 0 || Number(tF || 0) < 0) {
-      setErroTurma("Introduz pelo menos um número válido de atletas.");
-      return;
-    }
-    if (!tTurma) {
-      setErroTurma("Escolhe a turma.");
-      return;
-    }
-    setErroTurma("");
-    onSaveTurma({ escola: tEsc, turma: tTurma, ano: Number(tAno), m: Math.round(Number(tM || 0)), f: Math.round(Number(tF || 0)) });
-    setTM("");
-    setTF("");
-  };
-
-  const guardarEpocaAnterior = () => {
-    if (hIns === "" || isNaN(hIns) || Number(hIns) < 0) {
-      setErroH("Introduz um número de inscritos válido.");
-      return;
-    }
-    setErroH("");
-    onSaveEpocaAnterior(hEsc, { inscritos: Math.round(Number(hIns)), desist: Math.round(Number(hDes || 0)) });
-    setHIns("");
-    setHDes("");
-  };
-
-  const registosSemana = escolas
-    .flatMap((e) => (inscritos[e] || []).map((r) => ({ ...r, escola: e })))
-    .sort((a, b) => b.semana.localeCompare(a.semana))
-    .slice(0, 10);
-
-  const th = { textAlign: "left", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "9px 12px", borderBottom: `1px solid ${COLORS.rule}` };
-  const td = { padding: "9px 12px", borderBottom: "1px solid #EFEDE7", fontSize: 13.5 };
+  const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "8px 9px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
+  const td = { padding: "8px 9px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, fontVariantNumeric: "tabular-nums" };
+  const kpi = (l, v, sub) => (
+    <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.paperSunken, minWidth: 0 }}>
+      <div style={{ fontSize: 11.5, color: COLORS.ink2, fontWeight: 500 }}>{l}</div>
+      <div style={{ fontSize: 24, fontWeight: 600, marginTop: 4, letterSpacing: "-0.02em" }}>{v}</div>
+      {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
 
   return (
     <div>
       <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Turmas e equipas por escola</div>
-        <div style={{ display: "flex", gap: 26, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 240px" }}>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Escolas</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              {escolas.map((e) => (
-                <span key={e} style={{ fontSize: 12, fontWeight: 600, padding: "5px 11px", borderRadius: 20, background: COLORS.rule, color: COLORS.navy }}>
-                  {e}
-                </span>
-              ))}
-            </div>
-            <div style={{ fontSize: 12, color: COLORS.slate, lineHeight: 1.5 }}>
-              Vêm da lista de escolas da app. Adiciona ou remove em "Escolas e listas" e aparecem aqui.
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={panelTitle}>Inscritos da época {epoca}</div>
+            <div style={{ fontSize: 12.5, color: COLORS.slate }}>
+              {ultima ? `Última importação a ${fmt(new Date(ultima.data + "T00:00:00"))}${ultima.ficheiro ? ` · ${ultima.ficheiro}` : ""}` : "Ainda sem importações nesta época."}
             </div>
           </div>
-          <div style={{ flex: "1 1 320px" }}>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Turmas / escalões (lista geral)</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              {turmas.map((t) => (
-                <TurmaChip key={t} label={t} onDelete={() => {
-                  if (turmasAlunos.some((r) => r.turma === t)) {
-                    setErroG(`Não dá para remover "${t}": já tem alunos registados.`);
-                    return;
-                  }
-                  setErroG("");
-                  onRemoveOption("turmas", t);
-                  if (niveis.includes(t)) onRemoveOption("niveis", t);
-                }} />
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="text"
-                placeholder="Ex: Sub-20"
-                value={novaTurma}
-                onChange={(e) => {
-                  setNovaTurma(e.target.value);
-                  setErroG("");
-                }}
-                style={inputStyle}
-              />
-              <select value={novoTipo} onChange={(e) => setNovoTipo(e.target.value)} style={{ ...inputStyle, width: 140 }}>
-                <option value="escolinha">Escolinha</option>
-                <option value="competicao">Competição</option>
-              </select>
-              <button
-                onClick={() => {
-                  const v = novaTurma.trim();
-                  if (!v) {
-                    setErroG("Escreve o nome da turma.");
-                    return;
-                  }
-                  if (turmas.includes(v)) {
-                    setErroG("Essa turma já existe.");
-                    return;
-                  }
-                  setErroG("");
-                  onAddOption("turmas", v);
-                  if (novoTipo === "escolinha") onAddOption("niveis", v);
-                  setNovaTurma("");
-                }}
-                style={{ ...primaryBtnStyle, flex: "none", padding: "9px 14px" }}
-              >
-                Adicionar
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ borderTop: `1px solid ${COLORS.rule}`, marginTop: 18, paddingTop: 14 }}>
-          <label style={{ ...labelStyle, marginTop: 0 }}>Turmas existentes em cada escola</label>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
-            <select value={gEsc} onChange={(e) => setGEsc(e.target.value)} style={{ ...inputStyle, width: 190 }}>
-              {escolas.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-            <span style={{ fontSize: 12.5, color: COLORS.slate }}>Clica para ativar ou desativar nesta escola</span>
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {turmas.map((t) => {
-              const on = (porEscola[gEsc] || []).includes(t);
-              return (
-                <button
-                  key={t}
-                  onClick={() => {
-                    if (on && turmasAlunos.some((r) => r.escola === gEsc && r.turma === t)) {
-                      setErroG(`"${t}" tem alunos registados em ${gEsc}.`);
-                      return;
-                    }
-                    setErroG("");
-                    onToggleTurmaEscola(gEsc, t);
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 20,
-                    border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`,
-                    background: on ? COLORS.navy : "transparent",
-                    color: on ? COLORS.onAccent : COLORS.slate,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  {on ? "✓ " : "+ "}
-                  {t}
-                </button>
-              );
-            })}
-          </div>
-          {erroG && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroG}</div>}
-        </div>
-      </div>
-
-      <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Retrato semanal</div>
-        <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 14, lineHeight: 1.55 }}>
-          O total de inscritos não se escreve à mão: é somado das turmas. Este botão guarda o retrato desta semana em
-          todas as escolas, para depois haver histórico e curvas de crescimento na Análise.
-        </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="press" onClick={() => onRetrato(semanaAtual)} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
-            Guardar retrato de {semanaLabel(semanaAtual)}
-          </button>
-          <span style={{ fontSize: 12, color: COLORS.slate }}>
-            {escolas.filter((e) => (inscritos[e] || []).some((r) => r.semana === semanaAtual)).length} de {escolas.length} escolas já
-            com retrato desta semana
-          </span>
-        </div>
-
-        {registosSemana.length > 0 && (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-            <thead>
-              <tr>
-                {["Semana", "Escola", "Inscritos", "Novas", "Desistências"].map((h) => (
-                  <th key={h} style={th}>
-                    {h}
-                  </th>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {epocasReg.length > 1 && (
+              <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "8px 10px" }}>
+                {epocasReg.map((e) => (
+                  <option key={e} value={e}>
+                    Época {e}
+                  </option>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {registosSemana.map((r) => (
-                <tr key={r.escola + r.semana}>
-                  <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{semanaLabel(r.semana)}</td>
-                  <td style={td}>{r.escola}</td>
-                  <td style={{ ...td, fontWeight: 600 }}>{r.total}</td>
-                  <td style={td}>{r.novas || 0}</td>
-                  <td style={td}>{r.desist || 0}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </select>
+            )}
+            <button className="press" onClick={() => setImportar(true)} style={{ ...primaryBtnStyle, width: "auto", padding: "10px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+              <FileText size={15} /> Importar ficheiro da semana
+            </button>
+          </div>
+        </div>
+        {reg && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginTop: 14 }}>
+            {kpi("Inscritos", ativos.length, `${escolasReg.length} escolas`)}
+            {kpi("Renovaram", `${ativos.length ? Math.round((ativos.filter((a) => a.rubrica === "renov").length / ativos.length) * 100) : 0}%`, `${ativos.filter((a) => a.rubrica === "renov").length} renovações`)}
+            {kpi("Inscrições novas", ativos.filter((a) => a.rubrica === "novo" || a.rubrica === "extra").length, `${ativos.filter((a) => a.rubrica === "extra").length} extrainscrições`)}
+            {kpi("Desistências", alunos.filter((a) => a.estado === "desistiu").length, `${alunos.length ? ((alunos.filter((a) => a.estado === "desistiu").length / alunos.length) * 100).toFixed(1) : 0}% dos alunos da época`)}
+            {kpi("Experiências", exps.length, `${exps.filter((x) => reg.alunos[x.id]).length} ficaram inscritos (${exps.length ? Math.round((exps.filter((x) => reg.alunos[x.id]).length / exps.length) * 100) : 0}%)`)}
+            {ativos.some((a) => a.emFalta) && kpi("Em falta", ativos.filter((a) => a.emFalta).length, "não vieram na última importação")}
+          </div>
         )}
       </div>
 
-      <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-          <div style={panelTitle}>Alunos por turma / escalão</div>
-          <button className="press" onClick={() => setImportarAberto(true)} style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 13px", fontSize: 12.5 }}>
-            Importar de Excel / CSV
-          </button>
-        </div>
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>Apenas números absolutos — nenhum dado pessoal de atletas.</div>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-            <select
-              value={tEsc}
-              onChange={(e) => {
-                setTEsc(e.target.value);
-                setTTurma("");
-              }}
-              style={{ ...inputStyle, width: 160 }}
-            >
-              {escolas.map((e) => (
+      {reg && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={panelTitle}>Balanço semanal</div>
+            <select value={escolaBal} onChange={(e) => setEscolaBal(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px" }}>
+              <option value="">Todas as escolas</option>
+              {escolasReg.map((e) => (
                 <option key={e} value={e}>
                   {e}
                 </option>
               ))}
             </select>
           </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Turma / equipa</label>
-            <select value={tTurma} onChange={(e) => setTTurma(e.target.value)} style={{ ...inputStyle, width: 175 }}>
-              <option value="">{turmasDaEscola.length ? "Selecionar..." : "Sem turmas nesta escola"}</option>
-              {turmasDaEscola.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Ano de nascimento</label>
-            <select value={tAno} onChange={(e) => setTAno(e.target.value)} style={{ ...inputStyle, width: 150 }}>
-              {anos.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Masculinos</label>
-            <input type="number" min="0" value={tM} onChange={(e) => { setTM(e.target.value); setErroTurma(""); }} style={{ ...inputStyle, width: 110 }} placeholder="14" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Femininos</label>
-            <input type="number" min="0" value={tF} onChange={(e) => { setTF(e.target.value); setErroTurma(""); }} style={{ ...inputStyle, width: 110 }} placeholder="3" />
-          </div>
-          <button onClick={guardarTurma} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>
-            Registar
-          </button>
-        </div>
-        {erroTurma && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroTurma}</div>}
-
-        {turmasAlunos.length > 0 && (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-            <thead>
-              <tr>
-                {["Escola", "Turma", "Ano", "M", "F", "Total", ""].map((h) => (
-                  <th key={h} style={th}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {[...turmasAlunos]
-                .sort((a, b) => a.escola.localeCompare(b.escola) || a.turma.localeCompare(b.turma))
-                .slice(0, 15)
-                .map((r) => (
-                  <tr key={r.escola + r.turma + r.ano}>
-                    <td style={td}>{r.escola}</td>
-                    <td style={td}>{r.turma}</td>
-                    <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>{r.ano}</td>
-                    <td style={td}>{r.m}</td>
-                    <td style={td}>{r.f}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{r.m + r.f}</td>
+          {balanco.length > 1 && (
+            <ResponsiveContainer width="100%" height={170}>
+              <AreaChart data={balanco.map((b) => ({ name: ddmm(b.ini), Inscritos: b.ativos }))} margin={{ left: -10, right: 10, top: 6 }}>
+                <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                <Tooltip content={<DicaGrafico />} />
+                <Area type="monotone" dataKey="Inscritos" stroke={COLORS.navy} strokeWidth={2} fill={COLORS.navy} fillOpacity={0.08} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+          <div style={{ overflowX: "auto", marginTop: 8 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Semana", "Entradas", "das quais novas", "Desistências", "Experiências", "Inscritos no fim", "Variação"].map((h) => (
+                    <th key={h} style={th}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...balanco].reverse().map((b) => (
+                  <tr key={b.semana}>
                     <td style={td}>
-                      <button title="Remover" onClick={() => onRemoveTurma(r)} style={{ ...iconBtnStyle, padding: 0 }}>
-                        <X size={14} />
-                      </button>
+                      <strong>{semanaLabel(b.semana)}</strong> <span style={{ color: COLORS.slate }}>{ddmm(b.ini)}–{ddmm(b.fim)}</span>
                     </td>
+                    <td style={td}>{b.entradas}</td>
+                    <td style={td}>{b.novos}</td>
+                    <td style={{ ...td, color: b.desist ? COLORS.danger : COLORS.ink }}>{b.desist}</td>
+                    <td style={td}>{b.exp}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>{b.ativos}</td>
+                    <td style={{ ...td, fontWeight: 600, color: b.variacao > 0 ? COLORS.ok : b.variacao < 0 ? COLORS.danger : COLORS.slate }}>{b.variacao > 0 ? `+${b.variacao}` : b.variacao}</td>
                   </tr>
                 ))}
-              {turmasAlunos.length > 15 && (
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {reg && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <div style={panelTitle}>Escolas</div>
+          <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 10 }}>Abre uma escola para ver as turmas, a lotação e os alunos pelo código.</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
                 <tr>
-                  <td colSpan={7} style={{ ...td, color: COLORS.slate, fontSize: 12 }}>
-                    {turmasAlunos.length} registos no total (a mostrar 15)
-                  </td>
+                  {["Escola", "Inscritos", "Renovaram", "Novos", "Desist.", "Experiências", "Turmas", "Ocupação", "Época passada"].map((h) => (
+                    <th key={h} style={th}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {escolasReg.map((e) => {
+                  const al = alunos.filter((a) => a.escola === e);
+                  const at = al.filter((a) => a.estado === "ativo");
+                  const ex = exps.filter((x) => x.escola === e);
+                  const ts = [...new Set(at.map((a) => a.turma))];
+                  const capT = ts.reduce((n, t) => n + (capacidades[`${e}|${t}`] || capacidadeSugerida(t, niveis)), 0);
+                  const ant = (epocaAnterior[e] || {}).inscritos;
+                  return (
+                    <tr key={e} className="rowHover" style={{ cursor: "pointer" }} onClick={() => setEscolaAberta(e)}>
+                      <td style={{ ...td, fontWeight: 600 }}>{e}</td>
+                      <td style={{ ...td, fontWeight: 600 }}>{at.length}</td>
+                      <td style={td}>{at.length ? Math.round((at.filter((a) => a.rubrica === "renov").length / at.length) * 100) : 0}%</td>
+                      <td style={td}>{at.filter((a) => a.rubrica !== "renov").length}</td>
+                      <td style={{ ...td, color: al.some((a) => a.estado === "desistiu") ? COLORS.danger : COLORS.ink }}>{al.filter((a) => a.estado === "desistiu").length}</td>
+                      <td style={td}>
+                        {ex.length} <span style={{ color: COLORS.slate }}>({ex.filter((x) => reg.alunos[x.id]).length} inscr.)</span>
+                      </td>
+                      <td style={td}>{ts.length}</td>
+                      <td style={td}>{capT ? `${Math.round((at.length / capT) * 100)}%` : "—"}</td>
+                      <td style={{ ...td, color: COLORS.slate }}>{ant ? `${ant} (${at.length >= ant ? "+" : ""}${(((at.length - ant) / ant) * 100).toFixed(1)}%)` : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!reg && (
+        <div style={{ ...panelStyle, marginBottom: 16 }}>
+          <Vazio icon={Users} titulo="Ainda sem alunos nesta época" texto="Importa o Excel da semana: a app cria as escolas, as turmas e o balanço semanal a partir dele." acao="Importar ficheiro da semana" onAcao={() => setImportar(true)} />
+          {turmasAlunos.length > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>Há {turmasAlunos.length} registos de turmas de importações antigas (só contagens). Continuam a contar até importares o ficheiro com os códigos.</div>}
+        </div>
+      )}
 
       <div style={panelStyle}>
         <div style={panelTitle}>Época passada (referência)</div>
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>
-          Introduz uma vez por época. É daqui que sai a taxa de crescimento homóloga.
-        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>Introduz uma vez por época. É daqui que sai a taxa de crescimento homóloga.</div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-            <select value={hEsc} onChange={(e) => setHEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
+            <select value={hEsc} onChange={(e) => setHEsc(e.target.value)} style={{ ...inputStyle, width: 220 }}>
               {escolas.map((e) => (
                 <option key={e} value={e}>
                   {e}
@@ -8360,65 +8847,41 @@ function InscritosRegisto({
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos no final</label>
-            <input type="number" min="0" value={hIns} onChange={(e) => { setHIns(e.target.value); setErroH(""); }} style={{ ...inputStyle, width: 140 }} placeholder="112" />
+            <input type="number" min="0" value={hIns} onChange={(e) => setHIns(e.target.value)} style={{ ...inputStyle, width: 140 }} placeholder={String((epocaAnterior[hEsc] || {}).inscritos ?? "112")} />
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Desistências na época</label>
-            <input type="number" min="0" value={hDes} onChange={(e) => setHDes(e.target.value)} style={{ ...inputStyle, width: 155 }} placeholder="18" />
+            <input type="number" min="0" value={hDes} onChange={(e) => setHDes(e.target.value)} style={{ ...inputStyle, width: 155 }} placeholder={String((epocaAnterior[hEsc] || {}).desist ?? "18")} />
           </div>
-          <button onClick={guardarEpocaAnterior} style={{ ...secondaryBtnStyle, flex: "none", padding: "9px 16px" }}>
+          <button
+            onClick={() => {
+              if (!hEsc || hIns === "") return;
+              onSaveEpocaAnterior(hEsc, { inscritos: Number(hIns), ...(hDes !== "" ? { desist: Number(hDes) } : {}) });
+              setHIns("");
+              setHDes("");
+            }}
+            style={{ ...secondaryBtnStyle, flex: "none", width: "auto", padding: "9px 16px" }}
+          >
             Guardar
           </button>
         </div>
-        {erroH && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erroH}</div>}
-
-        {importarAberto && (
-          <ImportarAlunos
-            escolas={escolas}
-            turmas={turmas}
-            niveis={niveis}
-            mapaGuardado={options.mapaEscaloes}
-            onImportar={onImportarTurmas}
-            onGuardarMapa={onGuardarMapaEscaloes}
-            onFechar={() => setImportarAberto(false)}
-            notificar={notificar}
-          />
-        )}
-
-        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-          <thead>
-            <tr>
-              {["Escola", "Inscritos época passada", "Desist. passada", "Inscritos atual", "Desist. até agora", "Variação homóloga"].map((h) => (
-                <th key={h} style={th}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {escolas.map((e) => {
-              const serie = inscritos[e] || [];
-              const atual = serie.length ? [...serie].sort((a, b) => a.semana.localeCompare(b.semana))[serie.length - 1].total : 0;
-              const ant = (epocaAnterior[e] || {}).inscritos;
-              const dAt = serie.reduce((t, r) => t + (r.desist || 0), 0);
-              const dAnt = (epocaAnterior[e] || {}).desist;
-              const v = ant ? ((atual - ant) / ant) * 100 : null;
-              return (
-                <tr key={e}>
-                  <td style={td}>{e}</td>
-                  <td style={td}>{ant ?? "—"}</td>
-                  <td style={td}>{dAnt ?? "—"}</td>
-                  <td style={td}>{atual || "—"}</td>
-                  <td style={td}>{dAt}</td>
-                  <td style={{ ...td, fontWeight: 600, color: v === null ? COLORS.slate : v >= 0 ? COLORS.ok : COLORS.danger }}>
-                    {v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
+
+      {importar && (
+        <ImportarInscritos
+          escolas={escolas}
+          niveis={niveis}
+          registoAtual={registoAlunos}
+          mapaTurmasGuardado={options.mapaTurmasAlunos || {}}
+          onFechar={() => setImportar(false)}
+          onImportar={(r) => {
+            onImportarInscritos(r);
+            setEpoca(r.epoca);
+            setImportar(false);
+          }}
+        />
+      )}
+      {escolaAberta && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} onFechar={() => setEscolaAberta(null)} />}
     </div>
   );
 }
@@ -12542,11 +13005,17 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
   const escolinha = turmas.filter((t) => ehEscolinha(t.turma, niveis)).reduce((n, t) => n + t.m + t.f, 0);
   const serie = [...(inscritos[escola] || [])].sort((a, b) => a.semana.localeCompare(b.semana)).map((s) => ({ name: semanaLabel(s.semana), Inscritos: s.total }));
   const porEscalao = contar(turmas.map((t) => ({ ...t, __peso: t.m + t.f })), (t) => escalaoDaTurma(t.turma, niveis));
-  const lotacao = turmas
-    .map((t) => {
-      const cap = t.cap || capacidadeSugerida(t.turma, niveis);
-      return { turma: t.turma, n: t.m + t.f, cap, pct: cap ? Math.round(((t.m + t.f) / cap) * 100) : null };
-    })
+  // Uma linha por turma (os registos vêm separados por ano de nascimento).
+  const lotacao = Object.values(
+    turmas.reduce((acc, t) => {
+      const x = acc[t.turma] || { turma: t.turma, n: 0, cap: t.cap || capacidadeSugerida(t.turma, niveis) };
+      x.n += t.m + t.f;
+      if (t.cap) x.cap = t.cap;
+      acc[t.turma] = x;
+      return acc;
+    }, {})
+  )
+    .map((x) => ({ ...x, pct: x.cap ? Math.round((x.n / x.cap) * 100) : null }))
     .sort((a, b) => b.pct - a.pct);
   const cheias = lotacao.filter((t) => t.pct >= 95);
   const vazias = lotacao.filter((t) => t.pct < 50);
@@ -12939,7 +13408,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
         )}
 
         {ver("inscritos") && (
-          <SeccaoRel titulo="Inscritos e turmas" nota={`${turmas.length} turmas`}>
+          <SeccaoRel titulo="Inscritos e turmas" nota={`${new Set(turmas.map((t) => t.turma)).size} turmas`}>
             <div className="relKpis">
               <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={epocaAnterior[escola]?.inscritos ? `${fmtNum(epocaAnterior[escola].inscritos)} na época passada` : null} />
               <KpiRel label="Escolinha" valor={fmtNum(pct(escolinha, masc + fem))} unidade="%" comparacao={`${fmtNum(escolinha)} alunos · ${fmtNum(masc + fem - escolinha)} em competição`} />
@@ -14756,7 +15225,7 @@ const FONTES_HOJE = [
     const semana = semanaISO(new Date());
     const feito = Object.values(c.inscritos).some((l) => (l || []).some((r) => r.semana === semana));
     if (feito) return [];
-    return [{ id: "retrato", area: "Inscritos", quando: "semana", data: c.hoje, nivel: "info", titulo: "Fazer o retrato semanal de inscritos", detalhe: `Semana ${semanaLabel(semana)} ainda sem registo`, abrir: () => c.irPara("inscritos") }];
+    return [{ id: "retrato", area: "Inscritos", quando: "semana", data: c.hoje, nivel: "info", titulo: "Importar o ficheiro de inscritos da semana", detalhe: `Semana ${semanaLabel(semana)} ainda sem importação`, abrir: () => c.irPara("inscritos") }];
   },
 
   // Pedidos de desvinculação ainda sem decisão.
@@ -15785,6 +16254,7 @@ function AppPrincipal({ onSair }) {
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
   const [inscritos, setInscritos] = useState({});
   const [turmasAlunos, setTurmasAlunos] = useState([]);
+  const [registoAlunos, setRegistoAlunos] = useState({});
   const [epocaAnterior, setEpocaAnterior] = useState({});
   const [desistencias, setDesistencias] = useState([]);
   const [experiencias, setExperiencias] = useState([]);
@@ -15916,6 +16386,7 @@ function AppPrincipal({ onSair }) {
 
   const persistDesistencias = fazPersist(setDesistencias, STORAGE_DESISTENCIAS_KEY, "as desistências");
   const persistExperiencias = fazPersist(setExperiencias, STORAGE_EXPERIENCIAS_KEY, "as experiências");
+  const persistRegistoAlunos = fazPersist(setRegistoAlunos, STORAGE_ALUNOS_KEY, "os alunos");
   const persistDesvinc = fazPersist(setDesvinculacoes, STORAGE_DESVINC_KEY, "as desvinculações");
   const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
@@ -16011,6 +16482,7 @@ function AppPrincipal({ onSair }) {
       for (const [chave, setter] of [
         [STORAGE_DESISTENCIAS_KEY, setDesistencias],
         [STORAGE_EXPERIENCIAS_KEY, setExperiencias],
+        [STORAGE_ALUNOS_KEY, setRegistoAlunos],
         [STORAGE_DESVINC_KEY, setDesvinculacoes],
         [STORAGE_ESPACOS_KEY, setEspacos],
         [STORAGE_EVENTOS_KEY, setEventos],
@@ -16173,6 +16645,87 @@ function AppPrincipal({ onSair }) {
   // app, para a importação seguinte já vir resolvida.
   const guardarMapaEscaloes = (mapa) => {
     persistOptions({ ...options, mapaEscaloes: { ...(options.mapaEscaloes || {}), ...mapa } });
+  };
+
+  const importarInscritos = (r) => {
+    const ep = r.epoca;
+    const reg = { alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
+    persistRegistoAlunos({ ...registoAlunos, [ep]: reg });
+    const al = Object.values(r.alunos);
+    const capacidades = options.capacidades || {};
+
+    // Listas: escolas novas, nomes de turmas, turmas de cada escola, motivos e correspondências.
+    const listaTurmas = options.turmas || DEFAULT_TURMAS;
+    const tpe = { ...(options.turmasPorEscola || {}) };
+    al.forEach((a) => {
+      const l = tpe[a.escola] || [];
+      if (!l.includes(a.turma)) tpe[a.escola] = [...l, a.turma];
+    });
+    const motivosAtuais = options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA;
+    persistOptions({
+      ...options,
+      schools: [...options.schools, ...r.novasEscolas.filter((e) => !options.schools.includes(e))],
+      turmas: [...listaTurmas, ...[...new Set(al.map((a) => a.turma))].filter((t) => !listaTurmas.includes(t))],
+      turmasPorEscola: tpe,
+      mapaTurmasAlunos: { ...(options.mapaTurmasAlunos || {}), ...r.mapaTurmas },
+      motivosDesistencia: [...motivosAtuais, ...r.motivos.filter((m) => !motivosAtuais.includes(m))],
+    });
+
+    // Época em curso: as contagens por turma e o balanço semanal saem dos alunos.
+    if (ep === epocaDe(isoDe(new Date()))) {
+      const escolasReg = new Set(al.map((a) => a.escola));
+      const grupos = new Map();
+      al.filter((a) => a.estado === "ativo").forEach((a) => {
+        const chave = `${a.escola}||${a.turma}||${a.ano || 0}`;
+        const g = grupos.get(chave) || { escola: a.escola, turma: a.turma, ano: a.ano || 0, m: 0, f: 0, renov: 0, novos: 0, extra: 0 };
+        if (a.genero === "f") g.f += 1;
+        else g.m += 1;
+        if (a.rubrica === "renov") g.renov += 1;
+        else if (a.rubrica === "extra") g.extra += 1;
+        else g.novos += 1;
+        const cap = capacidades[`${a.escola}|${a.turma}`];
+        if (cap) g.cap = cap;
+        grupos.set(chave, g);
+      });
+      persistTurmas([...turmasAlunos.filter((t) => !escolasReg.has(t.escola)), ...grupos.values()]);
+      const prox = { ...inscritos };
+      escolasReg.forEach((e) => {
+        const bal = balancoSemanal(reg, e);
+        const fora = (prox[e] || []).filter((x) => !bal.some((b) => b.semana === x.semana));
+        prox[e] = [...fora, ...bal.map((b) => ({ semana: b.semana, total: b.ativos, novas: b.entradas, desist: b.desist }))].sort((x, y) => x.semana.localeCompare(y.semana));
+      });
+      persistInscritos(prox);
+    }
+
+    // Desistências e experiências da importação (substituem as da importação anterior desta época).
+    const desistNovas = al
+      .filter((a) => a.estado === "desistiu")
+      .map((a) => ({ id: `d_${ep}_${a.id}`, alunoId: a.id, epoca: ep, escola: a.escola, turma: a.turma, n: 1, motivo: a.motivo || "Não definido", data: a.saida, origem: "importacao" }));
+    persistDesistencias([...desistencias.filter((d) => !(d.origem === "importacao" && d.epoca === ep)), ...desistNovas]);
+    const antigas = Object.fromEntries(experiencias.filter((x) => x.origem === "importacao" && x.epoca === ep).map((x) => [x.alunoId, x]));
+    const expNovas = Object.values(r.experiencias).map((x) => {
+      const aluno = r.alunos[x.id];
+      const ant = antigas[x.id];
+      return {
+        id: `x_${ep}_${x.id}`,
+        alunoId: x.id,
+        epoca: ep,
+        escola: x.escola,
+        turma: aluno ? aluno.turma : "",
+        n: 1,
+        data: x.data,
+        resultado: aluno ? "sucesso" : ant && ant.resultado !== "sucesso" ? ant.resultado : "pendente",
+        entraram: aluno ? 1 : 0,
+        origem: "importacao",
+      };
+    });
+    persistExperiencias([...experiencias.filter((x) => !(x.origem === "importacao" && x.epoca === ep)), ...expNovas]);
+    notificar(`${r.ativos} alunos importados · ${r.desistNovas} desistências novas · ${expNovas.length} experiências.`);
+  };
+
+  const definirCapacidade = (escola, turma, cap) => {
+    persistOptions({ ...options, capacidades: { ...(options.capacidades || {}), [`${escola}|${turma}`]: cap } });
+    persistTurmas(turmasAlunos.map((t) => (t.escola === escola && t.turma === turma ? { ...t, cap } : t)));
   };
 
   const importarTurmas = (linhas, extra = {}) => {
@@ -17057,6 +17610,9 @@ function AppPrincipal({ onSair }) {
             onSaveSemana={saveSemanaInscritos}
             onRetrato={guardarRetrato}
             onImportarTurmas={importarTurmas}
+            registoAlunos={registoAlunos}
+            onImportarInscritos={importarInscritos}
+            onCapacidade={definirCapacidade}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
             onSaveTurma={saveTurmaAlunos}
