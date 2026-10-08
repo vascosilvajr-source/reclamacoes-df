@@ -2723,18 +2723,18 @@ function AuditDetail({
                         </div>
                       )}
                       <div style={{ fontSize: 13.5 }}>{f.description}</div>
-                      {(f.responsavel || f.resolvidaEm || f.analiseCausas || f.prazo) && (
+                      {(f.responsavel || f.resolvidaEm || f.analiseCausas || f.prazo || f.prazoTexto) && (
                         <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 5, lineHeight: 1.5 }}>
                           {f.analiseCausas && (
                             <div>
                               <strong style={{ fontWeight: 600 }}>Análise de causas:</strong> {f.analiseCausas}
                             </div>
                           )}
-                          {(f.responsavel || f.resolvidaEm || f.prazo) && (
+                          {(f.responsavel || f.resolvidaEm || f.prazo || f.prazoTexto) && (
                             <div style={{ color: COLORS.slate }}>
                               {[
                                 f.responsavel ? `Responsável: ${f.responsavel}` : null,
-                                f.prazo ? `Prazo: ${fmt(new Date(f.prazo + "T00:00:00"))}` : null,
+                                f.prazo ? `Prazo: ${fmt(new Date(f.prazo + "T00:00:00"))}${f.prazoTexto ? ` (${f.prazoTexto})` : ""}` : f.prazoTexto ? `Prazo: ${f.prazoTexto}` : null,
                                 f.resolvidaEm ? `Fechada a ${fmt(new Date(f.resolvidaEm + "T00:00:00"))}` : null,
                               ]
                                 .filter(Boolean)
@@ -3791,9 +3791,9 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
 const COLUNAS_AUDIT_IMP = [
   { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "recinto", "centro"] },
   { chave: "tipo", rotulo: "Tipo (OM/NC/NCM/AS)", sinonimos: ["tipo", "classificacao", "tipo de constatacao", "tipo (om/nc/ncm/as)"] },
-  { chave: "data", rotulo: "Data da visita", sinonimos: ["data da visita", "data visita", "data de visita", "visita", "data"] },
+  { chave: "data", rotulo: "Data da visita", sinonimos: ["data da visita", "data visita", "data de visita", "data ocorrencia", "data da ocorrencia", "visita", "data"] },
   { chave: "epoca", rotulo: "Época", opcional: true, sinonimos: ["epoca", "epoca desportiva", "temporada", "season"] },
-  { chave: "fecho", rotulo: "Data de fecho", opcional: true, sinonimos: ["data de fecho da ocorrencia", "data de fecho", "data fecho", "fecho", "data de resolucao", "resolvido", "data de encerramento"] },
+  { chave: "fecho", rotulo: "Data de fecho", opcional: true, sinonimos: ["data de fecho da ocorrencia", "fecho ocorrencia", "fecho da ocorrencia", "data de fecho", "data fecho", "fecho", "data de resolucao", "resolvido", "data de encerramento"] },
   { chave: "responsavel", rotulo: "Responsável pela resolução", opcional: true, sinonimos: ["responsavel pela resolucao", "responsavel", "resp."] },
   { chave: "assunto", rotulo: "Assunto (categoria)", sinonimos: ["assunto (categoria)", "assunto", "categoria", "constatacao", "descricao"] },
   { chave: "causas", rotulo: "Análise de causas", opcional: true, sinonimos: ["analise de causas", "analise de causa", "analise das causas", "causas", "causa"] },
@@ -3817,6 +3817,26 @@ function eficaciaSugerida(codigo) {
   return "";
 }
 
+// Prazo do Excel: uma data, ou um prazo relativo à visita ("3 dias úteis", "30 dias").
+function prazoConstatacao(v, dataVisita) {
+  const s0 = String(v ?? "").trim();
+  if (!s0) return null;
+  const data = dataDeCelula(s0);
+  if (data) return data;
+  const m = normChave(s0).match(/(\d+)\s*dias?(\s*uteis)?/);
+  if (!m || !dataVisita) return null;
+  const n = Number(m[1]);
+  const d = new Date(dataVisita + "T00:00:00");
+  if (m[2]) {
+    let falta = n;
+    while (falta > 0) {
+      d.setDate(d.getDate() + 1);
+      if (!diaNaoUtilPlano(d)) falta--;
+    }
+  } else d.setDate(d.getDate() + n);
+  return isoDe(d);
+}
+
 function normEpoca(v) {
   const t = String(v || "").trim();
   let m = t.match(/(\d{4})\s*[/-]\s*(\d{2,4})/);
@@ -3824,6 +3844,23 @@ function normEpoca(v) {
   m = t.match(/^(\d{2})\s*[/-]\s*(\d{2})$/);
   if (m) return `20${m[1]}/${m[2]}`;
   return t;
+}
+
+const PALAVRAS_PEQUENAS = ["de", "da", "do", "das", "dos", "e"];
+function nomeEscolaProposto(bruto) {
+  const t = String(bruto || "").trim();
+  const m = t.match(/^(dragon\s*force|df)\s*[-–·:]?\s*(.+)$/i);
+  const resto = m ? m[2] : t;
+  const tc = resto
+    .split(/\s+/)
+    .map((w, i) => {
+      if (/^[A-Z]{2,4}$/.test(w) && !/[AEIOUÁÉÍÓÚÂÊÔÃÕ]/.test(w)) return w; // siglas sem vogais: FC, SC, SGQ
+      const lw = w.toLocaleLowerCase("pt-PT");
+      if (i > 0 && PALAVRAS_PEQUENAS.includes(lw)) return lw;
+      return lw.replace(/(^|[.\-/])(\p{L})/gu, (x, a, b) => a + b.toLocaleUpperCase("pt-PT"));
+    })
+    .join(" ");
+  return m ? `Dragon Force ${tc}` : tc;
 }
 
 function tipoConstatacao(v) {
@@ -3854,6 +3891,8 @@ function colunasAuditoria(cab) {
 
 function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, onFechar }) {
   const [linhas, setLinhas] = useState(null);
+  const [folhas, setFolhas] = useState([]);
+  const [iFolha, setIFolha] = useState(0);
   const [iCab, setICab] = useState(0);
   const [mapa, setMapa] = useState({});
   const [mapaEscola, setMapaEscola] = useState({});
@@ -3868,29 +3907,42 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     setALer(true);
     setErro("");
     try {
-      const brutas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f) : lerCSVInq(await f.text());
-      const ls = brutas
-        .map((l, i) => {
-          const x = [...l];
-          x.__linha = l.__linha || i + 1;
-          return x;
-        })
-        .filter((l) => l.some((c) => String(c ?? "").trim()));
-      if (!ls.length) throw new Error("o ficheiro está vazio");
-      // A linha de títulos é a que reconhece mais colunas (procura nas 25 primeiras;
-      // o Excel pode ter um cabeçalho com logótipo e título antes da tabela).
-      let melhor = 0;
-      let pontos = -1;
-      ls.slice(0, 25).forEach((l, i) => {
-        const n = Object.keys(colunasAuditoria(l)).length;
-        if (n > pontos) {
-          pontos = n;
-          melhor = i;
-        }
+      const lidas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f, { todas: true }) : [{ nome: f.name, oculta: false, linhas: lerCSVInq(await f.text()) }];
+      const prep = lidas.map((fo) => ({
+        ...fo,
+        linhas: fo.linhas
+          .map((l, i) => {
+            const x = [...l];
+            x.__linha = l.__linha || i + 1;
+            return x;
+          })
+          .filter((l) => l.some((c) => String(c ?? "").trim())),
+      }));
+      // Em cada folha, a linha de títulos é a que reconhece mais colunas (nas 25 primeiras;
+      // o Excel pode ter logótipo e título antes da tabela). Fica a folha com melhor tabela.
+      const avaliar = (ls) => {
+        let melhor = 0;
+        let pontos = -1;
+        ls.slice(0, 25).forEach((l, i) => {
+          const n = Object.keys(colunasAuditoria(l)).length;
+          if (n > pontos) {
+            pontos = n;
+            melhor = i;
+          }
+        });
+        return { melhor, pontos };
+      };
+      const notas = prep.map((fo) => ({ ...avaliar(fo.linhas), n: fo.linhas.length }));
+      let iF = 0;
+      notas.forEach((x, i) => {
+        if (x.pontos > notas[iF].pontos || (x.pontos === notas[iF].pontos && x.n > notas[iF].n)) iF = i;
       });
-      setLinhas(ls);
-      setICab(melhor);
-      setMapa(colunasAuditoria(ls[melhor]));
+      if (!prep[iF].linhas.length) throw new Error("o ficheiro está vazio");
+      setFolhas(prep.map((fo, i) => ({ nome: fo.nome, oculta: fo.oculta, linhas: fo.linhas, cab: notas[i].melhor })));
+      setIFolha(iF);
+      setLinhas(prep[iF].linhas);
+      setICab(notas[iF].melhor);
+      setMapa(colunasAuditoria(prep[iF].linhas[notas[iF].melhor]));
     } catch (err) {
       setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
     } finally {
@@ -3932,11 +3984,11 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
   useEffect(() => {
     const novo = {};
     escolasBrutas.forEach(([bruto]) => {
-      const semPrefixo = (t) => normChave(t).replace(/^(dragon force|df)\s+/, "");
+      const semPrefixo = (t) => normChave(t).replace(/^(dragon force|df)\s*[-–·:]?\s*/, "");
       const n = semPrefixo(bruto);
       const exata = escolas.find((e) => normChave(e) === normChave(bruto) || semPrefixo(e) === n);
       const parcial = n.length >= 3 && escolas.find((e) => normChave(e).includes(n));
-      novo[bruto] = exata || parcial || `__nova__${bruto}`;
+      novo[bruto] = exata || parcial || `__nova__${nomeEscolaProposto(bruto)}`;
     });
     setMapaEscola(novo);
   }, [escolasBrutas]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3957,10 +4009,11 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
       if (!data) problemas.push(`Linha ${linhaN}: sem data da visita${v(l, "data") ? ` ("${v(l, "data")}")` : ""}`);
       if (!tipo) problemas.push(`Linha ${linhaN}: tipo "${v(l, "tipo")}" por classificar`);
       if (!data && !epocaCol) problemas.push(`Linha ${linhaN}: sem data nem época`);
-      const alvo = bruto ? mapaEscola[bruto] || `__nova__${bruto}` : "Sem escola";
+      const alvo = bruto ? mapaEscola[bruto] || `__nova__${nomeEscolaProposto(bruto)}` : "Sem escola";
       const escola = alvo.startsWith("__nova__") ? alvo.slice(8) : alvo;
       const epoca = epocaCol || (data ? epocaDe(data) : "");
       const fecho = dataDeCelula(v(l, "fecho"));
+      const codEficacia = v(l, "eficacia").toUpperCase();
       const analise = v(l, "causas");
       const causaLista = (CAUSAS_ATUAIS || []).find((c) => normChave(c) === normChave(analise));
       const areaLista = areas.find((a) => normChave(a) === normChave(assunto));
@@ -3973,14 +4026,15 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
         category: catLista || (areaLista ? "" : assunto),
         area: areaLista || "",
         description: assunto || "(sem assunto)",
-        resolvida: !!fecho,
+        resolvida: !!fecho || !!codEficacia,
         resolvidaEm: fecho || null,
         responsavel: v(l, "responsavel"),
         analiseCausas: causaLista ? "" : analise,
         causaRaiz: causaLista || "",
-        eficacia: fecho ? mapaEficacia[v(l, "eficacia").toUpperCase()] ?? eficaciaSugerida(v(l, "eficacia")) : "",
+        eficacia: codEficacia ? mapaEficacia[codEficacia] ?? eficaciaSugerida(codEficacia) : "",
         acao: v(l, "acao"),
-        prazo: dataDeCelula(v(l, "prazo")) || null,
+        prazo: prazoConstatacao(v(l, "prazo"), data),
+        prazoTexto: v(l, "prazo") && !dataDeCelula(v(l, "prazo")) ? v(l, "prazo") : "",
         origem: "importacao",
       });
     });
@@ -4049,7 +4103,30 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
 
         {linhas && (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "16px 0 0", fontSize: 12.5, color: COLORS.ink2 }}>
+            {folhas.length > 1 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "16px 0 0", fontSize: 12.5, color: COLORS.ink2 }}>
+                Folha do Excel
+                <select
+                  value={iFolha}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setIFolha(n);
+                    setLinhas(folhas[n].linhas);
+                    setICab(folhas[n].cab);
+                    setMapa(colunasAuditoria(folhas[n].linhas[folhas[n].cab] || []));
+                  }}
+                  style={{ ...inputStyle, width: "auto", padding: "4px 8px" }}
+                >
+                  {folhas.map((fo, i) => (
+                    <option key={i} value={i}>
+                      {fo.nome}
+                      {fo.oculta ? " (oculta)" : ""} · {fo.linhas.length} linhas
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "10px 0 0", fontSize: 12.5, color: COLORS.ink2 }}>
               Títulos das colunas na linha
               <select
                 value={iCab}
@@ -4107,7 +4184,16 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
                             {e}
                           </option>
                         ))}
-                        <option value={`__nova__${bruto}`}>Nova escola: {bruto}</option>
+                        {/* Escolas novas propostas a partir de todo o ficheiro: permite juntar
+                            nomes diferentes da mesma escola (ex.: "CTROFA" e "Colégio da Trofa"). */}
+                        {[...new Set(escolasBrutas.map(([b0]) => nomeEscolaProposto(b0)))]
+                          .filter((n) => !escolas.includes(n))
+                          .sort((a, b) => a.localeCompare(b, "pt"))
+                          .map((n) => (
+                            <option key={n} value={`__nova__${n}`}>
+                              Nova escola: {n}
+                            </option>
+                          ))}
                       </select>
                     </div>
                   ))}
@@ -8670,7 +8756,7 @@ function lerCSVInq(texto) {
 
 // Leitor de .xlsx sem dependências: um .xlsx é um zip com XML lá dentro.
 // Descomprime com o DecompressionStream do browser e lê a primeira folha.
-async function lerExcelInq(ficheiro) {
+async function lerExcelInq(ficheiro, opcoes = {}) {
   if (/\.xls$/i.test(ficheiro.name)) throw new Error("o formato .xls antigo não é suportado; guarda como .xlsx ou CSV");
   const buf = new Uint8Array(await ficheiro.arrayBuffer());
   const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
@@ -8716,21 +8802,23 @@ async function lerExcelInq(ficheiro) {
     });
   }
 
-  // Primeira folha pela ordem do livro (não necessariamente sheet1.xml).
-  let caminho = "xl/worksheets/sheet1.xml";
+  // Folhas pela ordem do livro (não necessariamente sheet1.xml); as ocultas ficam para o fim.
+  let folhas = [{ nome: "Folha 1", oculta: false, caminho: "xl/worksheets/sheet1.xml" }];
   const wb = await ler("xl/workbook.xml");
   const rels = await ler("xl/_rels/workbook.xml.rels");
   if (wb && rels) {
-    const folha = xml(wb).getElementsByTagName("sheet")[0];
-    const rid = folha && (folha.getAttribute("r:id") || folha.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
-    const rel = [...xml(rels).getElementsByTagName("Relationship")].find((r) => r.getAttribute("Id") === rid);
-    if (rel) {
-      const alvo = rel.getAttribute("Target").replace(/^\//, "");
-      caminho = alvo.startsWith("xl/") ? alvo : `xl/${alvo}`;
-    }
+    const relsXml = [...xml(rels).getElementsByTagName("Relationship")];
+    const lista = [...xml(wb).getElementsByTagName("sheet")]
+      .map((folha) => {
+        const rid = folha.getAttribute("r:id") || folha.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+        const rel = relsXml.find((r) => r.getAttribute("Id") === rid);
+        if (!rel) return null;
+        const alvo = rel.getAttribute("Target").replace(/^\//, "");
+        return { nome: folha.getAttribute("name") || "Folha", oculta: /hidden/i.test(folha.getAttribute("state") || ""), caminho: alvo.startsWith("xl/") ? alvo : `xl/${alvo}` };
+      })
+      .filter(Boolean);
+    if (lista.length) folhas = [...lista.filter((f) => !f.oculta), ...lista.filter((f) => f.oculta)];
   }
-  const folhaXml = await ler(caminho);
-  if (!folhaXml) throw new Error("não encontrei a folha de cálculo dentro do ficheiro");
 
   const colNum = (ref) => {
     const letras = ref.replace(/\d+/g, "");
@@ -8738,6 +8826,9 @@ async function lerExcelInq(ficheiro) {
     for (const ch of letras) n = n * 26 + (ch.charCodeAt(0) - 64);
     return n - 1;
   };
+  const lerFolha = async (caminho) => {
+  const folhaXml = await ler(caminho);
+  if (!folhaXml) return null;
   const linhas = [];
   [...xml(folhaXml).getElementsByTagName("row")].forEach((row) => {
     const linha = [];
@@ -8756,6 +8847,20 @@ async function lerExcelInq(ficheiro) {
     linhas.push(linha);
   });
   return linhas.filter((l) => l.some((c) => String(c).trim() !== ""));
+  };
+
+  if (opcoes.todas) {
+    const todas = [];
+    for (const f of folhas) {
+      const linhas = await lerFolha(f.caminho);
+      if (linhas) todas.push({ nome: f.nome, oculta: f.oculta, linhas });
+    }
+    if (!todas.length) throw new Error("não encontrei a folha de cálculo dentro do ficheiro");
+    return todas;
+  }
+  const primeira = await lerFolha(folhas[0].caminho);
+  if (!primeira) throw new Error("não encontrei a folha de cálculo dentro do ficheiro");
+  return primeira;
 }
 
 // Datas do carimbo do formulário (dd/mm/aaaa ou aaaa-mm-dd), para sugerir a data do inquérito.
@@ -11336,8 +11441,12 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
 
   // ---- Auditorias: assuntos, responsáveis e escolas ----
   const assuntoDe = (f) => f.category || f.area || f.description || "Sem assunto";
-  const epA = epocas[epocas.length - 2];
-  const epB = epocas[epocas.length - 1];
+  const ultimasDuas = (lista) => {
+    const e = [...new Set(lista.filter(Boolean))].filter((x) => x <= epocaAtual).sort();
+    return [e[e.length - 2], e[e.length - 1]];
+  };
+  const [epA, epB] = ultimasDuas(todasConstat.map((f) => f.epoca));
+  const [epRA, epRB] = ultimasDuas(reclamacoes.map((r) => epocaDe(r.receivedDate)));
   const assuntos = (() => {
     const c = {};
     todasConstat.forEach((f) => {
@@ -11389,10 +11498,10 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
     const c = {};
     reclamacoes.forEach((r) => {
       const ep = epocaDe(r.receivedDate);
-      if (ep !== epA && ep !== epB) return;
+      if (ep !== epRA && ep !== epRB) return;
       const k = r.tema || r.categoria || "Sem tema";
       c[k] = c[k] || { a: 0, b: 0 };
-      if (ep === epA) c[k].a++;
+      if (ep === epRA) c[k].a++;
       else c[k].b++;
     });
     return Object.entries(c)
@@ -11736,16 +11845,16 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                             <thead>
                               <tr>
                                 <th className="relRotulo" style={thR("left")}>Tema</th>
-                                {epA && <th className="relRotulo" style={thR()}>{epA}</th>}
-                                <th className="relRotulo" style={thR()}>{epB}</th>
+                                {epRA && <th className="relRotulo" style={thR()}>{epRA}</th>}
+                                <th className="relRotulo" style={thR()}>{epRB}</th>
                               </tr>
                             </thead>
                             <tbody>
                               {temas.map((a) => (
                                 <tr key={a.name}>
                                   <td style={{ padding: "7px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink }}>{a.name}</td>
-                                  {epA && <td style={{ ...tdR, color: COLORS.ink2 }}>{a.a}</td>}
-                                  <td style={{ ...tdR, fontWeight: 600, color: epA ? corDif(a.b - a.a, "baixo") : COLORS.ink }}>{a.b}</td>
+                                  {epRA && <td style={{ ...tdR, color: COLORS.ink2 }}>{a.a}</td>}
+                                  <td style={{ ...tdR, fontWeight: 600, color: epRA ? corDif(a.b - a.a, "baixo") : COLORS.ink }}>{a.b}</td>
                                 </tr>
                               ))}
                             </tbody>
