@@ -2770,6 +2770,9 @@ function AuditDetail({
                     }}
                   >
                     <span style={{ fontSize: 11.5, color: COLORS.slate, fontWeight: 600 }}>Resolvida?</span>
+                    {f.fechoEpoca ? (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.slate }}>Fechada no fim da época {epocaAud(audit)} (sem data de fecho registada)</span>
+                    ) : (
                     <button
                       onClick={() =>
                         onUpdateFinding(audit.id, f.id,
@@ -2789,8 +2792,9 @@ function AuditDetail({
                     >
                       {f.resolvida ? "✓ Sim" : "Não"}
                     </button>
+                    )}
 
-                    {f.resolvida && (
+                    {f.resolvida && !f.fechoEpoca && (
                       <>
                         <span style={{ fontSize: 11.5, color: COLORS.slate, fontWeight: 600, marginLeft: 4 }}>Eficácia</span>
                         {Object.entries(EFICACIA_ACAO_META).map(([k, meta]) => (
@@ -11396,7 +11400,7 @@ function indicadoresEpoca(ep, d, ate) {
   const res = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
   const visitas = d.audits.filter((a) => epocaAud(a) === ep && (ate ? !a.date || a.date <= ate : true));
   const constat = visitas.flatMap((a) => (a.findings || []).map((f) => ({ ...f, data: a.date })));
-  const fechadas = constat.filter((f) => f.resolvida);
+  const fechadas = constat.filter((f) => f.resolvida && !f.fechoEpoca);
   const temposFecho = fechadas.filter((f) => f.resolvidaEm).map((f) => diasEntreRel(f.data, f.resolvidaEm)).filter((x) => x >= 0);
   const inq = d.inqueritos.filter((i) => dentro(i.data));
   const sat = inq.length ? satisfacaoDe(inq.flatMap((i) => i.perguntas || [])).pct : null;
@@ -11417,6 +11421,7 @@ function indicadoresEpoca(ep, d, ate) {
     OM: porCls("OM"),
     AS: porCls("AS"),
     porVisita: visitas.length ? Math.round((constat.length / visitas.length) * 10) / 10 : null,
+    fechoEpoca: constat.filter((f) => f.fechoEpoca).length,
     fechadasPct: constat.length ? Math.round((fechadas.length / constat.length) * 100) : null,
     tempoFecho: temposFecho.length ? Math.round(mediaDe(temposFecho)) : null,
     sancoes: d.sanctions.filter((s) => dentro(s.date)).length,
@@ -11438,7 +11443,8 @@ const LINHAS_EPOCA = [
   { k: "OM", label: "Oportunidades de melhoria", grupo: "Auditorias", sub: true },
   { k: "AS", label: "Áreas sensíveis", bom: "baixo", grupo: "Auditorias", sub: true },
   { k: "porVisita", label: "Constatações por visita", bom: "baixo", dec: 1, grupo: "Auditorias" },
-  { k: "fechadasPct", label: "Constatações fechadas", un: "%", bom: "alto", grupo: "Auditorias" },
+  { k: "fechadasPct", label: "Fechadas durante a época", un: "%", bom: "alto", grupo: "Auditorias" },
+  { k: "fechoEpoca", label: "Encerradas na passagem de época", bom: "baixo", grupo: "Auditorias", sub: true },
   { k: "tempoFecho", label: "Tempo médio de fecho", un: " dias", bom: "baixo", grupo: "Auditorias" },
   { k: "fechoNoPrazo", label: "Fechadas dentro do prazo", un: "%", bom: "alto", grupo: "Auditorias" },
   { k: "eficazes", label: "Ações eficazes", un: "%", bom: "alto", grupo: "Auditorias" },
@@ -15437,6 +15443,16 @@ function AppPrincipal({ onSair }) {
   const [entries, setEntries] = useState([]);
   const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ });
   const [audits, setAudits] = useState([]);
+  // Na passagem de época tudo o que ficou por resolver dá-se como fechado.
+  // Os dados guardados não mudam: a app só passa a tratá-las como fechadas.
+  const auditsVista = useMemo(() => {
+    const epocaHoje = epocaDe(isoDe(new Date()));
+    return audits.map((a) => {
+      const ep = epocaAud(a);
+      if (!ep || ep >= epocaHoje || !(a.findings || []).some((f) => !f.resolvida)) return a;
+      return { ...a, findings: a.findings.map((f) => (f.resolvida ? f : { ...f, resolvida: true, fechoEpoca: true })) };
+    });
+  }, [audits]);
   const [sanctions, setSanctions] = useState([]);
   const [learned, setLearned] = useState({ canal: {}, categoria: {}, tema: {}, gravidade: {} });
   const [inscritos, setInscritos] = useState({});
@@ -16199,7 +16215,7 @@ function AppPrincipal({ onSair }) {
 
   const contagemHoje = (() => {
     try {
-      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits, experiencias, desvinculacoes, turmasAlunos, inscritos, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
+      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
       return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
     } catch (e) {
       return 0;
@@ -16658,7 +16674,7 @@ function AppPrincipal({ onSair }) {
       <div key={page} className="pageIn" style={{ padding: "20px 22px 56px", maxWidth: 1360, minWidth: 0 }}>
         {page === "auditorias" ? (
           <AuditsPage
-            audits={audits}
+            audits={auditsVista}
             onNewAudit={() => setShowAuditForm(true)}
             onImportar={() => setImportarAud(true)}
             onOpenAudit={(a) => setViewingAudit(a)}
@@ -16710,7 +16726,7 @@ function AppPrincipal({ onSair }) {
             reclamacoes={withStatus}
             plano={planoInq}
             regrasEnvio={{ ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }}
-            audits={audits}
+            audits={auditsVista}
             experiencias={experiencias}
             desistencias={desistencias}
             desvinculacoes={desvinculacoes}
@@ -16730,7 +16746,7 @@ function AppPrincipal({ onSair }) {
           <RelatorioEscolaPage
             escolas={options.schools || []}
             reclamacoes={withStatus}
-            audits={audits}
+            audits={auditsVista}
             sanctions={sanctions}
             inscritos={inscritos}
             turmasAlunos={turmasAlunos}
@@ -16835,7 +16851,7 @@ function AppPrincipal({ onSair }) {
             }
           />
         ) : reclamacoesView === "analise" ? (
-          <AnalysisDashboard withStatus={withStatus} audits={audits} schoolOptions={options.schools} categoryOptions={options.categories} categoriaOptions={options.complaintCategories} />
+          <AnalysisDashboard withStatus={withStatus} audits={auditsVista} schoolOptions={options.schools} categoryOptions={options.categories} categoriaOptions={options.complaintCategories} />
         ) : (
         <>
         <div
@@ -17079,7 +17095,7 @@ function AppPrincipal({ onSair }) {
 
       {viewingAudit && (
         <AuditDetail
-          audit={audits.find((a) => a.id === viewingAudit.id) || viewingAudit}
+          audit={auditsVista.find((a) => a.id === viewingAudit.id) || viewingAudit}
           auditCategoryOptions={options.auditCategories}
           areaOptions={options.auditAreas}
           onClose={() => setViewingAudit(null)}
