@@ -176,6 +176,15 @@ function fmt(date) {
 }
 
 // Época desportiva: começa em julho. Uma data de 2026-03 pertence a 2025/26.
+// Época de uma visita de auditoria: a indicada (importação) ou a da data.
+const epocaAud = (a) => a.epoca || epocaDe(a.date);
+function audNoPeriodo(periodo, a) {
+  if (periodo.startsWith("epoca:")) return epocaAud(a) === periodo.slice(6);
+  if (periodo === "tudo") return true;
+  return dentroPeriodo(periodo, a.date);
+}
+const dataAud = (a) => (a.date ? fmt(new Date(a.date + "T00:00:00")) : "Sem data");
+
 function epocaDe(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   if (isNaN(d.getTime())) return "";
@@ -2236,7 +2245,7 @@ function AnalysisDashboard({ withStatus, audits = [], schoolOptions, categoryOpt
           <Observacoes itens={[...observacoesReclamacoes(filtered), ...observacoesCausas(itensCausa(filtered, audits.filter((a) => fSchool === "todos" || a.school === fSchool)))]} />
           <PainelCausas
             titulo="Causa raiz (reclamações e auditorias)"
-            itens={itensCausa(filtered, audits.filter((a) => (fSchool === "todos" || a.school === fSchool) && (fEpoca === "todas" || epocaDe(a.date) === fEpoca)))}
+            itens={itensCausa(filtered, audits.filter((a) => (fSchool === "todos" || a.school === fSchool) && (fEpoca === "todas" || epocaAud(a) === fEpoca)))}
           />
 
           <div style={{ display: "flex", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
@@ -2513,8 +2522,13 @@ function AuditDetail({
   onRemoveFinding,
   onUpdateFinding,
   onRemoveAudit,
+  onUpdateAudit,
+  schoolOptions,
   onGerirLista,
 }) {
+  const [editarVisita, setEditarVisita] = useState(false);
+  const [visita, setVisita] = useState({ school: audit.school, date: audit.date || "", epoca: audit.epoca || "" });
+  useEffect(() => setVisita({ school: audit.school, date: audit.date || "", epoca: audit.epoca || "" }), [audit.id, audit.school, audit.date, audit.epoca]);
   const [classification, setClassification] = useState("NC");
   const [category, setCategory] = useState("");
   const [area, setArea] = useState("");
@@ -2552,7 +2566,7 @@ function AuditDetail({
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
           <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
-            {fmt(new Date(audit.date + "T00:00:00"))}
+            {dataAud(audit)} · Época {epocaAud(audit) || "—"}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button title="Eliminar auditoria" onClick={() => onRemoveAudit(audit.id)} style={iconBtnStyle}>
@@ -2564,9 +2578,49 @@ function AuditDetail({
           </div>
         </div>
         <h2 style={{ margin: "0 0 4px", fontSize: 20, color: COLORS.navy }}>{audit.school}</h2>
-        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 18 }}>
-          {audit.findings.length} constatações · {resolvidas} resolvidas
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: editarVisita ? 10 : 18, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+          <span>
+            {audit.findings.length} constatações · {resolvidas} resolvidas
+          </span>
+          {onUpdateAudit && (
+            <button onClick={() => setEditarVisita((x) => !x)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+              {editarVisita ? "Fechar edição" : "Editar escola, data ou época"}
+            </button>
+          )}
         </div>
+        {editarVisita && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, borderRadius: 10, background: COLORS.paperSunken, marginBottom: 18 }}>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+              <select value={visita.school} onChange={(e) => setVisita((x) => ({ ...x, school: e.target.value }))} style={inputStyle}>
+                {[...new Set([visita.school, ...(schoolOptions || [])])].filter(Boolean).map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Data da visita</label>
+              <input type="date" value={visita.date} onChange={(e) => setVisita((x) => ({ ...x, date: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Época</label>
+              <input value={visita.epoca} placeholder={visita.date ? epocaDe(visita.date) : "2025/26"} onChange={(e) => setVisita((x) => ({ ...x, epoca: e.target.value }))} style={inputStyle} />
+            </div>
+            <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => {
+                  onUpdateAudit(audit.id, { school: visita.school, date: visita.date || null, epoca: normEpoca(visita.epoca) || null });
+                  setEditarVisita(false);
+                }}
+                style={{ ...primaryBtnStyle, width: "auto", padding: "8px 16px" }}
+              >
+                Guardar visita
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           Nova constatação
@@ -2645,30 +2699,49 @@ function AuditDetail({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {audit.findings.map((f) => {
-              const cm = CLASSIFICATION_META[f.classification] || CLASSIFICATION_META.NC;
+              const cm = CLASSIFICATION_META[f.classification] || { color: COLORS.slate, bg: COLORS.paperSunken };
               return (
-                <div key={f.id} style={{ padding: "11px 13px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
+                <div key={f.id} style={{ padding: "11px 13px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${f.classification ? COLORS.rule : COLORS.warn}` }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                    <Tag label={f.classification} color={cm.color} bg={cm.bg} />
+                    <select
+                      value={f.classification || ""}
+                      title="Mudar o tipo"
+                      onChange={(e) => onUpdateFinding(audit.id, f.id, { classification: e.target.value })}
+                      style={{ fontSize: 10.5, fontWeight: 700, color: cm.color, background: cm.bg, border: `1px solid ${cm.color}`, borderRadius: 3, padding: "2px 4px", cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      {!f.classification && <option value="">Sem tipo</option>}
+                      {Object.keys(CLASSIFICATION_META).map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                     <div style={{ flex: 1 }}>
-                      {(f.area || f.category) && (
+                      {[f.area, f.category].filter((x) => x && x !== f.description).length > 0 && (
                         <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 2 }}>
-                          {[f.area, f.category].filter(Boolean).join(" · ")}
+                          {[f.area, f.category].filter((x) => x && x !== f.description).join(" · ")}
                         </div>
                       )}
                       <div style={{ fontSize: 13.5 }}>{f.description}</div>
-                      {(f.responsavel || f.resolvidaEm || f.analiseCausas) && (
+                      {(f.responsavel || f.resolvidaEm || f.analiseCausas || f.prazo) && (
                         <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 5, lineHeight: 1.5 }}>
                           {f.analiseCausas && (
                             <div>
                               <strong style={{ fontWeight: 600 }}>Análise de causas:</strong> {f.analiseCausas}
                             </div>
                           )}
-                          {(f.responsavel || f.resolvidaEm) && (
+                          {(f.responsavel || f.resolvidaEm || f.prazo) && (
                             <div style={{ color: COLORS.slate }}>
-                              {f.responsavel ? `Responsável: ${f.responsavel}` : ""}
-                              {f.responsavel && f.resolvidaEm ? " · " : ""}
-                              {f.resolvidaEm ? `Fechada a ${fmt(new Date(f.resolvidaEm + "T00:00:00"))}` : ""}
+                              {[
+                                f.responsavel ? `Responsável: ${f.responsavel}` : null,
+                                f.prazo ? `Prazo: ${fmt(new Date(f.prazo + "T00:00:00"))}` : null,
+                                f.resolvidaEm ? `Fechada a ${fmt(new Date(f.resolvidaEm + "T00:00:00"))}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                              {f.prazo && (f.resolvidaEm ? f.resolvidaEm > f.prazo : !f.resolvida && f.prazo < isoDe(new Date())) && (
+                                <strong style={{ color: COLORS.danger, marginLeft: 6 }}>fora do prazo</strong>
+                              )}
                             </div>
                           )}
                         </div>
@@ -3513,7 +3586,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
       <ComparacaoEpocas
         titulo="Comparação entre épocas"
         nota="Respeita o filtro de escola."
-        epocas={audits.map((a) => epocaDe(a.date))}
+        epocas={audits.map((a) => epocaAud(a))}
         metricas={[
           { key: "aud", label: "Auditorias realizadas" },
           { key: "n", label: "Constatações", melhor: "baixo" },
@@ -3719,11 +3792,39 @@ const COLUNAS_AUDIT_IMP = [
   { chave: "escola", rotulo: "Escola", sinonimos: ["escola", "polo", "recinto", "centro"] },
   { chave: "tipo", rotulo: "Tipo (OM/NC/NCM/AS)", sinonimos: ["tipo", "classificacao", "tipo de constatacao", "tipo (om/nc/ncm/as)"] },
   { chave: "data", rotulo: "Data da visita", sinonimos: ["data da visita", "data visita", "data de visita", "visita", "data"] },
+  { chave: "epoca", rotulo: "Época", opcional: true, sinonimos: ["epoca", "epoca desportiva", "temporada", "season"] },
   { chave: "fecho", rotulo: "Data de fecho", opcional: true, sinonimos: ["data de fecho da ocorrencia", "data de fecho", "data fecho", "fecho", "data de resolucao", "resolvido", "data de encerramento"] },
   { chave: "responsavel", rotulo: "Responsável pela resolução", opcional: true, sinonimos: ["responsavel pela resolucao", "responsavel", "resp."] },
   { chave: "assunto", rotulo: "Assunto (categoria)", sinonimos: ["assunto (categoria)", "assunto", "categoria", "constatacao", "descricao"] },
   { chave: "causas", rotulo: "Análise de causas", opcional: true, sinonimos: ["analise de causas", "analise de causa", "analise das causas", "causas", "causa"] },
+  { chave: "acao", rotulo: "Ações de correção", opcional: true, sinonimos: ["acoes de correcao", "acao de correcao", "acoes corretivas", "acao corretiva", "acoes", "acao", "correcao"] },
+  { chave: "prazo", rotulo: "Prazo de resolução", opcional: true, sinonimos: ["prazo de resolucao", "prazo", "data limite", "prazo resolucao"] },
+  { chave: "eficacia", rotulo: "Eficácia (E/NE/PE)", opcional: true, sinonimos: ["eficacia", "eficacia (e/ne/sp)", "eficacia da acao", "avaliacao da eficacia"] },
 ];
+
+// Valores da eficácia na app; o código do Excel escolhe-se no ecrã de importação.
+const EFICACIA_IMP_OPCOES = [
+  ["eficaz", "Eficaz"],
+  ["parcial", "Parcialmente eficaz"],
+  ["ineficaz", "Ineficaz"],
+  ["", "Por avaliar"],
+];
+function eficaciaSugerida(codigo) {
+  const c = normChave(codigo).replace(/[^a-z]/g, "");
+  if (c === "e" || c === "eficaz") return "eficaz";
+  if (c === "ne" || c.startsWith("naoeficaz") || c === "ineficaz") return "ineficaz";
+  if (c === "pe" || c === "sp" || c.startsWith("parcial")) return "parcial";
+  return "";
+}
+
+function normEpoca(v) {
+  const t = String(v || "").trim();
+  let m = t.match(/(\d{4})\s*[/-]\s*(\d{2,4})/);
+  if (m) return `${m[1]}/${m[2].slice(-2)}`;
+  m = t.match(/^(\d{2})\s*[/-]\s*(\d{2})$/);
+  if (m) return `20${m[1]}/${m[2]}`;
+  return t;
+}
 
 function tipoConstatacao(v) {
   const t = normChave(v).replace(/[^a-z]/g, "");
@@ -3756,6 +3857,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
   const [iCab, setICab] = useState(0);
   const [mapa, setMapa] = useState({});
   const [mapaEscola, setMapaEscola] = useState({});
+  const [mapaEficacia, setMapaEficacia] = useState({});
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
 
@@ -3802,6 +3904,23 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     return Object.entries(c).sort((a, b) => b[1] - a[1]);
   }, [linhas, iCab, mapa]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Códigos de eficácia do ficheiro (E, NE, SP…).
+  const codigosEficacia = useMemo(() => {
+    const c = {};
+    dados.forEach((l) => {
+      const x = v(l, "eficacia").toUpperCase();
+      if (x) c[x] = (c[x] || 0) + 1;
+    });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]);
+  }, [linhas, iCab, mapa]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setMapaEficacia((atual) => {
+      const novo = {};
+      codigosEficacia.forEach(([cod]) => (novo[cod] = atual[cod] !== undefined ? atual[cod] : eficaciaSugerida(cod)));
+      return novo;
+    });
+  }, [codigosEficacia]);
+
   useEffect(() => {
     const novo = {};
     escolasBrutas.forEach(([bruto]) => {
@@ -3821,24 +3940,28 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     dados.forEach((l, i) => {
       const bruto = v(l, "escola");
       const data = dataDeCelula(v(l, "data"));
+      const epocaCol = normEpoca(v(l, "epoca"));
       const tipo = tipoConstatacao(v(l, "tipo"));
       const assunto = v(l, "assunto");
-      if (!bruto || !data || !tipo) {
-        problemas.push(`Linha ${iCab + i + 2}: ${!bruto ? "sem escola" : !data ? "data da visita inválida" : `tipo "${v(l, "tipo")}" desconhecido`}`);
-        return;
-      }
-      const alvo = mapaEscola[bruto] || `__nova__${bruto}`;
+      const linhaN = iCab + i + 2;
+      // Nada fica de fora: o que estiver incompleto entra e corrige-se depois na app.
+      if (!bruto) problemas.push(`Linha ${linhaN}: sem escola`);
+      if (!data) problemas.push(`Linha ${linhaN}: sem data da visita${v(l, "data") ? ` ("${v(l, "data")}")` : ""}`);
+      if (!tipo) problemas.push(`Linha ${linhaN}: tipo "${v(l, "tipo")}" por classificar`);
+      if (!data && !epocaCol) problemas.push(`Linha ${linhaN}: sem data nem época`);
+      const alvo = bruto ? mapaEscola[bruto] || `__nova__${bruto}` : "Sem escola";
       const escola = alvo.startsWith("__nova__") ? alvo.slice(8) : alvo;
+      const epoca = epocaCol || (data ? epocaDe(data) : "");
       const fecho = dataDeCelula(v(l, "fecho"));
       const analise = v(l, "causas");
       const causaLista = (CAUSAS_ATUAIS || []).find((c) => normChave(c) === normChave(analise));
       const areaLista = areas.find((a) => normChave(a) === normChave(assunto));
       const catLista = categorias.find((c) => normChave(c) === normChave(assunto));
-      const chave = `${escola}|${data}`;
-      visitas[chave] = visitas[chave] || { escola, data, findings: [] };
+      const chave = data ? `${escola}|${data}` : `${escola}|sem data|${epoca}`;
+      visitas[chave] = visitas[chave] || { escola, data: data || null, epoca, findings: [] };
       visitas[chave].findings.push({
         id: `f_imp_${Date.now().toString(36)}_${i}`,
-        classification: tipo,
+        classification: tipo || "",
         category: catLista || (areaLista ? "" : assunto),
         area: areaLista || "",
         description: assunto || "(sem assunto)",
@@ -3847,18 +3970,19 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
         responsavel: v(l, "responsavel"),
         analiseCausas: causaLista ? "" : analise,
         causaRaiz: causaLista || "",
-        eficacia: "",
-        acao: "",
+        eficacia: fecho ? mapaEficacia[v(l, "eficacia").toUpperCase()] ?? eficaciaSugerida(v(l, "eficacia")) : "",
+        acao: v(l, "acao"),
+        prazo: dataDeCelula(v(l, "prazo")) || null,
         origem: "importacao",
       });
     });
-    const lista = Object.values(visitas).sort((a, b) => a.data.localeCompare(b.data));
+    const lista = Object.values(visitas).sort((a, b) => String(a.data || a.epoca).localeCompare(String(b.data || b.epoca)));
     const assinatura = (f) => [f.classification, normChave(f.description), f.resolvidaEm || "", normChave(f.responsavel || "")].join("|");
     let novasVisitas = 0;
     let juntas = 0;
     let repetidas = 0;
     lista.forEach((vis) => {
-      const existe = audits.find((a) => a.school === vis.escola && a.date === vis.data);
+      const existe = audits.find((a) => a.school === vis.escola && (vis.data ? a.date === vis.data : !a.date && epocaAud(a) === vis.epoca));
       if (existe) {
         const ja = new Set((existe.findings || []).map(assinatura));
         const antes = vis.findings.length;
@@ -3871,15 +3995,15 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     const total = lista.reduce((n, x) => n + x.findings.length, 0);
     const porEpoca = {};
     lista.forEach((x) => {
-      const ep = epocaDe(x.data);
+      const ep = x.epoca || "sem época";
       porEpoca[ep] = porEpoca[ep] || { visitas: 0, constat: 0 };
       porEpoca[ep].visitas++;
       porEpoca[ep].constat += x.findings.length;
     });
     return { lista, problemas, novasVisitas, juntas, repetidas, total, porEpoca };
-  }, [linhas, iCab, mapa, mapaEscola, audits]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [linhas, iCab, mapa, mapaEscola, mapaEficacia, audits]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const faltam = COLUNAS_AUDIT_IMP.filter((c) => !c.opcional && mapa[c.chave] === undefined);
+  const faltam = COLUNAS_AUDIT_IMP.filter((c) => !c.opcional && mapa[c.chave] === undefined && !(c.chave === "data" && mapa.epoca !== undefined));
   const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
 
   const importar = () => {
@@ -3888,7 +4012,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
     resultado.lista.forEach((vis, i) => {
       if (!vis.findings.length) return;
       if (vis.existente) acrescentos[vis.existente] = [...(acrescentos[vis.existente] || []), ...vis.findings];
-      else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, date: vis.data, findings: vis.findings, origem: "importacao" });
+      else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, date: vis.data, epoca: vis.epoca || null, findings: vis.findings, origem: "importacao" });
     });
     onImportar(novas, acrescentos, novasEscolas);
   };
@@ -3907,7 +4031,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
           </button>
         </div>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
-          Uma linha por constatação, com as colunas <strong>Escola</strong>, <strong>Tipo</strong> (OM, NC, NCM ou AS), <strong>Data da visita</strong>, <strong>Data de fecho</strong>, <strong>Responsável</strong>, <strong>Assunto</strong> e <strong>Análise de causas</strong>. Não precisa de estar ordenado: as linhas com a mesma escola e a mesma data ficam na mesma visita.
+          Uma linha por constatação, com as colunas <strong>Escola</strong>, <strong>Tipo</strong> (OM, NC, NCM ou AS), <strong>Data da visita</strong>, <strong>Data de fecho</strong>, <strong>Responsável</strong>, <strong>Assunto</strong>, <strong>Análise de causas</strong>, <strong>Ações de correção</strong>, <strong>Prazo de resolução</strong>, <strong>Eficácia</strong> (E, NE ou PE) e <strong>Época</strong>. Não precisa de estar ordenado: as linhas com a mesma escola e a mesma data ficam na mesma visita, com a época indicada na coluna Época. Linhas incompletas entram na mesma e corriges depois.
         </div>
         <label style={{ ...primaryBtnStyle, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "10px 16px", width: "auto" }}>
           <Plus size={15} /> {aLer ? "A ler…" : linhas ? "Escolher outro ficheiro" : "Escolher ficheiro Excel ou CSV"}
@@ -3965,6 +4089,28 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
               </>
             )}
 
+            {faltam.length === 0 && codigosEficacia.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Eficácia: o que quer dizer cada código</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {codigosEficacia.map(([cod, n]) => (
+                    <label key={cod} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: "6px 10px" }}>
+                      <strong>{cod}</strong>
+                      <span style={{ color: COLORS.slate }}>({n})</span>
+                      <span style={{ color: COLORS.slate }}>→</span>
+                      <select value={mapaEficacia[cod] ?? ""} onChange={(e) => setMapaEficacia((m) => ({ ...m, [cod]: e.target.value }))} style={{ ...inputStyle, width: "auto", padding: "5px 8px" }}>
+                        {EFICACIA_IMP_OPCOES.map(([k, l]) => (
+                          <option key={k} value={k}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
             {faltam.length > 0 ? (
               <div style={{ marginTop: 14, fontSize: 12.5, color: COLORS.danger }}>Falta indicar a coluna de: {faltam.map((c) => c.rotulo).join(", ")}.</div>
             ) : (
@@ -3991,7 +4137,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
                   </div>
                   {resultado.problemas.length > 0 && (
                     <details style={{ marginTop: 8, fontSize: 12, color: COLORS.warn }}>
-                      <summary style={{ cursor: "pointer" }}>{resultado.problemas.length} linhas ignoradas</summary>
+                      <summary style={{ cursor: "pointer" }}>{resultado.problemas.length} dados em falta ou por classificar (entram na mesma; corriges depois na visita)</summary>
                       <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.6 }}>{resultado.problemas.slice(0, 30).join(" · ")}</div>
                     </details>
                   )}
@@ -4017,7 +4163,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, onImportar, on
 function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions, areaOptions, auditCategoryOptions }) {
   const [view, setView] = useState("registo");
 
-  const sorted = [...audits].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sorted = [...audits].sort((a, b) => String(b.date || `${epocaAud(b)}`).localeCompare(String(a.date || `${epocaAud(a)}`)));
 
   return (
     <div>
@@ -4122,7 +4268,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{a.school}</div>
                       <div style={{ fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>
-                        {fmt(new Date(a.date + "T00:00:00"))} · {fs.length} constatações
+                        {dataAud(a)} · {fs.length} constatações{a.epoca && a.date && a.epoca !== epocaDe(a.date) ? ` · época ${a.epoca}` : !a.date && a.epoca ? ` · época ${a.epoca}` : ""}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -4131,6 +4277,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, schoolOptions
                         if (!n) return null;
                         return <Tag key={c} label={`${n} ${c}`} color={CLASSIFICATION_META[c].color} bg={CLASSIFICATION_META[c].bg} />;
                       })}
+                      {fs.some((f) => !f.classification) && <Tag label={`${fs.filter((f) => !f.classification).length} sem tipo`} color={COLORS.warn} bg={COLORS.warnBg} />}
                       {fs.length > 0 &&
                         (pend ? (
                           <Tag label={`${pend} por resolver`} color={COLORS.warn} bg={COLORS.warnBg} />
@@ -11025,7 +11172,7 @@ function indicadoresEpoca(ep, d, ate) {
   };
   const recl = d.reclamacoes.filter((r) => dentro(r.receivedDate));
   const res = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
-  const visitas = d.audits.filter((a) => dentro(a.date));
+  const visitas = d.audits.filter((a) => epocaAud(a) === ep && (ate ? !a.date || a.date <= ate : true));
   const constat = visitas.flatMap((a) => (a.findings || []).map((f) => ({ ...f, data: a.date })));
   const fechadas = constat.filter((f) => f.resolvida);
   const temposFecho = fechadas.filter((f) => f.resolvidaEm).map((f) => diasEntreRel(f.data, f.resolvidaEm)).filter((x) => x >= 0);
@@ -11033,7 +11180,11 @@ function indicadoresEpoca(ep, d, ate) {
   const sat = inq.length ? satisfacaoDe(inq.flatMap((i) => i.perguntas || [])).pct : null;
   const nps = inq.length ? npsDe(inq) : null;
   const porCls = (c) => constat.filter((f) => f.classification === c).length;
+  const comPrazo = fechadas.filter((f) => f.prazo && f.resolvidaEm);
+  const avaliadas = fechadas.filter((f) => f.eficacia);
   return {
+    fechoNoPrazo: comPrazo.length ? Math.round((comPrazo.filter((f) => f.resolvidaEm <= f.prazo).length / comPrazo.length) * 100) : null,
+    eficazes: avaliadas.length ? Math.round((avaliadas.filter((f) => f.eficacia === "eficaz").length / avaliadas.length) * 100) : null,
     recl: recl.length,
     prazo: res.length ? Math.round((res.filter((r) => new Date(r.resolvedDate) <= new Date(r.deadline)).length / res.length) * 100) : null,
     tempoResp: res.length ? Math.round(mediaDe(res.map((r) => diasEntreRel(r.receivedDate, r.resolvedDate)))) : null,
@@ -11067,6 +11218,8 @@ const LINHAS_EPOCA = [
   { k: "porVisita", label: "Constatações por visita", bom: "baixo", dec: 1, grupo: "Auditorias" },
   { k: "fechadasPct", label: "Constatações fechadas", un: "%", bom: "alto", grupo: "Auditorias" },
   { k: "tempoFecho", label: "Tempo médio de fecho", un: " dias", bom: "baixo", grupo: "Auditorias" },
+  { k: "fechoNoPrazo", label: "Fechadas dentro do prazo", un: "%", bom: "alto", grupo: "Auditorias" },
+  { k: "eficazes", label: "Ações eficazes", un: "%", bom: "alto", grupo: "Auditorias" },
   { k: "satisfacao", label: "Satisfação nos eventos", un: "%", bom: "alto", grupo: "Satisfação e disciplina" },
   { k: "nps", label: "NPS dos eventos", bom: "alto", grupo: "Satisfação e disciplina" },
   { k: "sancoes", label: "Ocorrências disciplinares", bom: "baixo", grupo: "Satisfação e disciplina" },
@@ -11084,7 +11237,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
 
   // ---- Épocas com dados (no máximo as três mais recentes) ----
-  const todasEpocas = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaDe(a.date)), ...inqueritos.map((i) => epocaDe(i.data))].filter(Boolean))]
+  const todasEpocas = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaAud(a)), ...inqueritos.map((i) => epocaDe(i.data))].filter(Boolean))]
     .filter((e) => e <= epocaAtual)
     .sort();
   const epocas = todasEpocas.slice(-3);
@@ -11101,9 +11254,9 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
 
   // ---- Período escolhido ----
   const recl = reclamacoes.filter((r) => dentroPeriodo(periodo, r.receivedDate));
-  const visitas = audits.filter((a) => dentroPeriodo(periodo, a.date));
+  const visitas = audits.filter((a) => audNoPeriodo(periodo, a));
   const constat = visitas.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
-  const todasConstat = audits.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
+  const todasConstat = audits.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date, epoca: epocaAud(a) })));
   const abertas = todasConstat.filter((f) => !f.resolvida);
   const inqPeriodo = inqueritos.filter((i) => dentroPeriodo(periodo, i.data));
   const satPeriodo = inqPeriodo.length ? satisfacaoDe(inqPeriodo.flatMap((i) => i.perguntas || [])).pct : null;
@@ -11160,7 +11313,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   const assuntos = (() => {
     const c = {};
     todasConstat.forEach((f) => {
-      const ep = epocaDe(f.data);
+      const ep = f.epoca;
       if (ep !== epA && ep !== epB) return;
       const k = assuntoDe(f);
       c[k] = c[k] || { a: 0, b: 0 };
@@ -11177,10 +11330,14 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
     constat.forEach((f) => {
       const k = (f.responsavel || "").trim();
       if (!k) return;
-      c[k] = c[k] || { n: 0, fechadas: 0, tempos: [] };
+      c[k] = c[k] || { n: 0, fechadas: 0, tempos: [], comPrazo: 0, noPrazo: 0 };
       c[k].n++;
       if (f.resolvida) {
         c[k].fechadas++;
+        if (f.prazo && f.resolvidaEm) {
+          c[k].comPrazo++;
+          if (f.resolvidaEm <= f.prazo) c[k].noPrazo++;
+        }
         if (f.resolvidaEm) c[k].tempos.push(diasEntreRel(f.data, f.resolvidaEm));
       }
     });
@@ -11225,6 +11382,8 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   porEscola.forEach(({ e }) => {
     const nc = abertas.filter((f) => f.escola === e && (f.classification === "NC" || f.classification === "NCM"));
     const velhas = nc.filter((f) => diasEntreRel(f.data, hoje) > 60).length;
+    const foraPrazo = abertas.filter((f) => f.escola === e && f.prazo && f.prazo < hoje).length;
+    if (foraPrazo) acompanhar.push({ nivel: "alto", t: `${e}: ${foraPrazo} ${foraPrazo === 1 ? "constatação" : "constatações"} com o prazo de resolução ultrapassado` });
     if (nc.length) acompanhar.push({ nivel: nc.some((f) => f.classification === "NCM") || velhas ? "alto" : "medio", t: `${e}: ${nc.length} não conformidade${nc.length === 1 ? "" : "s"} por fechar${velhas ? ` (${velhas} há mais de 60 dias)` : ""}` });
   });
   porEscola
@@ -11515,6 +11674,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                                 <th className="relRotulo" style={thR("left")}>Responsável</th>
                                 <th className="relRotulo" style={thR()}>Constat.</th>
                                 <th className="relRotulo" style={thR()}>Fechadas</th>
+                                <th className="relRotulo" style={thR()}>No prazo</th>
                                 <th className="relRotulo" style={thR()}>Dias</th>
                               </tr>
                             </thead>
@@ -11524,6 +11684,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                                   <td style={{ padding: "7px 0", borderBottom: `1px solid ${COLORS.ruleSoft}`, color: COLORS.ink }}>{r.nome}</td>
                                   <td style={tdR}>{r.n}</td>
                                   <td style={tdR}>{Math.round((r.fechadas / r.n) * 100)}%</td>
+                                  <td style={tdR}>{r.comPrazo ? `${Math.round((r.noPrazo / r.comPrazo) * 100)}%` : "—"}</td>
                                   <td style={tdR}>{fmtNum(r.tempo)}</td>
                                 </tr>
                               ))}
@@ -11693,7 +11854,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
 
 function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
   const epocaAtual = epocaDe(new Date().toISOString().slice(0, 10));
-  const epocasComDados = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaDe(a.date))].filter(Boolean))].sort().reverse();
+  const epocasComDados = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaAud(a))].filter(Boolean))].sort().reverse();
 
   const [escola, setEscola] = useState(escolas[0] || "");
   const [periodo, setPeriodo] = useState(`epoca:${epocaAtual}`);
@@ -11803,7 +11964,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
   // ---- Auditorias ----
   const auds = audits.filter((a) => a.school === escola).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const audsPeriodo = auds.filter((a) => dentroPeriodo(periodo, a.date));
+  const audsPeriodo = auds.filter((a) => audNoPeriodo(periodo, a));
   const constat = audsPeriodo.flatMap((a) => (a.findings || []).map((f) => ({ ...f, escola: a.school, data: a.date })));
   const porResolver = auds.flatMap((a) => (a.findings || []).filter((f) => !f.resolvida).map((f) => ({ ...f, data: a.date })));
   const ordemCls = { NCM: 0, NC: 1, AS: 2, OM: 3 };
@@ -12194,7 +12355,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               <div>
                 <div className="relSub">Por resolver (todas as auditorias)</div>
                 <TabelaRel
-                  colunas={["Classificação", "Área", "Constatação"]}
+                  colunas={["Classificação", "Área", "Constatação", "Prazo"]}
                   vazio="Todas as constatações estão resolvidas."
                   linhas={porResolver
                     .sort((a, b) => (ordemCls[a.classification] ?? 9) - (ordemCls[b.classification] ?? 9))
@@ -12203,6 +12364,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                       <strong style={{ fontSize: 11.5, color: corRel(CLASSIFICATION_META[f.classification]?.color) || CLASSIFICATION_META[f.classification]?.color }}>{f.classification}</strong>,
                       f.area || "—",
                       f.description,
+                      f.prazo ? <span style={{ color: f.prazo < isoDe(new Date()) ? REL_VERMELHO : COLORS.ink, fontWeight: f.prazo < isoDe(new Date()) ? 600 : 400 }}>{fmt(new Date(f.prazo + "T00:00:00"))}</span> : "—",
                     ])}
                 />
               </div>
@@ -15314,6 +15476,12 @@ function AppPrincipal({ onSair }) {
     setShowAuditForm(false);
   };
 
+  const updateAudit = (auditId, patch) => {
+    const next = audits.map((a) => (a.id === auditId ? { ...a, ...patch } : a));
+    persistAudits(next);
+    setViewingAudit(next.find((a) => a.id === auditId));
+  };
+
   const removeAudit = (auditId) => {
     persistAudits(audits.filter((a) => a.id !== auditId));
     setViewingAudit(null);
@@ -16686,6 +16854,8 @@ function AppPrincipal({ onSair }) {
           onRemoveFinding={removeFinding}
           onUpdateFinding={updateFinding}
           onRemoveAudit={removeAudit}
+          onUpdateAudit={updateAudit}
+          schoolOptions={options.schools}
           onGerirLista={setListaAberta}
         />
       )}
