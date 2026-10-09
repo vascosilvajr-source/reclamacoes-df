@@ -11405,13 +11405,7 @@ function indicadoresDaEpoca(ep, registoAlunos, niveis, capacidades, escola) {
 function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel, escola }) {
   const cols = (sel && sel.length ? sel : epocas).filter((e) => registoAlunos[e]).sort().reverse();
   const I = Object.fromEntries(cols.map((ep) => [ep, indicadoresDaEpoca(ep, registoAlunos, niveis, capacidades, escola)]));
-  const [aberto, setAberto] = useState(() => new Set(["ret", "desist", "novos", "ocup", "exp", "fem", "trans", "conc"]));
-  const alterna = (k) =>
-    setAberto((s0) => {
-      const n = new Set(s0);
-      n.has(k) ? n.delete(k) : n.add(k);
-      return n;
-    });
+  const [aberto, setAberto] = useState(null);
   if (!cols.length) return <Vazio icon={Users} titulo="Sem alunos importados nas épocas escolhidas" texto="Importa os ficheiros de inscritos no Painel ou escolhe outras épocas." />;
 
   const th = { ...thStyle, textAlign: "right" };
@@ -11442,18 +11436,73 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
       ))}
     </tr>
   );
-  const Bloco = ({ k, titulo, nota, children }) => (
-    <div style={{ ...panelStyle, marginBottom: 14 }}>
-      <button onClick={() => alterna(k)} aria-expanded={aberto.has(k)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", ...panelTitle, marginBottom: aberto.has(k) ? 4 : 0, display: "flex", alignItems: "center", gap: 6, textAlign: "left" }}>
-        <span style={{ display: "inline-block", transform: aberto.has(k) ? "rotate(90deg)" : "none", transition: "transform 160ms ease" }}>›</span>
-        {titulo}
-      </button>
-      {aberto.has(k) && (
-        <>
-          {nota && <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 10, lineHeight: 1.5 }}>{nota}</div>}
-          <div style={{ overflowX: "auto" }}>{children}</div>
-        </>
-      )}
+  // Só o detalhe do cartão escolhido aparece.
+  const Bloco = ({ k, titulo, nota, children }) =>
+    aberto !== k ? null : (
+      <div className="pageIn" style={{ ...panelStyle, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ ...panelTitle, marginBottom: 0, flex: 1 }}>{titulo.replace(/^\d+\.\s*/, "")}</div>
+          <button onClick={() => setAberto(null)} aria-label="Fechar detalhe" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+            <X size={16} />
+          </button>
+        </div>
+        {nota && <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 10, lineHeight: 1.5 }}>{nota}</div>}
+        <div style={{ overflowX: "auto" }}>{children}</div>
+      </div>
+    );
+
+  // Cartões: o número principal de cada indicador, na época mais recente escolhida, e as outras ao lado.
+  const nOuNull = (v) => (v === null || v === undefined || isNaN(v) ? null : v);
+  const CARTOES = [
+    { k: "ret", titulo: "Retenção", v: (x) => nOuNull(x.ret && x.ret.taxa), un: "%", melhor: "alto", sub: (x) => (x.ret ? `${fmtNum(x.ret.voltaram)} de ${fmtNum(x.ret.base)} voltaram · ${fmtNum(x.ret.mudaram)} noutra escola` : "sem a época anterior importada") },
+    { k: "desist", titulo: "Saem nas 4 primeiras semanas", v: (x) => nOuNull(pctDe(x.semanas.ate4, x.desist)), un: "%", melhor: "baixo", sub: (x) => `${fmtNum(x.desist)} desistências${x.medianaSemanas !== null ? ` · mediana ${fmtNum(x.medianaSemanas, 0)} semanas` : ""}` },
+    { k: "novos", titulo: "Desistência dos novos", v: (x) => nOuNull(pctDe(x.novosRen.novosDes, x.novosRen.novos)), un: "%", melhor: "baixo", sub: (x) => `renovados: ${P(pctDe(x.novosRen.renovDes, x.novosRen.renov))}` },
+    { k: "ocup", titulo: "Ocupação", v: (x) => nOuNull(pctDe(x.ocupados, x.lugares)), un: "%", melhor: "alto", sub: (x) => `${fmtNum(Math.max(0, x.lugares - x.ocupados))} lugares livres` },
+    { k: "exp", titulo: "Conversão das experiências", v: (x) => nOuNull(pctDe(x.conv, x.exps)), un: "%", melhor: "alto", sub: (x) => (x.mediana !== null ? `mediana de ${x.mediana} dias até à inscrição` : `${fmtNum(x.exps)} experiências`) },
+    { k: "fem", titulo: "Feminino", v: (x) => nOuNull(x.fem), un: "%", melhor: "alto", sub: () => "dos alunos ativos com género" },
+    { k: "trans", titulo: "Passam para competição", v: (x) => nOuNull(x.trans && x.trans.doUltimo ? pctDe(x.trans.passaram, x.trans.doUltimo) : null), un: "%", melhor: "alto", sub: (x) => (x.trans && x.trans.doUltimo ? `do último nível (${x.trans.ultimo}) · ${fmtNum(x.trans.perdidos)} perderam-se` : "sem a época anterior importada") },
+    { k: "conc", titulo: "Turmas abaixo de 50%", v: (x) => x.baixas.length, un: "", melhor: "baixo", sub: () => "há 4 ou mais semanas seguidas" },
+  ];
+  const fmtC = (c, v) => (v === null || v === undefined ? "—" : c.un === "%" ? `${fmtNum(v, 0)}%` : fmtNum(v));
+  const cartoes = (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginBottom: 14 }}>
+      {CARTOES.map((c) => {
+        const ref = I[cols[0]];
+        const v = ref ? c.v(ref) : null;
+        const sel = aberto === c.k;
+        return (
+          <button
+            key={c.k}
+            type="button"
+            onClick={() => setAberto(sel ? null : c.k)}
+            aria-expanded={sel}
+            className="liftable"
+            style={{ textAlign: "left", cursor: "pointer", background: COLORS.paperRaised, border: `1px solid ${sel ? COLORS.navy : COLORS.rule}`, boxShadow: sel ? `0 0 0 1px ${COLORS.navy}` : COLORS.shadow, borderRadius: 12, padding: "12px 14px", fontFamily: "inherit", color: COLORS.ink }}
+          >
+            <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500 }}>{c.titulo}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+              <span style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>{fmtC(c, v)}</span>
+              {cols.length > 1 && <span style={{ fontSize: 11, color: COLORS.slate }}>{cols[0]}</span>}
+            </div>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4, lineHeight: 1.4, minHeight: 16 }}>{ref ? c.sub(ref) : ""}</div>
+            {cols.length > 1 && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8, paddingTop: 8, borderTop: `1px solid ${COLORS.ruleSoft}` }}>
+                {cols.slice(1).map((ep) => {
+                  const o = I[ep] ? c.v(I[ep]) : null;
+                  const dif = v !== null && o !== null ? v - o : null;
+                  const bom = !dif ? null : c.melhor === "alto" ? dif > 0 : dif < 0;
+                  return (
+                    <span key={ep} style={{ fontSize: 11.5, color: COLORS.ink2, fontVariantNumeric: "tabular-nums" }} title={dif ? `${cols[0]} ${dif > 0 ? "acima" : "abaixo"} de ${ep}` : undefined}>
+                      <span style={{ color: COLORS.slate }}>{ep}</span> {fmtC(c, o)}
+                      {dif ? <span style={{ color: bom ? COLORS.ok : COLORS.danger, marginLeft: 3 }}>{dif > 0 ? "▲" : "▼"}</span> : null}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
   const tabela = (titulo, linhas) => (
@@ -11466,6 +11515,8 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
 
   return (
     <div>
+      {cartoes}
+      {!aberto && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: -4 }}>Carrega num indicador para ver o detalhe por escola, escalão ou mês.</div>}
       <Bloco k="ret" titulo="1. Retenção entre épocas" nota="Dos alunos ativos no fim da época anterior, quantos voltaram nesta e quantos voltaram noutra escola.">
         {tabela("Dragon Force" + (escola ? ` · ${escola}` : ""), [
           linha("Ativos no fim da época anterior", (x) => N(x.ret && x.ret.base)),
@@ -11638,12 +11689,13 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   const epocas = Object.keys(registoAlunos || {}).sort();
   const epHoje = epocaDe(isoDe(new Date()));
   const [vista, setVista] = useState("epoca");
-  const [ep, setEp] = useState(epocas.includes(epHoje) ? epHoje : epocas[epocas.length - 1] || epHoje);
+  // Um só filtro de épocas para todas as vistas: uma época mostra o detalhe, várias comparam.
+  const [eps, setEps] = useState(() => selecaoInicial(epocas));
+  const epUnico = eps.length === 1 ? eps[0] : null;
+  const ep = epUnico || epocas[epocas.length - 1] || epHoje;
   const [escola, setEscola] = useState("");
   const [ordem, setOrdem] = useState("inscritos");
   const [homologa, setHomologa] = useState(true);
-  const [epsComp, setEpsComp] = useState([]);
-  const [epsInd, setEpsInd] = useState(() => epocas.slice(-2));
   const [escInd, setEscInd] = useState("");
 
   // Números por época e por escola (calculados uma vez).
@@ -11670,7 +11722,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     </>
   );
   // Semana de comparação: a de hoje, se a época escolhida está a decorrer.
-  const kHoje = epHoje === ep || (vista !== "epoca" && epocas.includes(epHoje)) ? semanaDaEpoca(isoDe(new Date()), semana1Padrao(epHoje)) : null;
+  const kHoje = epHoje === epUnico || ((!epUnico || vista !== "epoca") && epocas.includes(epHoje) && naSelecao(eps, epHoje)) ? semanaDaEpoca(isoDe(new Date()), semana1Padrao(epHoje)) : null;
   const kComp = homologa ? kHoje : null;
 
   const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "8px 9px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap", fontWeight: 600 };
@@ -11812,15 +11864,13 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   const cab = (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
       {seg(vista, setVista, [
-        ["epoca", "Por época"],
-        ["epocas", "Comparar épocas"],
+        ["epoca", "Épocas"],
         ["escola", "Por escola"],
         ["indicadores", "Indicadores"],
       ])}
-      {(vista === "epocas" || vista === "escola") && <FiltroEpocas compacto epocas={epocas} valor={epsComp} onChange={setEpsComp} />}
+      <FiltroEpocas compacto epocas={epocas} valor={eps} onChange={setEps} />
       {vista === "indicadores" && (
         <>
-          <FiltroEpocas compacto epocas={epocas} valor={epsInd} onChange={setEpsInd} />
           <select value={escInd} onChange={(e) => setEscInd(e.target.value)} style={{ ...inputStyle, width: "auto", maxWidth: 280, padding: "7px 10px" }} aria-label="Escola">
             <option value="">Todas as escolas</option>
             {todasEscolas.map((e) => (
@@ -11831,15 +11881,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
           </select>
         </>
       )}
-      {vista === "epoca" && (
-        <select value={ep} onChange={(e) => setEp(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontWeight: 600 }} aria-label="Época">
-          {[...epocas].reverse().map((e) => (
-            <option key={e} value={e}>
-              Época {e}
-            </option>
-          ))}
-        </select>
-      )}
+      {vista === "epoca" && <span style={{ fontSize: 12, color: COLORS.slate }}>{epUnico ? "Escolhe várias épocas para as comparar." : "Escolhe uma só época para ver o detalhe."}</span>}
       {vista === "escola" && (
         <select value={escola} onChange={(e) => setEscola(e.target.value)} style={{ ...inputStyle, width: "auto", maxWidth: 280, padding: "7px 10px", fontWeight: 600 }} aria-label="Escola">
           <option value="">Escolher escola</option>
@@ -11859,8 +11901,8 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     </div>
   );
 
-  // ---------------- por época ----------------
-  if (vista === "epoca") {
+  // ---------------- por época (uma só época escolhida) ----------------
+  if (vista === "epoca" && epUnico) {
     const D = dados[ep];
     const T = D.total;
     const A = temAnt ? dados[epAnt].total : null;
@@ -12010,14 +12052,14 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     return (
       <div>
         {cab}
-        <IndicadoresInscritos registoAlunos={registoAlunos} niveis={niveis} capacidades={options.capacidades || {}} epocas={epocas} sel={epsInd} escola={escInd} />
+        <IndicadoresInscritos registoAlunos={registoAlunos} niveis={niveis} capacidades={options.capacidades || {}} epocas={epocas} sel={eps} escola={escInd} />
       </div>
     );
   }
 
-  // ---------------- comparar épocas ----------------
-  if (vista === "epocas") {
-    const lista = epocas.filter((e) => naSelecao(epsComp, e)).map((e) => dados[e].total).filter(Boolean);
+  // ---------------- comparar épocas (várias ou todas) ----------------
+  if (vista === "epoca") {
+    const lista = epocas.filter((e) => naSelecao(eps, e)).map((e) => dados[e].total).filter(Boolean);
     const recentes = [...lista].reverse();
     const k = kComp;
     const valor = (n) => naSemana(n, n.ep === epHoje ? null : k);
@@ -12044,7 +12086,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
                   const v = valor(n);
                   const rv = ant ? destinosAlunos(registoAlunos[epAntDe(n.ep)], registoAlunos[n.ep], null) : null;
                   return (
-                    <tr key={n.ep}>
+                    <tr key={n.ep} onClick={() => setEps([n.ep])} style={{ cursor: "pointer" }} title={`Ver o detalhe de ${n.ep}`}>
                       <td style={{ ...td, fontWeight: 600 }}>
                         {n.ep}
                         {n.ep === epHoje ? <span style={{ color: COLORS.slate, fontWeight: 400 }}> (a decorrer)</span> : ""}
@@ -12128,7 +12170,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   }
 
   // ---------------- por escola ----------------
-  const lista = escola ? epocas.filter((e) => naSelecao(epsComp, e)).map((e) => dados[e].escolas[escola]).filter(Boolean) : [];
+  const lista = escola ? epocas.filter((e) => naSelecao(eps, e)).map((e) => dados[e].escolas[escola]).filter(Boolean) : [];
   const ausentes = escola ? epocas.filter((e) => !dados[e].escolas[escola]) : [];
   const recentes = [...lista].reverse();
   const k = kComp;
