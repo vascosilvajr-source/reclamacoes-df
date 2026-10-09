@@ -1873,7 +1873,7 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen,
           {entry.resolvedDate && ` · Concluída: ${fmt(new Date(entry.resolvedDate))}`}
         </div>
 
-        {entry.emailLink && (
+        {/^https?:\/\//i.test(entry.emailLink || "") && (
           <a
             href={entry.emailLink}
             target="_blank"
