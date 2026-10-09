@@ -6420,12 +6420,34 @@ function lerInscritosEvento(folhas) {
     }
   });
   const val = (l, j) => (j >= 0 ? String(l[j] ?? "").trim() : "");
+  const soInscritos = (c) => /inscrit|particip/i.test(c.nome);
+  const contarPorEscola = (c) => {
+    const porEscola = {};
+    c.dados.forEach((l) => {
+      const e = val(l, c.esc);
+      if (!e) return;
+      const x = (porEscola[e] = porEscola[e] || { total: 0, porEscalao: {} });
+      x.total++;
+      const k = val(l, c.escal);
+      if (k) x.porEscalao[k] = (x.porEscalao[k] || 0) + 1;
+    });
+    const n = Object.values(porEscola).reduce((t, x) => t + x.total, 0);
+    return { modo: "escolas", porEscola, folha: c.nome, explicacao: `folha "${c.nome}": ${n} inscritos, contados por escola (sem código do atleta)` };
+  };
+  // A folha com a lista dos inscritos (ex.: "Inscritos TL") é a referência: conta todos os que lá estão.
+  const lista = cands.find((c) => soInscritos(c) && c.flag < 0 && (c.id >= 0 || c.esc >= 0));
+  if (lista) {
+    if (lista.id >= 0) {
+      const ids = [...new Set(lista.dados.map((l) => val(l, lista.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
+      if (ids.length) return { modo: "ids", ids, folha: lista.nome, explicacao: `folha "${lista.nome}": ${ids.length} códigos do atleta` };
+    }
+    if (lista.esc >= 0) return contarPorEscola(lista);
+  }
   const comFlag = cands.find((c) => c.id >= 0 && c.flag >= 0);
   if (comFlag) {
     const ids = [...new Set(comFlag.dados.filter((l) => SIM_EVENTO.test(normChave(val(l, comFlag.flag)))).map((l) => val(l, comFlag.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
     if (ids.length) return { modo: "ids", ids, folha: comFlag.nome, explicacao: `folha "${comFlag.nome}": ${ids.length} alunos marcados como inscritos` };
   }
-  const soInscritos = (c) => /inscrit|particip/i.test(c.nome);
   const comId = cands.filter((c) => c.id >= 0).sort((a, b) => soInscritos(b) - soInscritos(a))[0];
   if (comId) {
     const ids = [...new Set(comId.dados.map((l) => val(l, comId.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
@@ -6433,17 +6455,7 @@ function lerInscritosEvento(folhas) {
   }
   const comEsc = cands.filter((c) => c.esc >= 0).sort((a, b) => soInscritos(b) - soInscritos(a) || a.dados.length - b.dados.length)[0];
   if (!comEsc) return null;
-  const porEscola = {};
-  comEsc.dados.forEach((l) => {
-    const e = val(l, comEsc.esc);
-    if (!e) return;
-    const x = (porEscola[e] = porEscola[e] || { total: 0, porEscalao: {} });
-    x.total++;
-    const k = val(l, comEsc.escal);
-    if (k) x.porEscalao[k] = (x.porEscalao[k] || 0) + 1;
-  });
-  const n = Object.values(porEscola).reduce((t, x) => t + x.total, 0);
-  return { modo: "escolas", porEscola, folha: comEsc.nome, explicacao: `folha "${comEsc.nome}": ${n} inscritos, contados por escola (sem código do atleta)` };
+  return contarPorEscola(comEsc);
 }
 
 function contasEvento(ev, registoAlunos, niveis) {
@@ -6503,11 +6515,14 @@ function contasEvento(ev, registoAlunos, niveis) {
     linha(e).inscritos = Number(n) || 0;
   });
   const linhas = Object.values(porEscola).sort((a, b) => b.elegiveis - a.elegiveis || a.escola.localeCompare(b.escola, "pt"));
-  const tot = linhas.reduce((t, l) => ({ elegiveis: t.elegiveis + l.elegiveis, inscritos: t.inscritos + l.inscritos, fora: t.fora + l.fora }), { elegiveis: 0, inscritos: 0, fora: 0 });
-  return { ep, temRegisto: !!reg, linhas, tot, semCorrespondencia, foraEscolas, semEscola, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
+  // Na adesão só contam as escolas com elegíveis; o resto fica explicado à parte.
+  const tot = linhas.filter((l) => l.elegiveis > 0).reduce((t, l) => ({ elegiveis: t.elegiveis + l.elegiveis, inscritos: t.inscritos + l.inscritos, fora: t.fora + l.fora }), { elegiveis: 0, inscritos: 0, fora: 0 });
+  const semElegiveis = linhas.filter((l) => !l.elegiveis).reduce((t, l) => t + l.inscritos, 0);
+  const lidos = ids.size || Object.values(bruto).reduce((t, x) => t + x.total, 0);
+  return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
 }
 
-function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onSave, onUpdate, onRemove }) {
+function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onMapaEscola, onSave, onUpdate, onRemove }) {
   const hoje = isoDe(new Date());
   const [nome, setNome] = useState("");
   const [data, setData] = useState(hoje);
@@ -6520,6 +6535,8 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const [msgImp, setMsgImp] = useState("");
   const [dataAtual, setDataAtual] = useState(hoje);
   const [verAntigos, setVerAntigos] = useState(false);
+  const [apagar, setApagar] = useState(null);
+  const [novaEscola, setNovaEscola] = useState(null);
 
   const reg = registoAlunos[epocaDe(data)];
   const escolasReg = [...new Set(Object.values((reg && reg.alunos) || {}).map((a) => a.escola))];
@@ -6569,8 +6586,11 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
         const alvo = ev.escolas && ev.escolas.length ? ev.escolas : comAlunos.length ? comAlunos : listaEscolas;
         const mapa = {};
         Object.keys(r.porEscola).forEach((raw) => {
+          // A escolha feita antes (neste evento ou noutro ficheiro) vale outra vez.
+          const anterior = ev.participantes && ev.participantes.mapa && ev.participantes.mapa[raw];
+          if (anterior) return (mapa[raw] = anterior);
           const guardada = (mapaEscolas || {})[normChave(raw)];
-          if (guardada && alvo.includes(guardada)) return (mapa[raw] = guardada);
+          if (guardada) return (mapa[raw] = guardada);
           const melhor = alvo.map((e) => ({ e, s: semelhancaEscolas(raw, e) })).sort((x, y) => y.s - x.s)[0];
           mapa[raw] = melhor && melhor.s >= 0.6 ? melhor.e : "";
         });
@@ -6666,7 +6686,31 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                 <div style={{ fontSize: 22, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.adesao === null ? "—" : `${fmtNum(c.adesao, 1)}%`}</div>
                 <div style={{ fontSize: 11.5, color: COLORS.slate }}>
                   {fmtNum(c.tot.inscritos)} de {fmtNum(c.tot.elegiveis)} elegíveis
+                  {c.lidos > c.tot.inscritos ? ` · ${fmtNum(c.lidos)} no Excel` : ""}
                 </div>
+              </div>
+              <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {apagar === ev.id ? (
+                  <>
+                    <span style={{ fontSize: 12.5, color: COLORS.danger }}>Apagar este evento?</span>
+                    <button
+                      onClick={() => {
+                        onRemove(ev.id);
+                        setApagar(null);
+                      }}
+                      style={{ ...primaryBtnStyle, width: "auto", padding: "5px 10px", fontSize: 12, background: COLORS.danger }}
+                    >
+                      Apagar
+                    </button>
+                    <button onClick={() => setApagar(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12 }}>
+                      Cancelar
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={() => setApagar(ev.id)} title="Apagar evento" aria-label={`Apagar ${ev.nome}`} style={{ ...iconBtnStyle, color: COLORS.slate }}>
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
             </div>
             {ab && (
@@ -6690,7 +6734,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     Reclamações
                     <input type="number" min="0" value={ev.reclamacoes ?? 0} onChange={(e) => onUpdate({ ...ev, reclamacoes: Number(e.target.value) || 0 })} style={{ ...inputStyle, width: 70, padding: "5px 8px" }} />
                   </label>
-                  <button onClick={() => onRemove(ev.id)} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto", color: COLORS.danger, fontSize: 12.5 }}>
+                  <button onClick={() => setApagar(ev.id)} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto", color: COLORS.danger, fontSize: 12.5 }}>
                     Apagar evento
                   </button>
                 </div>
@@ -6721,6 +6765,69 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     </div>
                   </div>
                 )}
+                {ev.participantes && ev.participantes.porEscola && (() => {
+                  const mapa = ev.participantes.mapa || {};
+                  const linhasMapa = Object.entries(ev.participantes.porEscola).sort((x, y) => y[1].total - x[1].total);
+                  const porResolver = linhasMapa.filter(([raw]) => !mapa[raw]);
+                  const escolher = (raw, escola) => {
+                    onUpdate({ ...ev, participantes: { ...ev.participantes, mapa: { ...mapa, [raw]: escola } } });
+                    if (escola && onMapaEscola) onMapaEscola(raw, escola);
+                  };
+                  const linhaMapa = ([raw, x]) => (
+                    <div key={raw} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                      <span style={{ flex: "0 0 42%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={raw}>
+                        {raw} <span style={{ color: COLORS.slate }}>· {x.total}</span>
+                      </span>
+                      {novaEscola && novaEscola.raw === raw ? (
+                        <>
+                          <input autoFocus value={novaEscola.nome} onChange={(e) => setNovaEscola({ raw, nome: e.target.value })} placeholder="Nome da escola" style={{ ...inputStyle, padding: "4px 7px", fontSize: 12.5 }} />
+                          <button
+                            disabled={!novaEscola.nome.trim()}
+                            onClick={() => {
+                              escolher(raw, novaEscola.nome.trim());
+                              setNovaEscola(null);
+                            }}
+                            style={{ ...primaryBtnStyle, width: "auto", padding: "4px 10px", fontSize: 12 }}
+                          >
+                            Criar
+                          </button>
+                        </>
+                      ) : (
+                        <select
+                          value={mapa[raw] || ""}
+                          onChange={(e) => (e.target.value === "__nova__" ? setNovaEscola({ raw, nome: `Dragon Force ${raw}` }) : escolher(raw, e.target.value))}
+                          style={{ ...inputStyle, padding: "4px 7px", fontSize: 12.5, borderColor: mapa[raw] ? COLORS.rule : COLORS.warn }}
+                          aria-label={`Escola de ${raw}`}
+                        >
+                          <option value="">Escolher escola</option>
+                          {[...new Set([...listaEscolas, ...Object.values(mapa).filter(Boolean)])].map((e) => (
+                            <option key={e} value={e}>
+                              {e}
+                            </option>
+                          ))}
+                          <option value="__nova__">+ Nova escola…</option>
+                        </select>
+                      )}
+                    </div>
+                  );
+                  return (
+                    <div style={{ marginBottom: 12 }}>
+                      {porResolver.length > 0 && (
+                        <div style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, marginBottom: 8 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
+                            A app não reconheceu {porResolver.length === 1 ? "1 escola" : `${porResolver.length} escolas`} do Excel ({porResolver.reduce((t, [, x]) => t + x.total, 0)} inscritos). Diz de que escola {porResolver.length === 1 ? "é" : "são"}:
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 6 }}>{porResolver.map(linhaMapa)}</div>
+                        </div>
+                      )}
+                      <details>
+                        <summary style={{ fontSize: 12.5, cursor: "pointer", color: COLORS.ink2 }}>Escolas do Excel → escolas da app ({linhasMapa.length})</summary>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 6, marginTop: 8 }}>{linhasMapa.map(linhaMapa)}</div>
+                        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>As escolhas ficam guardadas para as próximas atualizações do Excel.</div>
+                      </details>
+                    </div>
+                  );
+                })()}
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
@@ -6764,42 +6871,27 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     </tbody>
                   </table>
                 </div>
-                {ev.participantes && ev.participantes.porEscola && (
-                  <details style={{ marginTop: 10 }} open={Object.values(ev.participantes.mapa || {}).some((x) => !x)}>
-                    <summary style={{ fontSize: 12.5, cursor: "pointer", color: COLORS.ink2 }}>
-                      Escolas do Excel → escolas da app {c.semEscola ? <strong style={{ color: COLORS.warn }}>· {c.semEscola} inscritos sem escola atribuída</strong> : ""}
-                    </summary>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 6, marginTop: 8 }}>
-                      {Object.entries(ev.participantes.porEscola)
-                        .sort((x, y) => y[1].total - x[1].total)
-                        .map(([raw, x]) => (
-                          <label key={raw} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-                            <span style={{ flex: "0 0 45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={raw}>
-                              {raw} <span style={{ color: COLORS.slate }}>· {x.total}</span>
-                            </span>
-                            <select
-                              value={(ev.participantes.mapa || {})[raw] || ""}
-                              onChange={(e) => onUpdate({ ...ev, participantes: { ...ev.participantes, mapa: { ...(ev.participantes.mapa || {}), [raw]: e.target.value } } })}
-                              style={{ ...inputStyle, padding: "4px 7px", fontSize: 12.5, borderColor: (ev.participantes.mapa || {})[raw] ? COLORS.rule : COLORS.warn }}
-                            >
-                              <option value="">Escolher escola</option>
-                              {listaEscolas.map((e) => (
-                                <option key={e} value={e}>
-                                  {e}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ))}
-                    </div>
-                  </details>
-                )}
                 {ev.excluidas && ev.excluidas.length > 0 && (
                   <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>
                     Não participam: {ev.excluidas.join(", ")}.{" "}
                     <button onClick={() => onUpdate({ ...ev, excluidas: [] })} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
                       Repor
                     </button>
+                  </div>
+                )}
+                {c.lidos > c.tot.inscritos && (
+                  <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 10, padding: "8px 10px", borderRadius: 8, background: COLORS.paperSunken }}>
+                    <strong>{fmtNum(c.lidos)}</strong> inscritos no Excel, <strong>{fmtNum(c.tot.inscritos)}</strong> contam na adesão. Os outros {fmtNum(c.lidos - c.tot.inscritos)}:{" "}
+                    {[
+                      c.semEscola && `${c.semEscola} sem escola atribuída (escolhe-a acima)`,
+                      c.semElegiveis && `${c.semElegiveis} de escolas sem alunos elegíveis importados`,
+                      c.tot.fora && `${c.tot.fora} de outras turmas/equipas`,
+                      c.foraEscolas && `${c.foraEscolas} de escolas que não participam`,
+                      c.semCorrespondencia && `${c.semCorrespondencia} códigos que não estão nos inscritos de ${c.ep}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    .
                   </div>
                 )}
                 {c.foraEscolas > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.foraEscolas} inscritos no evento são de escolas fora do público definido (não contam na adesão).</div>}
@@ -8243,6 +8335,7 @@ function InscritosPage({
   onSaveEvento,
   onRemoveEvento,
   onUpdateEvento,
+  onMapaEscolaEvento,
   onSaveSatisfacao,
   onRemoveSatisfacao,
   onGerirLista,
@@ -8350,7 +8443,7 @@ function InscritosPage({
           onGerirLista={onGerirLista}
         />
       ) : view === "eventos" ? (
-        <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
+        <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onMapaEscola={onMapaEscolaEvento} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
       ) : view === "satisfacao" ? (
         <SecaoSatisfacao
           escolas={escolas}
@@ -19866,6 +19959,13 @@ function AppPrincipal({ onSair }) {
             onSaveEvento={saveEvento}
             onRemoveEvento={removeEvento}
             onUpdateEvento={updateEvento}
+            onMapaEscolaEvento={(raw, escola) =>
+              persistOptions({
+                ...options,
+                schools: options.schools.includes(escola) ? options.schools : [...options.schools, escola],
+                mapaEscolasAlunos: { ...(options.mapaEscolasAlunos || {}), [normChave(raw)]: escola },
+              })
+            }
             onSaveSatisfacao={saveSatisfacao}
             onRemoveSatisfacao={removeSatisfacao}
             onGerirLista={setListaAberta}
