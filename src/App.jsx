@@ -6518,6 +6518,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const [aberto, setAberto] = useState(null);
   const [aLer, setALer] = useState(false);
   const [msgImp, setMsgImp] = useState("");
+  const [dataAtual, setDataAtual] = useState(hoje);
   const [verAntigos, setVerAntigos] = useState(false);
 
   const reg = registoAlunos[epocaDe(data)];
@@ -6575,7 +6576,12 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
         });
         participantes = { ids: [], manual: {}, porEscola: r.porEscola, mapa };
       }
-      onUpdate({ ...ev, participantes, ficheiro: f.name });
+      // Cada atualização fica guardada pela data exata, para se ver a evolução das inscrições.
+      const novo = { ...ev, participantes, ficheiro: f.name };
+      const c = contasEvento(novo, registoAlunos, niveis);
+      const ponto = { data: dataAtual, ficheiro: f.name, inscritos: c.tot.inscritos, elegiveis: c.tot.elegiveis, porEscola: Object.fromEntries(c.linhas.map((l) => [l.escola, l.inscritos])) };
+      novo.historico = [...(ev.historico || []).filter((h) => h.data !== dataAtual), ponto].sort((a, b) => a.data.localeCompare(b.data));
+      onUpdate(novo);
       setMsgImp(`Lido: ${r.explicacao}.`);
     } catch (e) {
       setMsgImp(`Não consegui ler o ficheiro: ${e?.message || e}.`);
@@ -6671,6 +6677,10 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     <FileText size={14} /> {aLer ? "A ler…" : ev.ficheiro ? "Substituir Excel dos inscritos" : "Importar Excel dos inscritos"}
                     <input type="file" accept=".xlsx,.csv" style={{ display: "none" }} onChange={(e) => importar(ev, e.target.files && e.target.files[0])} />
                   </label>
+                  <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                    Ficheiro de
+                    <input type="date" value={dataAtual} onChange={(e) => setDataAtual(e.target.value || hoje)} style={{ ...inputStyle, width: "auto", padding: "5px 8px" }} aria-label="Data do ficheiro" />
+                  </label>
                   {ev.ficheiro && <span style={{ fontSize: 12, color: COLORS.slate }}>{ev.ficheiro}</span>}
                   <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
                     Satisfação (%)
@@ -6685,6 +6695,32 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                   </button>
                 </div>
                 {msgImp && <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 8 }}>{msgImp}</div>}
+                {(ev.historico || []).length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Evolução das inscrições</div>
+                    {ev.historico.length > 1 && (
+                      <ResponsiveContainer width="100%" height={150}>
+                        <LineChart data={ev.historico.map((h) => ({ name: ddmm(h.data), Inscritos: h.inscritos }))} margin={{ left: -18, right: 12, top: 6 }}>
+                          <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                          <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} allowDecimals={false} />
+                          <Tooltip content={<DicaGrafico />} />
+                          <Line type="monotone" dataKey="Inscritos" stroke={COLORS.navy} strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                      {ev.historico.map((h, i) => {
+                        const ant = ev.historico[i - 1];
+                        return (
+                          <span key={h.data} style={{ fontSize: 12, padding: "4px 8px", borderRadius: 7, background: COLORS.paperSunken, fontVariantNumeric: "tabular-nums" }}>
+                            <strong>{ddmm(h.data)}</strong> · {h.inscritos} inscritos{ant ? ` (${h.inscritos - ant.inscritos >= 0 ? "+" : ""}${h.inscritos - ant.inscritos})` : ""} · {h.elegiveis ? `${fmtNum((h.inscritos / h.elegiveis) * 100, 1)}%` : "—"}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
