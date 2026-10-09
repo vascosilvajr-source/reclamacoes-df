@@ -6544,6 +6544,40 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const escaloesReg = [...new Set(alunosNaData(reg, data).map((a) => escalaoDaTurma(a.turma, niveis)))].sort((a, b) => ORDEM_ESCALAO(a, niveis) - ORDEM_ESCALAO(b, niveis));
   const novos = eventos.filter((e) => e.v === 2).sort((a, b) => String(b.data).localeCompare(String(a.data)));
   const antigos = eventos.filter((e) => e.v !== 2);
+  const [aCriar, setACriar] = useState(false);
+  const [fEp, setFEp] = useState(null);
+
+  // Análise: por defeito mostra a época atual (ou a mais recente com eventos).
+  const epocasEv = [...new Set(novos.map((e) => epocaDe(e.data)).filter(Boolean))].sort().reverse();
+  const epAtual = epocaDe(hoje);
+  const epSel = fEp ?? (epocasEv.includes(epAtual) ? epAtual : epocasEv[0] || "todas");
+  const visiveis = epSel === "todas" ? novos : novos.filter((e) => epocaDe(e.data) === epSel);
+  const contaDe = new Map(visiveis.map((ev) => [ev.id, contasEvento(ev, registoAlunos, niveis)]));
+  const comAdesao = visiveis.filter((ev) => contaDe.get(ev.id).adesao !== null);
+  const somaIns = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritos, 0);
+  const somaEleg = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.elegiveis, 0);
+  const adesaoGlobal = somaEleg ? (somaIns / somaEleg) * 100 : null;
+  const totInscritos = visiveis.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritos, 0);
+  const comSatisf = visiveis.filter((ev) => ev.satisfacao !== null && ev.satisfacao !== undefined && ev.satisfacao !== "");
+  const satMedia = comSatisf.length ? comSatisf.reduce((t, ev) => t + Number(ev.satisfacao), 0) / comSatisf.length : null;
+  const totRecl = visiveis.reduce((t, ev) => t + (Number(ev.reclamacoes) || 0), 0);
+  const realizados = visiveis.filter((ev) => ev.data <= hoje).length;
+  const dadosGrafico = [...comAdesao]
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)))
+    .map((ev) => ({ name: `${ev.nome} · ${ddmm(ev.data)}`, Adesão: Math.round(contaDe.get(ev.id).adesao * 10) / 10 }));
+  const porEscolaAn = {};
+  comAdesao.forEach((ev) =>
+    contaDe.get(ev.id).linhas.forEach((l) => {
+      const x = (porEscolaAn[l.escola] = porEscolaAn[l.escola] || { escola: l.escola, elegiveis: 0, inscritos: 0, eventos: 0 });
+      x.elegiveis += l.elegiveis;
+      x.inscritos += l.inscritos;
+      x.eventos++;
+    })
+  );
+  const rankingEscolas = Object.values(porEscolaAn)
+    .filter((x) => x.elegiveis > 0)
+    .map((x) => ({ ...x, pct: (x.inscritos / x.elegiveis) * 100 }))
+    .sort((a, b) => b.pct - a.pct);
 
   const chip = (sel, on, txt, key) => (
     <button
@@ -6566,6 +6600,8 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
     setNome("");
     setEscSel([]);
     setEscalSel([]);
+    setACriar(false);
+    setFEp(epocaDe(ev.data));
   };
 
   // Excel dos inscritos no evento: códigos do atleta (e escola, para os que não têm código).
@@ -6611,11 +6647,19 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   };
 
   const th = { ...thStyle, whiteSpace: "nowrap" };
-  return (
-    <div>
-      <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Novo evento</div>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+  const fecharForm = () => {
+    setACriar(false);
+    setErro("");
+  };
+  const formulario = aCriar && (
+      <div className="pageIn" style={{ ...panelStyle, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ ...panelTitle, marginBottom: 0 }}>Novo evento</div>
+          <button onClick={fecharForm} title="Fechar" aria-label="Fechar novo evento" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginTop: 10 }}>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Evento</label>
             <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Torneio de Natal" list="lista-eventos" style={{ ...inputStyle, width: 240 }} />
@@ -6660,16 +6704,105 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
           <button onClick={criar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
             Criar evento
           </button>
+          <button onClick={fecharForm} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+            Cancelar
+          </button>
           {erro && <span style={{ color: COLORS.danger, fontSize: 13 }}>{erro}</span>}
         </div>
         <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10, lineHeight: 1.5 }}>
           Elegíveis: alunos inscritos nessas escolas e turmas/equipas na data do evento. Depois importa o Excel dos inscritos no evento (pelo código do atleta) ou escreve os números por escola.
         </div>
       </div>
+  );
 
-      {novos.length === 0 && <div style={{ ...panelStyle, fontSize: 13, color: COLORS.slate, marginBottom: 16 }}>Ainda sem eventos.</div>}
-      {novos.map((ev) => {
-        const c = contasEvento(ev, registoAlunos, niveis);
+  const fmtPct = (v) => (v === null || v === undefined ? "—" : `${fmtNum(v, 1)}%`);
+  return (
+    <div>
+      {novos.length === 0 ? (
+        formulario || (
+          <Vazio
+            icon={Sparkles}
+            titulo="Ainda sem eventos"
+            texto="Cria um evento para acompanhar a adesão das escolas, a satisfação e as reclamações."
+            acao="Adicionar evento"
+            onAcao={() => setACriar(true)}
+          />
+        )
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginRight: "auto" }}>Análise dos eventos</div>
+            <select value={epSel} onChange={(e) => setFEp(e.target.value)} aria-label="Época" style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 }}>
+              {epocasEv.map((ep) => (
+                <option key={ep} value={ep}>
+                  Época {ep}
+                </option>
+              ))}
+              <option value="todas">Todas as épocas</option>
+            </select>
+            {!aCriar && (
+              <button className="press" onClick={() => setACriar(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Plus size={14} /> Novo evento
+              </button>
+            )}
+          </div>
+
+          {formulario}
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <StatCard label="Eventos" value={visiveis.length} subtitle={`${realizados} realizados · ${visiveis.length - realizados} por realizar`} />
+            <StatCard label="Adesão média" value={fmtPct(adesaoGlobal)} color={COLORS.navy} anel={adesaoGlobal === null ? null : Math.round(adesaoGlobal)} subtitle={somaEleg ? `${fmtNum(somaIns)} de ${fmtNum(somaEleg)} elegíveis` : "sem elegíveis calculados"} />
+            <StatCard label="Inscritos" value={totInscritos} subtitle="somando todos os eventos" />
+            <StatCard label="Satisfação média" value={fmtPct(satMedia)} color={corSatisfacao(satMedia)} subtitle={`${comSatisf.length} de ${visiveis.length} com resultado`} />
+            <StatCard label="Reclamações" value={totRecl} color={totRecl ? COLORS.danger : undefined} subtitle="associadas a eventos" />
+          </div>
+
+          {dadosGrafico.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 12, marginBottom: 20 }}>
+              <div style={{ ...panelStyle, marginBottom: 0 }}>
+                <div style={panelTitle}>Adesão por evento</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={dadosGrafico} margin={{ left: -18, right: 8, top: 18 }}>
+                    <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" tickFormatter={(n) => { const t = String(n).split(" · ")[0]; return t.length > 16 ? `${t.slice(0, 15)}…` : t; }} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                    <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={[0, 100]} unit="%" />
+                    <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.paperSunken }} />
+                    <Bar dataKey="Adesão" fill={COLORS.navy} radius={[5, 5, 0, 0]} maxBarSize={44} isAnimationActive={false}>
+                      <LabelList dataKey="Adesão" position="top" formatter={(v) => `${fmtNum(v, 1)}%`} style={{ fontSize: 10.5, fill: COLORS.ink2 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ ...panelStyle, marginBottom: 0 }}>
+                <div style={panelTitle}>Adesão por escola</div>
+                {rankingEscolas.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem elegíveis por escola nesta época.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+                    {rankingEscolas.map((x) => (
+                      <div key={x.escola} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 110px 52px", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${x.escola} · ${x.inscritos} de ${x.elegiveis} em ${x.eventos} ${x.eventos === 1 ? "evento" : "eventos"}`}>
+                          {x.escola.replace(/^Dragon Force\s+/, "")}
+                        </span>
+                        <div style={{ height: 7, background: COLORS.paperSunken, borderRadius: 4, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${Math.min(x.pct, 100)}%`, background: COLORS.navy, borderRadius: 4 }} />
+                        </div>
+                        <span style={{ textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtNum(x.pct, 1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.ink2, margin: "4px 0 8px" }}>
+            Eventos {epSel === "todas" ? "" : `de ${epSel}`} ({visiveis.length})
+          </div>
+        </>
+      )}
+      {visiveis.map((ev) => {
+        const c = contaDe.get(ev.id);
         const ab = aberto === ev.id;
         const manual = (ev.participantes && ev.participantes.manual) || {};
         return (
@@ -8293,7 +8426,6 @@ const SECOES_GESTAO = [
   ["desvinc", "Desvinculações"],
   ["espacos", "Espaços"],
   ["eventos", "Eventos"],
-  ["satisfacao", "Satisfação"],
 ];
 
 function InscritosPage({
@@ -8444,17 +8576,6 @@ function InscritosPage({
         />
       ) : view === "eventos" ? (
         <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onMapaEscola={onMapaEscolaEvento} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
-      ) : view === "satisfacao" ? (
-        <SecaoSatisfacao
-          escolas={escolas}
-          turmas={turmasAlunos}
-          niveis={niveis}
-          categorias={options.categoriasSatisfacao || DEFAULT_CATEGORIAS_SATISFACAO}
-          satisfacao={satisfacao}
-          onSave={onSaveSatisfacao}
-          onRemove={onRemoveSatisfacao}
-          onGerirLista={onGerirLista}
-        />
       ) : view === "registo" ? (
         <InscritosRegisto
           escolas={escolas}
