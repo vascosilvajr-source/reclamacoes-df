@@ -6597,7 +6597,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
         participantes = { ids: [], manual: {}, porEscola: r.porEscola, mapa };
       }
       // Cada atualização fica guardada pela data exata, para se ver a evolução das inscrições.
-      const novo = { ...ev, participantes, ficheiro: f.name };
+      const novo = { ...ev, participantes, ficheiro: f.name, leitura: r.explicacao };
       const c = contasEvento(novo, registoAlunos, niveis);
       const ponto = { data: dataAtual, ficheiro: f.name, inscritos: c.tot.inscritos, elegiveis: c.tot.elegiveis, porEscola: Object.fromEntries(c.linhas.map((l) => [l.escola, l.inscritos])) };
       novo.historico = [...(ev.historico || []).filter((h) => h.data !== dataAtual), ponto].sort((a, b) => a.data.localeCompare(b.data));
@@ -6738,7 +6738,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     Apagar evento
                   </button>
                 </div>
-                {msgImp && <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 8 }}>{msgImp}</div>}
+                {msgImp ? <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 8 }}>{msgImp}</div> : ev.leitura ? <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 8 }}>Última leitura: {ev.leitura}.</div> : null}
                 {(ev.historico || []).length > 0 && (
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, marginBottom: 6 }}>Evolução das inscrições</div>
