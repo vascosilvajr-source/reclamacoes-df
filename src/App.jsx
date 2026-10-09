@@ -8458,6 +8458,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     // O que o ficheiro não traz, para avisar quem vê os números desta época.
     const avisos = {
       entradasSoMes: aF.filter((r) => r.soMes).length,
+      // Poucas linhas: guarda quais são, para se poderem corrigir no Excel.
+      linhasSoMes: aF.filter((r) => r.soMes).length <= 15 ? aF.filter((r) => r.soMes).map((r) => ({ id: r.id, linha: r.linha })) : [],
       entradasSemData: aF.filter((r) => !r.data).length,
       desistSoMes: dF.filter((r) => r.saidaSoMes || (r.soMes && !r.saida)).length,
       desistSemData: dF.filter((r) => !r.data && !r.saida).length,
@@ -9842,7 +9844,13 @@ function textosAvisoEpoca(av, ep) {
   if (!av) return [];
   const t = [];
   const parte = (n, total) => (n >= total ? "todos os" : `${n} de ${total}`);
-  if (av.entradasSoMes) t.push(`O ficheiro de ${ep} só tem o mês de entrada (sem o dia) em ${parte(av.entradasSoMes, av.alunos)} alunos: contam a partir do dia 1 desse mês, por isso as semanas de entrada e a evolução semanal são aproximadas.`);
+  if (av.entradasSoMes && av.linhasSoMes && av.linhasSoMes.length && av.entradasSoMes < av.alunos / 10)
+    t.push(
+      `${av.entradasSoMes} ${av.entradasSoMes === 1 ? "aluno" : "alunos"} de ${ep} sem data de entrada válida no Excel (contam a partir do dia 1 do mês indicado): ${av.linhasSoMes
+        .map((x) => `${x.id}${x.linha ? ` (linha ${x.linha})` : ""}`)
+        .join(", ")}.`
+    );
+  else if (av.entradasSoMes) t.push(`O ficheiro de ${ep} só tem o mês de entrada (sem o dia) em ${parte(av.entradasSoMes, av.alunos)} alunos: contam a partir do dia 1 desse mês, por isso as semanas de entrada e a evolução semanal são aproximadas.`);
   if (av.entradasSemData) t.push(`${av.entradasSemData} ${av.entradasSemData === 1 ? "aluno não tem" : "alunos não têm"} data nem mês de entrada em ${ep}: contam desde o início da época.`);
   if (av.desistSoMes) t.push(`As desistências de ${ep} só têm o mês (${parte(av.desistSoMes, av.desist)}): a semana da desistência é aproximada.`);
   if (av.desistSemData) t.push(`${av.desistSemData} ${av.desistSemData === 1 ? "desistência não tem" : "desistências não têm"} data em ${ep}: contam como saídas no fim da época.`);
