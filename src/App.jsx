@@ -6380,86 +6380,219 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
 }
 
 // ---------- Eventos ----------
-function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
-  const [nome, setNome] = useState("");
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
-  const [escola, setEscola] = useState(escolas[0] || "");
-  const [nTurmas, setNTurmas] = useState("");
-  const [nComp, setNComp] = useState("");
-  const [satisf, setSatisf] = useState("");
-  const [reclam, setReclam] = useState("");
-  const [erro, setErro] = useState("");
+// Cada evento diz para que escolas e para que turmas/equipas (por nível ou escalão) é.
+// Os elegíveis são os alunos inscritos nessas escolas e turmas na data do evento
+// (dos ficheiros de inscritos). Os inscritos no evento vêm do Excel do evento
+// (pelo código do atleta) ou são escritos à mão por escola. Adesão = inscritos ÷ elegíveis.
 
-  const [fEsc, setFEsc] = useState("todas");
-  const [fMes, setFMes] = useState("todos");
+const ORDEM_ESCALAO = (k, niveis) => {
+  const i = (niveis || DEFAULT_NIVEIS).indexOf(k);
+  if (i >= 0) return i;
+  const m = String(k).match(/(\d+)/);
+  return m ? 100 + Number(m[1]) : 999;
+};
 
-  const meses = [...new Set(eventos.map((e) => mesDeData(e.data)).filter(Boolean))].sort().reverse();
-  const lista = eventos
-    .filter((e) => (fEsc === "todas" ? true : e.escola === fEsc))
-    .filter((e) => (fMes === "todos" ? true : mesDeData(e.data) === fMes))
-    .sort((a, b) => String(b.data).localeCompare(String(a.data)));
+// Alunos inscritos numa data (entraram até lá e não tinham saído).
+function alunosNaData(reg, data) {
+  return Object.values((reg && reg.alunos) || {}).filter((a) => (!a.entrada || a.entrada <= data) && (a.estado === "ativo" || !a.saida || a.saida > data));
+}
 
-  const totalInscritos = lista.reduce((s, e) => s + (e.nTurmas || 0) + (e.nComp || 0), 0);
-  const totalReclam = lista.reduce((s, e) => s + (e.reclamacoes || 0), 0);
-  const comSatisf = lista.filter((e) => e.satisfacao !== null && e.satisfacao !== undefined);
-  const satisfMedia = comSatisf.length ? Math.round(comSatisf.reduce((s, e) => s + e.satisfacao, 0) / comSatisf.length) : null;
-
-  // Um evento pode envolver várias escolas: agrupa-se pelo nome + data.
-  const porEvento = [...new Map(lista.map((e) => [`${e.nome}|${e.data}`, e])).keys()].map((k) => {
-    const [nm, dt] = k.split("|");
-    const linhas = lista.filter((e) => e.nome === nm && e.data === dt);
-    return {
-      nome: nm,
-      data: dt,
-      escolas: linhas.length,
-      turmas: linhas.reduce((s, e) => s + (e.nTurmas || 0), 0),
-      comp: linhas.reduce((s, e) => s + (e.nComp || 0), 0),
-      reclam: linhas.reduce((s, e) => s + (e.reclamacoes || 0), 0),
-    };
+// Lê o Excel dos inscritos num evento. Três formatos:
+// - folha com o código do atleta e uma coluna "Inscrito…" (Sim) → os códigos marcados;
+// - folha só com os inscritos e o código → todos os códigos;
+// - folha só com a escola (e o escalão) de cada inscrito → contagem por escola.
+const SIM_EVENTO = /^(sim|s|x|1|true|yes|inscrito)$/;
+function lerInscritosEvento(folhas) {
+  const idAl = COLUNAS_FICHA_ALUNOS.id;
+  const escAl = ["escola df", "escola", "recintos do atleta", "recinto do atleta", "recintos", "recinto"];
+  const cands = [];
+  folhas.forEach((fo) => {
+    for (let i = 0; i < Math.min(10, fo.linhas.length); i++) {
+      const cab = (fo.linhas[i] || []).map(normChave);
+      const id = cab.findIndex((h) => idAl.includes(h));
+      const flag = cab.findIndex((h) => /^inscrit/.test(h));
+      const esc = escAl.map((a) => cab.indexOf(a)).find((j) => j >= 0);
+      const escal = cab.findIndex((h) => h === "escalao" || h === "escalão" || h === "nivel");
+      if (id < 0 && esc === undefined) continue;
+      const dados = fo.linhas.slice(i + 1).filter((l) => l.some((c) => String(c ?? "").trim()));
+      cands.push({ nome: fo.nome, id, flag, esc: esc === undefined ? -1 : esc, escal, dados });
+      break;
+    }
   });
+  const val = (l, j) => (j >= 0 ? String(l[j] ?? "").trim() : "");
+  const comFlag = cands.find((c) => c.id >= 0 && c.flag >= 0);
+  if (comFlag) {
+    const ids = [...new Set(comFlag.dados.filter((l) => SIM_EVENTO.test(normChave(val(l, comFlag.flag)))).map((l) => val(l, comFlag.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
+    if (ids.length) return { modo: "ids", ids, folha: comFlag.nome, explicacao: `folha "${comFlag.nome}": ${ids.length} alunos marcados como inscritos` };
+  }
+  const soInscritos = (c) => /inscrit|particip/i.test(c.nome);
+  const comId = cands.filter((c) => c.id >= 0).sort((a, b) => soInscritos(b) - soInscritos(a))[0];
+  if (comId) {
+    const ids = [...new Set(comId.dados.map((l) => val(l, comId.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
+    if (ids.length) return { modo: "ids", ids, folha: comId.nome, explicacao: `folha "${comId.nome}": ${ids.length} códigos do atleta` };
+  }
+  const comEsc = cands.filter((c) => c.esc >= 0).sort((a, b) => soInscritos(b) - soInscritos(a) || a.dados.length - b.dados.length)[0];
+  if (!comEsc) return null;
+  const porEscola = {};
+  comEsc.dados.forEach((l) => {
+    const e = val(l, comEsc.esc);
+    if (!e) return;
+    const x = (porEscola[e] = porEscola[e] || { total: 0, porEscalao: {} });
+    x.total++;
+    const k = val(l, comEsc.escal);
+    if (k) x.porEscalao[k] = (x.porEscalao[k] || 0) + 1;
+  });
+  const n = Object.values(porEscola).reduce((t, x) => t + x.total, 0);
+  return { modo: "escolas", porEscola, folha: comEsc.nome, explicacao: `folha "${comEsc.nome}": ${n} inscritos, contados por escola (sem código do atleta)` };
+}
 
-  const guardar = () => {
-    if (!nome.trim()) {
-      setErro("Dá um nome ao evento.");
+function contasEvento(ev, registoAlunos, niveis) {
+  const ep = epocaDe(ev.data);
+  const reg = registoAlunos[ep];
+  const excluidas = new Set(ev.excluidas || []);
+  const escolasEv = ev.escolas && ev.escolas.length ? ev.escolas.filter((e) => !excluidas.has(e)) : null;
+  const escaloes = ev.escaloes && ev.escaloes.length ? new Set(ev.escaloes) : null;
+  const elegivel = (a) => !excluidas.has(a.escola) && (!escolasEv || escolasEv.includes(a.escola)) && (!escaloes || escaloes.has(escalaoDaTurma(a.turma, niveis)));
+  const naData = alunosNaData(reg, ev.data);
+  const eleg = naData.filter(elegivel);
+  const ids = new Set(((ev.participantes && ev.participantes.ids) || []).map(String));
+  const porEscola = {};
+  const linha = (e) => (porEscola[e] = porEscola[e] || { escola: e, elegiveis: 0, inscritos: 0, fora: 0 });
+  (escolasEv || [...new Set(eleg.map((a) => a.escola))]).forEach(linha);
+  eleg.forEach((a) => {
+    const l = linha(a.escola);
+    l.elegiveis++;
+    if (ids.has(String(a.id))) l.inscritos++;
+  });
+  // Inscritos no evento que não são do público definido (outra escola ou escalão).
+  const porId = Object.fromEntries(naData.map((a) => [String(a.id), a]));
+  let semCorrespondencia = 0;
+  let foraEscolas = 0;
+  ids.forEach((id) => {
+    const a = porId[id] || (reg && reg.alunos && reg.alunos[id]);
+    if (!a) semCorrespondencia++;
+    else if (!elegivel(a)) {
+      if (porEscola[a.escola]) porEscola[a.escola].fora++;
+      else foraEscolas++;
+    }
+  });
+  // Excel sem código: contagem por escola (nome do Excel → escola da app), só dos escalões do evento.
+  const bruto = (ev.participantes && ev.participantes.porEscola) || {};
+  const mapa = (ev.participantes && ev.participantes.mapa) || {};
+  const escNorm = (k) => normChave(k).replace(/s$/, "");
+  const escalaoOk = (k) => !escaloes || [...escaloes].some((x) => escNorm(x) === escNorm(k));
+  let semEscola = 0;
+  Object.entries(bruto).forEach(([raw, x]) => {
+    const e = mapa[raw];
+    const dentro = Object.keys(x.porEscalao || {}).length ? Object.entries(x.porEscalao).reduce((t, [k, n]) => t + (escalaoOk(k) ? n : 0), 0) : x.total;
+    if (!e) {
+      semEscola += x.total;
       return;
     }
-    if (nTurmas === "" && nComp === "") {
-      setErro("Indica os inscritos de turmas e/ou de competição.");
+    if (!porEscola[e] && escolasEv) {
+      foraEscolas += x.total;
       return;
     }
-    const sv = satisf === "" ? null : Math.max(0, Math.min(100, Math.round(Number(satisf))));
+    const l = linha(e);
+    l.inscritos += dentro;
+    l.fora += x.total - dentro;
+  });
+  // Contagens escritas à mão substituem as do Excel.
+  Object.entries((ev.participantes && ev.participantes.manual) || {}).forEach(([e, n]) => {
+    if (n === "" || n === null || n === undefined) return;
+    linha(e).inscritos = Number(n) || 0;
+  });
+  const linhas = Object.values(porEscola).sort((a, b) => b.elegiveis - a.elegiveis || a.escola.localeCompare(b.escola, "pt"));
+  const tot = linhas.reduce((t, l) => ({ elegiveis: t.elegiveis + l.elegiveis, inscritos: t.inscritos + l.inscritos, fora: t.fora + l.fora }), { elegiveis: 0, inscritos: 0, fora: 0 });
+  return { ep, temRegisto: !!reg, linhas, tot, semCorrespondencia, foraEscolas, semEscola, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
+}
+
+function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onSave, onUpdate, onRemove }) {
+  const hoje = isoDe(new Date());
+  const [nome, setNome] = useState("");
+  const [data, setData] = useState(hoje);
+  const [escSel, setEscSel] = useState([]);
+  const [modoEsc, setModoEsc] = useState("so");
+  const [escalSel, setEscalSel] = useState([]);
+  const [erro, setErro] = useState("");
+  const [aberto, setAberto] = useState(null);
+  const [aLer, setALer] = useState(false);
+  const [msgImp, setMsgImp] = useState("");
+  const [verAntigos, setVerAntigos] = useState(false);
+
+  const reg = registoAlunos[epocaDe(data)];
+  const escolasReg = [...new Set(Object.values((reg && reg.alunos) || {}).map((a) => a.escola))];
+  const listaEscolas = [...new Set([...escolasReg, ...escolas])].sort((a, b) => a.localeCompare(b, "pt"));
+  const escaloesReg = [...new Set(alunosNaData(reg, data).map((a) => escalaoDaTurma(a.turma, niveis)))].sort((a, b) => ORDEM_ESCALAO(a, niveis) - ORDEM_ESCALAO(b, niveis));
+  const novos = eventos.filter((e) => e.v === 2).sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const antigos = eventos.filter((e) => e.v !== 2);
+
+  const chip = (sel, on, txt, key) => (
+    <button
+      key={key || txt}
+      type="button"
+      onClick={on}
+      style={{ border: `1px solid ${sel ? COLORS.navy : COLORS.rule}`, background: sel ? COLORS.navy : COLORS.paperRaised, color: sel ? "#fff" : COLORS.ink, borderRadius: 7, padding: "4px 9px", fontSize: 12.5, cursor: "pointer" }}
+    >
+      {txt}
+    </button>
+  );
+  const alterna = (set, v) => set((l) => (l.includes(v) ? l.filter((x) => x !== v) : [...l, v]));
+
+  const criar = () => {
+    if (!nome.trim()) return setErro("Dá um nome ao evento.");
     setErro("");
-    onSave({
-      id: `ev_${Date.now()}`,
-      nome: nome.trim(),
-      data,
-      escola,
-      nTurmas: Math.round(Number(nTurmas || 0)),
-      nComp: Math.round(Number(nComp || 0)),
-      satisfacao: sv,
-      reclamacoes: Math.round(Number(reclam || 0)),
-    });
-    setNTurmas("");
-    setNComp("");
-    setSatisf("");
-    setReclam("");
+    const ev = { id: `ev_${Date.now()}`, v: 2, nome: nome.trim(), data, escolas: modoEsc === "so" ? escSel : [], excluidas: modoEsc === "exceto" ? escSel : [], escaloes: escalSel, participantes: { ids: [], manual: {} }, satisfacao: null, reclamacoes: 0 };
+    onSave(ev);
+    setAberto(ev.id);
+    setNome("");
+    setEscSel([]);
+    setEscalSel([]);
   };
 
+  // Excel dos inscritos no evento: códigos do atleta (e escola, para os que não têm código).
+  const importar = async (ev, f) => {
+    if (!f) return;
+    setALer(true);
+    setMsgImp("");
+    try {
+      const lidas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f, { todas: true }) : [{ nome: f.name, linhas: lerCSVInq(await f.text()) }];
+      const r = lerInscritosEvento(lidas);
+      if (!r) throw new Error("não encontrei o código do atleta nem a escola dos inscritos");
+      let participantes = { ids: [], manual: {} };
+      if (r.modo === "ids") participantes.ids = r.ids;
+      else {
+        // Nome da escola no Excel ("Porto", "CN Gaia") → escola da app.
+        // Procura primeiro nas escolas com alunos na época do evento.
+        const comAlunos = [...new Set(Object.values(registoAlunos[epocaDe(ev.data)]?.alunos || {}).map((a) => a.escola))];
+        const alvo = ev.escolas && ev.escolas.length ? ev.escolas : comAlunos.length ? comAlunos : listaEscolas;
+        const mapa = {};
+        Object.keys(r.porEscola).forEach((raw) => {
+          const guardada = (mapaEscolas || {})[normChave(raw)];
+          if (guardada && alvo.includes(guardada)) return (mapa[raw] = guardada);
+          const melhor = alvo.map((e) => ({ e, s: semelhancaEscolas(raw, e) })).sort((x, y) => y.s - x.s)[0];
+          mapa[raw] = melhor && melhor.s >= 0.6 ? melhor.e : "";
+        });
+        participantes = { ids: [], manual: {}, porEscola: r.porEscola, mapa };
+      }
+      onUpdate({ ...ev, participantes, ficheiro: f.name });
+      setMsgImp(`Lido: ${r.explicacao}.`);
+    } catch (e) {
+      setMsgImp(`Não consegui ler o ficheiro: ${e?.message || e}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const th = { ...thStyle, whiteSpace: "nowrap" };
   return (
     <div>
       <div style={{ ...panelStyle, marginBottom: 16 }}>
-        <div style={panelTitle}>Registar participação num evento</div>
+        <div style={panelTitle}>Novo evento</div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Evento</label>
-            <input
-              type="text"
-              value={nome}
-              onChange={(e) => { setNome(e.target.value); setErro(""); }}
-              placeholder="Ex: Torneio de Natal"
-              list="lista-eventos"
-              style={{ ...inputStyle, width: 210 }}
-            />
+            <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Torneio de Natal" list="lista-eventos" style={{ ...inputStyle, width: 240 }} />
             <datalist id="lista-eventos">
               {[...new Set(eventos.map((e) => e.nome))].map((n) => (
                 <option key={n} value={n} />
@@ -6468,136 +6601,221 @@ function SecaoEventos({ escolas, eventos, onSave, onRemove }) {
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Data</label>
-            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={{ ...inputStyle, width: 155 }} />
+            <input type="date" value={data} onChange={(e) => setData(e.target.value)} style={{ ...inputStyle, width: 160 }} />
           </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
-            <select value={escola} onChange={(e) => setEscola(e.target.value)} style={{ ...inputStyle, width: 165 }}>
-              {escolas.map((e) => (
-                <option key={e} value={e}>{e}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos de turmas</label>
-            <input type="number" min="0" value={nTurmas} onChange={(e) => { setNTurmas(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 150 }} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Inscritos de competição</label>
-            <input type="number" min="0" value={nComp} onChange={(e) => { setNComp(e.target.value); setErro(""); }} style={{ ...inputStyle, width: 165 }} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Satisfação (%)</label>
-            <input type="number" min="0" max="100" value={satisf} onChange={(e) => setSatisf(e.target.value)} style={{ ...inputStyle, width: 130 }} placeholder="—" />
-          </div>
-          <div>
-            <label style={{ ...labelStyle, marginTop: 0 }}>Reclamações</label>
-            <input type="number" min="0" value={reclam} onChange={(e) => setReclam(e.target.value)} style={{ ...inputStyle, width: 120 }} placeholder="0" />
-          </div>
-          <button onClick={guardar} style={{ ...primaryBtnStyle, flex: "none", padding: "9px 16px" }}>Registar</button>
         </div>
-        {erro && <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 8 }}>{erro}</div>}
-        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 9 }}>
-          Uma linha por escola. Repete o mesmo nome e data para juntar várias escolas no mesmo evento.
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <label style={{ ...labelStyle, margin: 0 }}>Escolas {escSel.length ? (modoEsc === "so" ? `(só ${escSel.length})` : `(todas menos ${escSel.length})`) : "(todas)"}</label>
+          <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 8, padding: 2 }}>
+            {[
+              ["so", "Só as escolhidas"],
+              ["exceto", "Todas menos as escolhidas"],
+            ].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setModoEsc(k)} style={{ border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer", background: modoEsc === k ? COLORS.paperRaised : "transparent", fontWeight: modoEsc === k ? 600 : 500, color: modoEsc === k ? COLORS.ink : COLORS.ink2 }}>
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+          {chip(!escSel.length, () => setEscSel([]), "Todas", "__todas")}
+          {listaEscolas.map((e) => chip(escSel.includes(e), () => alterna(setEscSel, e), e.replace(/^Dragon Force\s+/, ""), e))}
+        </div>
+        <label style={{ ...labelStyle, marginTop: 14 }}>Turmas / equipas {escalSel.length ? `(${escalSel.length})` : "(todas)"}</label>
+        {escaloesReg.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {chip(!escalSel.length, () => setEscalSel([]), "Todas", "__todos")}
+            {escaloesReg.map((k) => chip(escalSel.includes(k), () => alterna(setEscalSel, k), k))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem alunos importados na época desta data: importa os inscritos no Painel para escolher as turmas e calcular a adesão.</div>
+        )}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+          <button onClick={criar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
+            Criar evento
+          </button>
+          {erro && <span style={{ color: COLORS.danger, fontSize: 13 }}>{erro}</span>}
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10, lineHeight: 1.5 }}>
+          Elegíveis: alunos inscritos nessas escolas e turmas/equipas na data do evento. Depois importa o Excel dos inscritos no evento (pelo código do atleta) ou escreve os números por escola.
         </div>
       </div>
 
-      <Filtros>
-        <select value={fEsc} onChange={(e) => setFEsc(e.target.value)} style={{ ...inputStyle, width: 180 }}>
-          <option value="todas">Todas as escolas</option>
-          {escolas.map((e) => (
-            <option key={e} value={e}>{e}</option>
-          ))}
-        </select>
-        <select value={fMes} onChange={(e) => setFMes(e.target.value)} style={{ ...inputStyle, width: 160 }}>
-          <option value="todos">Todos os meses</option>
-          {meses.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-      </Filtros>
-
-      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
-        <StatCard label="Eventos" value={porEvento.length} />
-        <StatCard label="Participações" value={totalInscritos} subtitle="turmas + competição" />
-        <StatCard label="Satisfação média" value={satisfMedia === null ? "—" : `${satisfMedia}%`} color={COLORS.ok} />
-        <StatCard label="Reclamações" value={totalReclam} color={totalReclam ? COLORS.danger : COLORS.navy} />
-      </div>
-
-      {lista.length === 0 ? (
-        <SemDados texto="Sem eventos registados para os filtros selecionados." />
-      ) : (
-        <>
-          {porEvento.length > 0 && (
-            <div style={{ ...panelStyle, marginBottom: 16 }}>
-              <div style={panelTitle}>Participação por evento</div>
-              <ResponsiveContainer width="100%" height={Math.max(200, porEvento.length * 40)}>
-                <BarChart data={porEvento} layout="vertical" margin={{ left: 8 }}>
-                  <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="nome" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
-                  <Bar dataKey="turmas" name="Turmas" stackId="e" fill={COLORS.purple} />
-                  <Bar dataKey="comp" name="Competição" stackId="e" fill={COLORS.progress} />
-                </BarChart>
-              </ResponsiveContainer>
-              <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.purple }} /> Turmas
-                </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 2, background: COLORS.progress }} /> Competição
-                </span>
+      {novos.length === 0 && <div style={{ ...panelStyle, fontSize: 13, color: COLORS.slate, marginBottom: 16 }}>Ainda sem eventos.</div>}
+      {novos.map((ev) => {
+        const c = contasEvento(ev, registoAlunos, niveis);
+        const ab = aberto === ev.id;
+        const manual = (ev.participantes && ev.participantes.manual) || {};
+        return (
+          <div key={ev.id} style={{ ...panelStyle, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", cursor: "pointer" }} onClick={() => setAberto(ab ? null : ev.id)}>
+              <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14.5 }}>{ev.nome}</div>
+                <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2 }}>
+                  {fmt(new Date(ev.data + "T00:00:00"))} · {ev.escolas && ev.escolas.length ? `${ev.escolas.length} ${ev.escolas.length === 1 ? "escola" : "escolas"}` : "todas as escolas"}
+                  {ev.excluidas && ev.excluidas.length ? ` menos ${ev.excluidas.map((e) => e.replace(/^Dragon Force\s+/, "")).join(", ")}` : ""} · {ev.escaloes && ev.escaloes.length ? ev.escaloes.join(", ") : "todas as turmas e equipas"}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.adesao === null ? "—" : `${fmtNum(c.adesao, 1)}%`}</div>
+                <div style={{ fontSize: 11.5, color: COLORS.slate }}>
+                  {fmtNum(c.tot.inscritos)} de {fmtNum(c.tot.elegiveis)} elegíveis
+                </div>
               </div>
             </div>
-          )}
+            {ab && (
+              <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 12 }}>
+                {!c.temRegisto && <div style={{ fontSize: 12.5, color: COLORS.warn, marginBottom: 8 }}>Sem alunos importados em {c.ep}: não dá para saber quantos eram elegíveis.</div>}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                  <label style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <FileText size={14} /> {aLer ? "A ler…" : ev.ficheiro ? "Substituir Excel dos inscritos" : "Importar Excel dos inscritos"}
+                    <input type="file" accept=".xlsx,.csv" style={{ display: "none" }} onChange={(e) => importar(ev, e.target.files && e.target.files[0])} />
+                  </label>
+                  {ev.ficheiro && <span style={{ fontSize: 12, color: COLORS.slate }}>{ev.ficheiro}</span>}
+                  <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                    Satisfação (%)
+                    <input type="number" min="0" max="100" value={ev.satisfacao ?? ""} onChange={(e) => onUpdate({ ...ev, satisfacao: e.target.value === "" ? null : Math.max(0, Math.min(100, Number(e.target.value))) })} style={{ ...inputStyle, width: 80, padding: "5px 8px" }} />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                    Reclamações
+                    <input type="number" min="0" value={ev.reclamacoes ?? 0} onChange={(e) => onUpdate({ ...ev, reclamacoes: Number(e.target.value) || 0 })} style={{ ...inputStyle, width: 70, padding: "5px 8px" }} />
+                  </label>
+                  <button onClick={() => onRemove(ev.id)} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: "auto", color: COLORS.danger, fontSize: 12.5 }}>
+                    Apagar evento
+                  </button>
+                </div>
+                {msgImp && <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 8 }}>{msgImp}</div>}
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Escola</th>
+                        <th style={{ ...th, textAlign: "right" }}>Elegíveis</th>
+                        <th style={{ ...th, textAlign: "right" }}>Inscritos no evento</th>
+                        <th style={{ ...th, textAlign: "right" }}>Adesão</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {c.linhas.map((l) => (
+                        <tr key={l.escola}>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>
+                            <button title="Esta escola não participa: tirar do evento" onClick={() => onUpdate({ ...ev, excluidas: [...new Set([...(ev.excluidas || []), l.escola])] })} style={{ ...iconBtnStyle, padding: 0, marginRight: 6, verticalAlign: "-2px" }} aria-label={`Tirar ${l.escola} do evento`}>
+                              <X size={12} />
+                            </button>
+                            {l.escola}
+                            {l.fora > 0 && <span style={{ fontSize: 11, color: COLORS.slate, fontWeight: 400 }}> · +{l.fora} de outras turmas/equipas (não contam)</span>}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtNum(l.elegiveis)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}>
+                            <input
+                              type="number"
+                              min="0"
+                              value={manual[l.escola] ?? l.inscritos}
+                              onChange={(e) => onUpdate({ ...ev, participantes: { ...(ev.participantes || {}), manual: { ...manual, [l.escola]: e.target.value } } })}
+                              style={{ ...inputStyle, width: 80, padding: "4px 7px", textAlign: "right" }}
+                              aria-label={`Inscritos de ${l.escola}`}
+                            />
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{l.elegiveis ? `${fmtNum((l.inscritos / l.elegiveis) * 100, 1)}%` : "—"}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td style={{ ...tdStyle, fontWeight: 700 }}>Total</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmtNum(c.tot.elegiveis)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmtNum(c.tot.inscritos)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{c.adesao === null ? "—" : `${fmtNum(c.adesao, 1)}%`}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {ev.participantes && ev.participantes.porEscola && (
+                  <details style={{ marginTop: 10 }} open={Object.values(ev.participantes.mapa || {}).some((x) => !x)}>
+                    <summary style={{ fontSize: 12.5, cursor: "pointer", color: COLORS.ink2 }}>
+                      Escolas do Excel → escolas da app {c.semEscola ? <strong style={{ color: COLORS.warn }}>· {c.semEscola} inscritos sem escola atribuída</strong> : ""}
+                    </summary>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 6, marginTop: 8 }}>
+                      {Object.entries(ev.participantes.porEscola)
+                        .sort((x, y) => y[1].total - x[1].total)
+                        .map(([raw, x]) => (
+                          <label key={raw} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                            <span style={{ flex: "0 0 45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={raw}>
+                              {raw} <span style={{ color: COLORS.slate }}>· {x.total}</span>
+                            </span>
+                            <select
+                              value={(ev.participantes.mapa || {})[raw] || ""}
+                              onChange={(e) => onUpdate({ ...ev, participantes: { ...ev.participantes, mapa: { ...(ev.participantes.mapa || {}), [raw]: e.target.value } } })}
+                              style={{ ...inputStyle, padding: "4px 7px", fontSize: 12.5, borderColor: (ev.participantes.mapa || {})[raw] ? COLORS.rule : COLORS.warn }}
+                            >
+                              <option value="">Escolher escola</option>
+                              {listaEscolas.map((e) => (
+                                <option key={e} value={e}>
+                                  {e}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                    </div>
+                  </details>
+                )}
+                {ev.excluidas && ev.excluidas.length > 0 && (
+                  <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>
+                    Não participam: {ev.excluidas.join(", ")}.{" "}
+                    <button onClick={() => onUpdate({ ...ev, excluidas: [] })} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                      Repor
+                    </button>
+                  </div>
+                )}
+                {c.foraEscolas > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.foraEscolas} inscritos no evento são de escolas fora do público definido (não contam na adesão).</div>}
+                {c.semCorrespondencia > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.semCorrespondencia} códigos do Excel não estão nos inscritos de {c.ep} (não contam na adesão).</div>}
+                <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Os números da coluna "Inscritos no evento" vêm do Excel; podes corrigi-los à mão.</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
 
-          <div style={panelStyle}>
-            <div style={panelTitle}>Registos ({lista.length})</div>
-            <div style={{ overflowX: "auto" }}>
+      {antigos.length > 0 && (
+        <div style={{ ...panelStyle, marginTop: 16 }}>
+          <button onClick={() => setVerAntigos((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 13 }}>
+            {verAntigos ? "Esconder" : "Ver"} registos antigos ({antigos.length}, sem público definido)
+          </button>
+          {verAntigos && (
+            <div style={{ overflowX: "auto", marginTop: 8 }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Data", "Evento", "Escola", "Turmas", "Competição", "Total", "Satisfação", "Reclamações", ""].map((h) => (
-                      <th key={h} style={thStyle}>{h}</th>
+                    {["Evento", "Data", "Escola", "Turmas", "Competição", "Satisfação", "Reclamações", ""].map((h) => (
+                      <th key={h} style={th}>
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {lista.map((e) => (
-                    <tr key={e.id}>
-                      <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{e.data}</td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>{e.nome}</td>
-                      <td style={tdStyle}>{e.escola}</td>
-                      <td style={tdStyle}>{e.nTurmas || 0}</td>
-                      <td style={tdStyle}>{e.nComp || 0}</td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>{(e.nTurmas || 0) + (e.nComp || 0)}</td>
-                      <td style={tdStyle}>
-                        {e.satisfacao === null || e.satisfacao === undefined ? (
-                          "—"
-                        ) : (
-                          <Tag
-                            label={`${e.satisfacao}%`}
-                            color={e.satisfacao >= 80 ? COLORS.ok : e.satisfacao >= 60 ? COLORS.warn : COLORS.danger}
-                            bg={e.satisfacao >= 80 ? COLORS.okBg : e.satisfacao >= 60 ? COLORS.warnBg : COLORS.dangerBg}
-                          />
-                        )}
-                      </td>
-                      <td style={{ ...tdStyle, color: e.reclamacoes ? COLORS.danger : COLORS.slate, fontWeight: e.reclamacoes ? 600 : 400 }}>
-                        {e.reclamacoes || 0}
-                      </td>
-                      <td style={tdStyle}>
-                        <button title="Remover" onClick={() => onRemove(e.id)} style={{ ...iconBtnStyle, padding: 0 }}>
-                          <X size={13} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {antigos
+                    .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+                    .map((e) => (
+                      <tr key={e.id}>
+                        <td style={tdStyle}>{e.nome}</td>
+                        <td style={tdStyle}>{e.data}</td>
+                        <td style={tdStyle}>{e.escola}</td>
+                        <td style={tdStyle}>{e.nTurmas || 0}</td>
+                        <td style={tdStyle}>{e.nComp || 0}</td>
+                        <td style={tdStyle}>{e.satisfacao ?? "—"}</td>
+                        <td style={tdStyle}>{e.reclamacoes || 0}</td>
+                        <td style={tdStyle}>
+                          <button onClick={() => onRemove(e.id)} style={{ ...iconBtnStyle, padding: 0 }} aria-label="Remover">
+                            <X size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -7988,6 +8206,7 @@ function InscritosPage({
   onRemoveEspaco,
   onSaveEvento,
   onRemoveEvento,
+  onUpdateEvento,
   onSaveSatisfacao,
   onRemoveSatisfacao,
   onGerirLista,
@@ -8095,7 +8314,7 @@ function InscritosPage({
           onGerirLista={onGerirLista}
         />
       ) : view === "eventos" ? (
-        <SecaoEventos escolas={escolas} eventos={eventos} onSave={onSaveEvento} onRemove={onRemoveEvento} />
+        <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
       ) : view === "satisfacao" ? (
         <SecaoSatisfacao
           escolas={escolas}
@@ -8174,10 +8393,10 @@ function nomeTurmaProposto(bruto, niveis) {
 
 const rubricaDe = (v) => {
   const r = normChave(v);
-  if (r.startsWith("renov")) return "renov";
-  if (r.startsWith("extra")) return "extra";
-  if (r.startsWith("experi")) return "experiencia";
-  if (r.startsWith("inscri") || r.startsWith("nova")) return "novo";
+  if (/renov|reinscri/.test(r)) return "renov";
+  if (/extra/.test(r)) return "extra";
+  if (/experi/.test(r)) return "experiencia";
+  if (/inscri|^nova/.test(r)) return "novo";
   return "";
 };
 const ROTULO_RUBRICA = { renov: "Renovação", novo: "Inscrição", extra: "Extrainscrição", experiencia: "Experiência" };
@@ -8258,7 +8477,7 @@ function balancoSemanal(reg, escola, epoca) {
 // (o mesmo código) com a rubrica Renovação. Por escola da época anterior.
 function renovacoesEntreEpocas(regAnt, regAtual, escola) {
   if (!regAnt || !regAtual) return null;
-  const base = Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo" && (!escola || a.escola === escola));
+  const base = Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo" && !a.semCodigo && (!escola || a.escola === escola));
   if (!base.length) return null;
   const atual = regAtual.alunos || {};
   const voltaram = base.filter((a) => atual[a.id]);
@@ -8273,15 +8492,26 @@ const COLUNAS_FICHA_ALUNOS = {
   id: ["codigo atleta no clube", "codigo do atleta", "codigo atleta", "id do aluno", "id aluno", "id", "codigo", "n atleta", "numero de atleta"],
   nascimento: ["data de nascimento", "ano de nascimento", "nascimento", "data nasc", "ano"],
   genero: ["genero", "sexo", "genero (m ou f)", "genero (m/f)"],
-  rubrica: ["rubricas/artigos", "rubricas", "rubrica", "artigos", "tipo de inscricao"],
+  rubrica: ["rubricas/artigos", "rubricas/artigos filtrados", "rubricas", "rubrica", "artigos", "tipo de inscricao"],
   equipa: ["equipas do atleta", "equipa do atleta", "equipa/turma", "turma/equipa", "equipas", "equipa", "turma", "escalao"],
   data: ["data de entrada", "data de inscricao", "data", "data entrada"],
-  motivo: ["motivo desistencia", "motivo de desistencia", "motivo da desistencia", "motivo"],
+  motivo: ["motivo desistencia", "motivo de desistencia", "motivo da desistencia", "tipo", "motivo"],
   saida: ["data de desistencia", "data desistencia", "data da desistencia", "data de saida", "data saida"],
   semana: ["semana", "semana da epoca", "n semana"],
-  mes: ["mes", "mês"],
-  mesSaida: ["mes desistencia", "mes de desistencia", "mes da desistencia", "mes saida", "mes de saida"],
+  mes: ["mes", "mês", "mes - inscricao", "mes inscricao", "mes de inscricao", "mes - entrada", "mes de entrada"],
+  mesSaida: ["mes desistencia", "mes de desistencia", "mes da desistencia", "mes - desistencia", "mes saida", "mes de saida", "mes - saida"],
 };
+
+// Mês de uma célula: 9, "Setembro", "7.2024" (mês e ano), "Julho Época 21/22".
+const MESES_NOMES = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+function mesDeCelula(v) {
+  const t = normChave(v);
+  if (!t) return { mes: null, ano: null };
+  const m1 = t.match(/^(\d{1,2})(?:[./-](\d{4}))?$/);
+  if (m1 && Number(m1[1]) >= 1 && Number(m1[1]) <= 12) return { mes: Number(m1[1]), ano: m1[2] ? Number(m1[2]) : null };
+  const i = MESES_NOMES.findIndex((n) => t.startsWith(n) || t.startsWith(n.slice(0, 3) + " ") || t === n.slice(0, 3));
+  return { mes: i >= 0 ? i + 1 : null, ano: null };
+}
 
 function lerFichaAlunos(linhas) {
   // Linha de títulos: a que reconhece mais colunas nas 10 primeiras.
@@ -8308,7 +8538,9 @@ function lerFichaAlunos(linhas) {
       mapa = m;
     }
   });
-  if (iCab < 0 || mapa.id === undefined || mapa.escola === undefined) return null;
+  // Sem código do atleta só se aceita uma folha de desistências (contam por escola).
+  const semId = mapa.id === undefined;
+  if (iCab < 0 || mapa.escola === undefined || (semId && mapa.motivo === undefined && mapa.mesSaida === undefined)) return null;
   const dados = linhas.slice(iCab + 1);
   // Nascimento: se a coluna escolhida tem erros (#VALUE!), usa outra com "nasc".
   const valida = (j) => {
@@ -8332,13 +8564,17 @@ function lerFichaAlunos(linhas) {
       motivo: v(l, "motivo"),
       saida: mapa.saida !== undefined ? dataDeCelula(v(l, "saida")) || null : null,
       semana: Number(v(l, "semana")) || null,
-      mes: Number(v(l, "mes")) || null,
-      mesSaida: Number(v(l, "mesSaida")) || null,
+      mes: mesDeCelula(v(l, "mes")).mes,
+      mesAno: mesDeCelula(v(l, "mes")).ano,
+      mesSaida: mesDeCelula(v(l, "mesSaida")).mes,
+      mesSaidaAno: mesDeCelula(v(l, "mesSaida")).ano,
       linha: l.__linha,
     }))
     // Linhas de títulos repetidas a meio da folha não são alunos.
-    .filter((r) => r.id && r.escola && /\d/.test(r.id));
-  return { mapa, registos, titulos: linhas[iCab] };
+    // Linhas sem código (mas com escola e turma ou rubrica) também contam.
+    .filter((r) => r.escola && normChave(r.escola) !== normChave(linhas[iCab][mapa.escola]) && (r.id ? /\d/.test(r.id) : semId || r.equipa || r.rubrica))
+    .map((r) => (r.id && /\d/.test(r.id) ? r : { ...r, id: "" }));
+  return { mapa, registos, titulos: linhas[iCab], semId };
 }
 
 function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, mapaEscolasGuardado, onImportar, onFechar, epocaInicial }) {
@@ -8366,8 +8602,16 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       const fichas = lidas.map((fo) => ({ nome: fo.nome, oculta: fo.oculta, ficha: lerFichaAlunos(fo.linhas) })).filter((x) => x.ficha && x.ficha.registos.length);
       if (!fichas.length) throw new Error("não encontrei nenhuma folha com código do atleta e escola");
       // Papel de cada folha: desistências têm motivo; experiências têm "experi" no nome ou na rubrica; o resto são alunos.
+      // Ficheiro com várias épocas (ex.: "Época 22-23", "23-24 Desistências"): usa as da mais recente.
+      const tagDe = (nome) => {
+        const m = String(nome).match(/(\d{2})\s*[-./]\s*(\d{2})/);
+        return m && Number(m[2]) === (Number(m[1]) + 1) % 100 ? m[1] : null;
+      };
+      const tags = [...new Set(fichas.map((x) => tagDe(x.nome)).filter(Boolean))].sort();
+      const tagEscolhida = tags.length > 1 ? tags[tags.length - 1] : null;
       const p = { alunos: -1, desist: -1, exp: -1 };
       fichas.forEach((x, i) => {
+        if (tagEscolhida && tagDe(x.nome) !== tagEscolhida) return;
         const regs = x.ficha.registos;
         const ehExp = /experi/i.test(x.nome) || regs.filter((r) => r.rubrica === "experiencia").length > regs.length / 2;
         if (x.ficha.mapa.motivo !== undefined && p.desist < 0) p.desist = i;
@@ -8376,6 +8620,9 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       });
       setFolhas(fichas);
       setPapel(p);
+      // Ficheiro sem datas: a época vem do nome da folha (ex.: "Época 23-24").
+      const tagAlunos = p.alunos >= 0 ? tagDe(fichas[p.alunos].nome) : null;
+      if (tagAlunos && !fichas[p.alunos].ficha.registos.some((r) => r.data)) setEpocaManual(`20${tagAlunos}/${String(Number(tagAlunos) + 1).padStart(2, "0")}`);
     } catch (err) {
       setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
     } finally {
@@ -8443,16 +8690,22 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const emCurso = epoca === epocaDe(hoje);
     // Ficheiros antigos só com o mês (sem data): conta como dia 1 desse mês da época.
     const anoIni = Number(epoca.slice(0, 4));
+    // Entradas em junho/julho sem ano são pré-época (renovações antes de agosto); "7.2024" traz o ano.
     const comMes = (lista) =>
       lista.map((r) => {
         if (r.data || !(r.mes >= 1 && r.mes <= 12)) return r;
-        const ano = r.mes >= 8 ? anoIni : anoIni + 1;
+        const ano = r.mesAno || (r.mes >= 6 ? anoIni : anoIni + 1);
         return { ...r, data: `${ano}-${String(r.mes).padStart(2, "0")}-01`, soMes: true };
       });
-    const aF = comMes(alunosF);
-    const dataDoMes = (m) => `${m >= 8 ? anoIni : anoIni + 1}-${String(m).padStart(2, "0")}-01`;
-    const dF = comMes(desistF).map((r) => (!r.saida && r.mesSaida >= 1 && r.mesSaida <= 12 ? { ...r, saida: dataDoMes(r.mesSaida), saidaSoMes: true } : r));
-    const eF = comMes(expF);
+    // Alunos sem código no Excel: contam com um código só desta importação (não entram na renovação).
+    const aF = comMes(alunosF).map((r, i) => (r.id ? r : { ...r, id: `sem-codigo-${epoca}-a${i + 1}`, semCodigo: true }));
+    const dataDoMes = (m, ano) => `${ano || (m >= 8 ? anoIni : anoIni + 1)}-${String(m).padStart(2, "0")}-01`;
+    // Desistências sem código do atleta: contam na escola com um código só desta importação.
+    const dF = comMes(desistF).map((r, i) => {
+      const x = !r.saida && r.mesSaida >= 1 && r.mesSaida <= 12 ? { ...r, saida: dataDoMes(r.mesSaida, r.mesSaidaAno), saidaSoMes: true } : r;
+      return x.id ? x : { ...x, id: `sem-codigo-${epoca}-${i + 1}`, semCodigo: true };
+    });
+    const eF = comMes(expF).map((r, i) => (r.id ? r : { ...r, id: `sem-codigo-${epoca}-x${i + 1}`, semCodigo: true }));
     // Sem data nenhuma: na época em curso conta hoje; numa época passada, o início da época.
     const semData = emCurso ? hoje : s1;
     // O que o ficheiro não traz, para avisar quem vê os números desta época.
@@ -8465,6 +8718,9 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       desistSemData: dF.filter((r) => !r.data && !r.saida).length,
       expSoMes: eF.filter((r) => r.soMes).length,
       expSemData: eF.filter((r) => !r.data).length,
+      desistSemCodigo: dF.filter((r) => r.semCodigo).length,
+      alunosSemCodigo: aF.filter((r) => r.semCodigo).length,
+      semGenero: aF.length > 0 && !aF.some((r) => r.genero),
       alunos: aF.length,
       desist: dF.length,
       exps: eF.length,
@@ -8486,6 +8742,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         entrada: [prev?.entrada, r.data].filter(Boolean).sort()[0] || semData,
         semEntrada: semanaDaEpoca([prev?.entrada, r.data].filter(Boolean).sort()[0] || semData, s1),
         estado: "ativo",
+        semCodigo: !!r.semCodigo,
         saida: null,
         motivo: null,
       };
@@ -8512,6 +8769,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         entrada: prev?.entrada || entradaDe(r) || s1,
         semEntrada: semanaDaEpoca(prev?.entrada || entradaDe(r) || s1, s1),
         estado: "desistiu",
+        semCodigo: !!r.semCodigo,
         // Sem data: na época em curso conta hoje; numa época passada, o fim da época.
         saida: saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || (emCurso ? hoje : fimEpoca),
         semSaida: semanaDaEpoca(saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || (emCurso ? hoje : fimEpoca), s1),
@@ -9853,9 +10111,12 @@ function textosAvisoEpoca(av, ep) {
   else if (av.entradasSoMes) t.push(`O ficheiro de ${ep} só tem o mês de entrada (sem o dia) em ${parte(av.entradasSoMes, av.alunos)} alunos: contam a partir do dia 1 desse mês, por isso as semanas de entrada e a evolução semanal são aproximadas.`);
   if (av.entradasSemData) t.push(`${av.entradasSemData} ${av.entradasSemData === 1 ? "aluno não tem" : "alunos não têm"} data nem mês de entrada em ${ep}: contam desde o início da época.`);
   if (av.desistSoMes) t.push(`As desistências de ${ep} só têm o mês (${parte(av.desistSoMes, av.desist)}): a semana da desistência é aproximada.`);
-  if (av.desistSemData) t.push(`${av.desistSemData} ${av.desistSemData === 1 ? "desistência não tem" : "desistências não têm"} data em ${ep}: contam como saídas no fim da época.`);
+  if (av.desistSemData) t.push(`${av.desistSemData} ${av.desistSemData === 1 ? "desistência não tem data" : "desistências não têm data"} em ${ep}: ${av.desistSemData === 1 ? "conta" : "contam"} como ${av.desistSemData === 1 ? "saída" : "saídas"} no fim da época.`);
   if (av.expSemData) t.push(`O ficheiro de ${ep} não tem a data das experiências${av.expSemData < av.exps ? ` (${av.expSemData} de ${av.exps})` : ""}: contam nos totais e na conversão, mas não aparecem por semana nem por mês.`);
   else if (av.expSoMes) t.push(`As experiências de ${ep} só têm o mês: a semana é aproximada.`);
+  if (av.desistSemCodigo) t.push(`${av.desistSemCodigo === av.desist ? "As desistências" : `${av.desistSemCodigo} desistências`} de ${ep} não têm código do atleta: contam no total e por escola, mas não se sabe quem foi.`);
+  if (av.alunosSemCodigo) t.push(`${av.alunosSemCodigo} ${av.alunosSemCodigo === 1 ? "aluno" : "alunos"} de ${ep} sem código do atleta no Excel: contam nos inscritos, mas não na renovação entre épocas.`);
+  if (av.semGenero) t.push(`O ficheiro de ${ep} não tem o género dos alunos: a percentagem do género feminino não está disponível.`);
   return t;
 }
 function AvisoDadosEpoca({ registos }) {
@@ -9917,7 +10178,7 @@ function numerosEpoca(reg, ep, escola, niveis) {
     exps: ex.length,
     conv,
     taxaConv: ex.length - pend ? (conv / (ex.length - pend)) * 100 : null,
-    raparigas: ativos.length ? (ativos.filter((a) => a.genero === "f").length / ativos.length) * 100 : null,
+    raparigas: ativos.length && ativos.some((a) => a.genero) ? (ativos.filter((a) => a.genero === "f").length / ativos.length) * 100 : null,
     turmas: new Set(ativos.map((a) => `${a.escola}|${a.turma}`)).size,
     escolas: new Set(al.map((a) => a.escola)).size,
     porEscalao,
@@ -9935,7 +10196,7 @@ const pctVar = (a, b) => (a !== null && b ? Math.round(((a - b) / b) * 1000) / 1
 // Para onde foram os alunos de uma escola no fim de uma época, na época seguinte.
 function destinosAlunos(regAnt, regAtual, escola) {
   if (!regAnt || !regAtual) return null;
-  const base = Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo" && (!escola || a.escola === escola));
+  const base = Object.values(regAnt.alunos || {}).filter((a) => a.estado === "ativo" && !a.semCodigo && (!escola || a.escola === escola));
   if (!base.length) return null;
   const atual = regAtual.alunos || {};
   const mesma = base.filter((a) => atual[a.id] && atual[a.id].escola === a.escola).length;
@@ -17761,7 +18022,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
                     </td>
                     <td style={{ padding: "7px 8px" }}>{cls && <Tag label={cls.label} color={cls.color} bg={cls.bg} />}</td>
                     <td style={{ padding: "7px 8px", fontVariantNumeric: "tabular-nums" }}>
-                      {p.falta === null ? "—" : p.falta === 0 ? <span style={{ color: COLORS.ok }}>Já lá chega</span> : `+${p.falta} (≈ ${p.porSemana}/semana)`}
+                      {p.falta === null ? "—" : p.falta === 0 ? <span style={{ color: COLORS.ok }}>Previsão acima ({p.previsao - p.ant >= 0 ? "+" : ""}{p.previsao - p.ant})</span> : `faltam ${p.falta} (≈ ${p.porSemana}/semana)`}
                     </td>
                     <td style={{ padding: "7px 8px", fontSize: 12, color: COLORS.slate, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                       +{p.entradas.toLocaleString("pt-PT")} / −{p.saidas.toLocaleString("pt-PT")}
@@ -18795,6 +19056,7 @@ function AppPrincipal({ onSair }) {
 
   const saveEvento = (reg) => persistEventos([...eventos, reg]);
   const removeEvento = (id) => persistEventos(eventos.filter((e) => e.id !== id));
+  const updateEvento = (reg) => persistEventos(eventos.map((e) => (e.id === reg.id ? reg : e)));
   const guardarInquerito = (reg, substituir, planoId) => {
     persistInqueritos(substituir ? inqueritos.map((i) => (i.id === reg.id ? reg : i)) : [...inqueritos, reg]);
     if (planoId) {
@@ -19567,6 +19829,7 @@ function AppPrincipal({ onSair }) {
             onRemoveEspaco={removeEspaco}
             onSaveEvento={saveEvento}
             onRemoveEvento={removeEvento}
+            onUpdateEvento={updateEvento}
             onSaveSatisfacao={saveSatisfacao}
             onRemoveSatisfacao={removeSatisfacao}
             onGerirLista={setListaAberta}
