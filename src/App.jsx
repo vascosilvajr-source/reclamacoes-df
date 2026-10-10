@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
+import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -116,6 +117,7 @@ const STORAGE_INQUERITOS_KEY = "reclamacoes:inqueritos-eventos";
 const STORAGE_NOTAS_REL_KEY = "reclamacoes:relatorios-notas";
 const STORAGE_PLANO_INQ_KEY = "reclamacoes:inqueritos-plano";
 const STORAGE_RESPOSTAS_KEY = "reclamacoes:respostas-tipo";
+const STORAGE_RISCOS_KEY = "reclamacoes:riscos";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -15329,7 +15331,9 @@ const METRICAS_COMP = [
 // nos títulos e números. Sóbrio, ao estilo de um relatório de clube.
 const REL_AZUL = "#0B2A5B";
 const REL_AZUL2 = "#1D4F9A";
-const REL_SERIFA = "'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman', serif";
+// Títulos e números dos relatórios: Sora (geométrica, algarismos fortes). Texto: Manrope.
+const REL_SERIFA = "'Sora', 'Manrope', 'Inter', system-ui, sans-serif";
+const REL_TEXTO = "'Manrope', 'Inter', system-ui, sans-serif";
 const REL_VERDE = "#1E7A4C";
 // Azul institucional no papel claro; no tema escuro usa o azul da app, que se lê melhor.
 const azulRel = () => (COLORS.paper === TEMA_ESCURO.paper ? COLORS.navy : REL_AZUL2);
@@ -15929,7 +15933,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                   <div className="relRotulo" style={{ color: azulRel() }}>
                     {nomePeriodo(periodo)} · {escolas.length} escolas
                   </div>
-                  <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 46, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05 }}>Dragon Force</h2>
+                  <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 40, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05 }}>Dragon Force</h2>
                   <div style={{ fontSize: 13, color: COLORS.ink2 }}>
                     Relatório da rede de escolas · emitido a {geradoEm}
                     {epocas.length > 1 ? ` · compara as épocas ${epocas.join(", ")}` : ""}
@@ -15944,7 +15948,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                     ].map(([l, v, sub], i) => (
                       <div key={l} style={{ padding: "16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
                         <div className="relRotulo">{l}</div>
-                        <div style={{ fontFamily: REL_SERIFA, fontSize: 34, fontWeight: 600, color: COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                        <div style={{ fontFamily: REL_SERIFA, fontSize: 30, fontWeight: 600, color: COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
                         {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
                       </div>
                     ))}
@@ -16688,7 +16692,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
             <div className="relRotulo" style={{ color: azulRel() }}>
               {nomePeriodo(periodo)}
             </div>
-            <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 46, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05, textWrap: "balance" }}>{escola}</h2>
+            <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 40, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05, textWrap: "balance" }}>{escola}</h2>
             <div style={{ fontSize: 13, color: COLORS.ink2 }}>
               Emitido a {geradoEm}
               {cls ? ` · ${cls.label.toLowerCase()} face à época passada` : ""}
@@ -16703,7 +16707,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               ].map(([l, v, c, sub], i) => (
                 <div key={l} style={{ padding: "16px 16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
                   <div className="relRotulo">{l}</div>
-                  <div style={{ fontFamily: REL_SERIFA, fontSize: 34, fontWeight: 600, color: c || COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                  <div style={{ fontFamily: REL_SERIFA, fontSize: 30, fontWeight: 600, color: c || COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
                   {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
                 </div>
               ))}
@@ -18671,6 +18675,23 @@ function diasEntre(aISO, bISO) {
 // Cada fonte recebe o contexto e devolve itens:
 // { id, area, quando: "atraso" | "hoje" | "semana", data, nivel, titulo, detalhe, abrir }
 const FONTES_HOJE = [
+  // Riscos e oportunidades: temas que os dados mostram e que a lista ainda não tem.
+  (c) =>
+    c.avisosRiscos && c.avisosRiscos.n
+      ? [
+          {
+            id: "riscos-avisos",
+            area: "Riscos",
+            quando: "hoje",
+            data: c.hoje,
+            nivel: "atencao",
+            titulo: `${c.avisosRiscos.n} ${c.avisosRiscos.n === 1 ? "tema nos dados sem lugar" : "temas nos dados sem lugar"} nos riscos e oportunidades de ${c.avisosRiscos.ep}`,
+            detalhe: c.avisosRiscos.titulos.slice(0, 3).join(" · ") + (c.avisosRiscos.n > 3 ? " …" : ""),
+            abrir: () => c.irPara && c.irPara("riscos"),
+          },
+        ]
+      : [],
+
   // Reclamações: fora do prazo, prazo hoje, prazo nos próximos 7 dias, por iniciar há dias.
   (c) =>
     c.reclamacoes
@@ -19863,6 +19884,740 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 }
 
 // ---------- Main App ----------
+// ======================================================================
+// ---------- Riscos e oportunidades (DFF.151.01) ----------
+// ======================================================================
+// A tabela do documento "Pensamento baseado no risco e oportunidades", por época,
+// editável na app, ligada ao que os dados mostram (auditorias, reclamações, sanções,
+// desistências, eventos e inscritos) e exportável para Excel no mesmo formato.
+
+const RISCO_COR = {
+  baixo: { fg: "#2F6B1F", bg: "#E3EFD3" },
+  medio: { fg: "#7A5A00", bg: "#FFF6BF" },
+  alto: { fg: "#9C1C1C", bg: "#F6D6D5" },
+};
+const ESTADOS_RISCO = ["Em análise", "Implementada", "Implementação contínua.", "Finalizado"];
+const epocaSeguinte = (ep) => `${Number(ep.slice(0, 4)) + 1}/${String(Number(ep.slice(0, 4)) + 2).slice(2)}`;
+const novoIdRisco = () => `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+function ChipNivel({ it }) {
+  if (it.tipo === "O") return <span style={{ fontSize: 11.5, color: COLORS.slate }}>—</span>;
+  const nr = nivelRisco(it);
+  if (nr === null) return <span style={{ fontSize: 11.5, color: COLORS.warn }}>por avaliar</span>;
+  const c = RISCO_COR[faixaRisco(nr)];
+  return (
+    <span style={{ display: "inline-block", minWidth: 26, textAlign: "center", padding: "2px 7px", borderRadius: 6, fontWeight: 700, fontSize: 12.5, color: c.fg, background: c.bg, fontVariantNumeric: "tabular-nums" }} title={`PO ${it.po} × GR ${it.gr}`}>
+      {nr}
+    </span>
+  );
+}
+
+function TipoRisco({ tipo }) {
+  const o = tipo === "O";
+  return (
+    <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", padding: "2px 6px", borderRadius: 5, color: o ? "#1F5E78" : "#8A4A12", background: o ? "#DBEEF4" : "#FDEADA" }} title={o ? "Oportunidade" : "Risco"}>
+      {o ? "O" : "R"}
+    </span>
+  );
+}
+
+function EditorRisco({ inicial, processos, responsaveis, deteccoes, onGuardar, onApagar, onFechar }) {
+  const [it, setIt] = useState(() => ({ ...inicial }));
+  const muda = (k, v) => setIt((x) => ({ ...x, [k]: v }));
+  const nr = nivelRisco(it);
+  const sug = aceitacaoSugerida(nr);
+  const minhas = deteccoes.filter((d) => d.cobertoPor.includes(it.id) || (it.detetores || []).includes(d.id));
+  const poSug = Math.max(0, ...minhas.filter((d) => d.po).map((d) => d.po));
+  const prov = String(it.proveniencia || "");
+  const temProv = (k) => new RegExp(`\\b${k}\\b`).test(prov);
+  const alternaProv = (k) => {
+    const l = ["QI", "QE", "PI"].filter((x) => (x === k ? !temProv(x) : temProv(x)));
+    muda("proveniencia", l.join(" / "));
+  };
+  const area = (k, rotulo, linhas = 3) => (
+    <div>
+      <label style={{ ...labelStyle, marginTop: 0 }}>{rotulo}</label>
+      <textarea rows={linhas} value={it[k] || ""} onChange={(e) => muda(k, e.target.value)} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+    </div>
+  );
+  const campo = (k, rotulo, extra = {}) => (
+    <div>
+      <label style={{ ...labelStyle, marginTop: 0 }}>{rotulo}</label>
+      <input value={it[k] ?? ""} onChange={(e) => muda(k, e.target.value)} list={extra.list} style={inputStyle} />
+    </div>
+  );
+  const valido = String(it.identificacao || "").trim();
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <h2 style={{ margin: 0, fontSize: 19, color: COLORS.navy, flex: 1 }}>{inicial.__novo ? "Novo risco ou oportunidade" : `Nº ${it.n}`}</h2>
+          <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 8, padding: 2 }}>
+            {[
+              ["R", "Risco"],
+              ["O", "Oportunidade"],
+            ].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => muda("tipo", k)} style={{ border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12.5, cursor: "pointer", background: it.tipo === k ? COLORS.paperRaised : "transparent", fontWeight: it.tipo === k ? 600 : 500, color: it.tipo === k ? COLORS.ink : COLORS.ink2 }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+
+        {minhas.length > 0 && (
+          <div style={{ padding: "10px 12px", borderRadius: 10, background: COLORS.paperSunken, marginBottom: 14, fontSize: 12.5, lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>O que os dados desta época mostram</div>
+            {minhas.map((d) => (
+              <div key={d.id} style={{ marginBottom: 6 }}>
+                <span style={{ color: COLORS.ink }}>{d.detalhe}</span>
+                {d.evidencias.length > 0 && (
+                  <details style={{ marginTop: 2 }}>
+                    <summary style={{ cursor: "pointer", color: COLORS.ink2, fontSize: 12 }}>Ver exemplos</summary>
+                    <ul style={{ margin: "4px 0 0", paddingLeft: 18, color: COLORS.ink2, fontSize: 12 }}>
+                      {d.evidencias.slice(0, 8).map((e, i) => (
+                        <li key={i}>
+                          {e.origem}: {e.texto}
+                          {e.escola ? ` · ${e.escola.replace(/^Dragon Force\s+/, "")}` : ""}
+                          {e.data ? ` · ${String(e.data).slice(0, 10)}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            ))}
+            {it.tipo !== "O" && poSug > (Number(it.po) || 0) && (
+              <div style={{ color: COLORS.warn, fontWeight: 600 }}>
+                Pela frequência nos dados, a possibilidade de ocorrência parece {poSug} ({PO_ROTULOS[poSug]}); está {it.po || "por avaliar"}.{" "}
+                <button onClick={() => muda("po", poSug)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+                  Usar {poSug}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: 10 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Nº</label>
+            <input type="number" min="1" value={it.n ?? ""} onChange={(e) => muda("n", Number(e.target.value) || "")} style={inputStyle} />
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Processo</label>
+            <input value={it.processo || ""} onChange={(e) => muda("processo", e.target.value)} list="riscos-processos" style={inputStyle} />
+            <datalist id="riscos-processos">
+              {processos.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10, marginTop: 10 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Proveniência</label>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {[
+                ["QI", "Questões internas"],
+                ["QE", "Questões externas"],
+                ["PI", "Partes interessadas"],
+              ].map(([k, l]) => (
+                <button key={k} type="button" onClick={() => alternaProv(k)} title={l} style={{ border: `1px solid ${temProv(k) ? COLORS.navy : COLORS.rule}`, background: temProv(k) ? COLORS.navy : COLORS.paperRaised, color: temProv(k) ? "#fff" : COLORS.ink, borderRadius: 7, padding: "5px 10px", fontSize: 12.5, cursor: "pointer" }}>
+                  {k}
+                </button>
+              ))}
+            </div>
+          </div>
+          {campo("objetivo", "Objetivo estratégico associado (PI)")}
+        </div>
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          {area("identificacao", it.tipo === "O" ? "Identificação da oportunidade" : "Identificação do risco", 2)}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+            {area("causa", "Descrição da causa")}
+            {area("impacto", "Descrição do impacto")}
+          </div>
+        </div>
+
+        {it.tipo !== "O" && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 10, alignItems: "end" }}>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Possibilidade de ocorrência</label>
+              <select value={it.po || ""} onChange={(e) => muda("po", Number(e.target.value) || null)} style={inputStyle} title={it.po ? PO_DESCRICAO[it.po] : ""}>
+                <option value="">Por avaliar</option>
+                {[1, 2, 3, 4].map((k) => (
+                  <option key={k} value={k}>
+                    {k} · {PO_ROTULOS[k]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Gravidade</label>
+              <select value={it.gr || ""} onChange={(e) => muda("gr", Number(e.target.value) || null)} style={inputStyle} title={it.gr ? GR_DESCRICAO[it.gr] : ""}>
+                <option value="">Por avaliar</option>
+                {[1, 2, 3, 4].map((k) => (
+                  <option key={k} value={k}>
+                    {k} · {GR_ROTULOS[k]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Nível de risco</label>
+              <div style={{ padding: "8px 0" }}>
+                <ChipNivel it={it} />
+                {nr !== null && <span style={{ fontSize: 12, color: COLORS.slate, marginLeft: 8 }}>{ACEITACAO[sug]}</span>}
+              </div>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Aceitação do risco</label>
+              <select value={it.aceitacao || ""} onChange={(e) => muda("aceitacao", e.target.value)} style={inputStyle}>
+                <option value="">—</option>
+                {[...new Set(["A", "AM", "NA", it.aceitacao].filter(Boolean))].map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                    {ACEITACAO[k] ? ` · ${ACEITACAO[k]}` : ""}
+                  </option>
+                ))}
+              </select>
+              {sug && it.aceitacao && it.aceitacao !== sug && ACEITACAO[it.aceitacao] && (
+                <button onClick={() => muda("aceitacao", sug)} style={{ ...linkBtnStyle, marginTop: 3, fontSize: 11.5, color: COLORS.warn }}>
+                  Pelo nível devia ser {sug}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "18px 0 8px" }}>Plano de ações</div>
+        {area("acao", it.tipo === "O" ? "Ação para aproveitar a oportunidade" : "Tratamento do risco (ação corretiva, preventiva, medida de mitigação)")}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginTop: 10 }}>
+          {campo("responsavel", "Responsável", { list: "riscos-responsaveis" })}
+          <datalist id="riscos-responsaveis">
+            {responsaveis.map((r) => (
+              <option key={r.sigla} value={r.sigla}>
+                {r.nome}
+              </option>
+            ))}
+          </datalist>
+          {campo("data", "Data")}
+          {campo("estado", "Estado", { list: "riscos-estados" })}
+          <datalist id="riscos-estados">
+            {ESTADOS_RISCO.map((e) => (
+              <option key={e} value={e} />
+            ))}
+          </datalist>
+        </div>
+        <div style={{ marginTop: 10 }}>{area("observacoes", "Observações", 2)}</div>
+
+        {it.reavaliacao && (
+          <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 10 }}>
+            Reavaliação (formato antigo): PO {it.reavaliacao.po || "—"} · GR {it.reavaliacao.gr || "—"} · eficácia {it.reavaliacao.eficacia || "—"}
+            {it.reavaliacao.data ? ` · ${it.reavaliacao.data}` : ""}
+          </div>
+        )}
+
+        <details style={{ marginTop: 14 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12.5, color: COLORS.ink2 }}>Ligar a temas que a app deteta nos dados</summary>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 4, marginTop: 8 }}>
+            {DETETORES.filter((d) => d.tipo === (it.tipo || "R")).map((d) => {
+              const on = (it.detetores || []).includes(d.id);
+              return (
+                <label key={d.id} style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 12.5, cursor: "pointer" }}>
+                  <input type="checkbox" checked={on} onChange={() => muda("detetores", on ? (it.detetores || []).filter((x) => x !== d.id) : [...(it.detetores || []), d.id])} style={{ marginTop: 2 }} />
+                  {d.titulo}
+                </label>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Assim os avisos deixam de aparecer para esse tema e os dados passam a acompanhar este risco.</div>
+        </details>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
+          {!inicial.__novo && onApagar && (
+            <button onClick={() => onApagar(it.id)} style={{ ...linkBtnStyle, marginTop: 0, color: COLORS.danger, fontSize: 13 }}>
+              Apagar
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
+            Cancelar
+          </button>
+          <button
+            disabled={!valido}
+            onClick={() => {
+              const { __novo, ...limpo } = it;
+              if (limpo.tipo === "O") {
+                limpo.po = null;
+                limpo.gr = null;
+                limpo.aceitacao = "";
+              }
+              onGuardar(limpo);
+            }}
+            style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 18px", opacity: valido ? 1 : 0.5 }}
+          >
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatrizRiscos({ itens, filtro, onFiltro }) {
+  const conta = {};
+  itens.filter((i) => i.tipo !== "O" && i.po && i.gr).forEach((i) => (conta[`${i.po}|${i.gr}`] = (conta[`${i.po}|${i.gr}`] || 0) + 1));
+  const cel = { width: 44, height: 34, display: "grid", placeItems: "center", borderRadius: 6, fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums" };
+  return (
+    <div style={{ display: "inline-grid", gridTemplateColumns: "auto repeat(4, 44px)", gap: 4, alignItems: "center" }}>
+      <span />
+      {[1, 2, 3, 4].map((g) => (
+        <span key={g} style={{ fontSize: 10.5, color: COLORS.slate, textAlign: "center" }} title={GR_ROTULOS[g]}>
+          GR {g}
+        </span>
+      ))}
+      {[4, 3, 2, 1].map((po) => [
+        <span key={`l${po}`} style={{ fontSize: 10.5, color: COLORS.slate, paddingRight: 6, textAlign: "right" }} title={PO_ROTULOS[po]}>
+          PO {po}
+        </span>,
+        ...[1, 2, 3, 4].map((gr) => {
+          const n = conta[`${po}|${gr}`] || 0;
+          const c = RISCO_COR[faixaRisco(po * gr)];
+          const sel = filtro === `${po}|${gr}`;
+          return (
+            <button
+              key={`${po}${gr}`}
+              type="button"
+              onClick={() => onFiltro(sel ? null : `${po}|${gr}`)}
+              title={`PO ${po} × GR ${gr} = ${po * gr}`}
+              style={{ ...cel, border: sel ? `2px solid ${COLORS.navy}` : "1px solid transparent", background: c.bg, color: n ? c.fg : `${c.fg}55`, cursor: n ? "pointer" : "default" }}
+              disabled={!n}
+            >
+              {n || "·"}
+            </button>
+          );
+        }),
+      ])}
+    </div>
+  );
+}
+
+function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar }) {
+  const epocasR = Object.keys(riscos.epocas || {}).sort().reverse();
+  const epAtual = epocaDe(isoDe(new Date()));
+  const [ep, setEp] = useState(() => (epocasR.includes(epAtual) ? epAtual : epocasR[0] || epAtual));
+  const epSel = epocasR.includes(ep) ? ep : epocasR[0] || ep;
+  const dadosEp = (riscos.epocas || {})[epSel] || { aprovacao: "", itens: [] };
+  const itens = dadosEp.itens || [];
+  const [editar, setEditar] = useState(null);
+  const [fTipo, setFTipo] = useState("todos");
+  const [fProc, setFProc] = useState("todos");
+  const [fNivel, setFNivel] = useState("todos");
+  const [fCel, setFCel] = useState(null);
+  const [texto, setTexto] = useState("");
+  const [aLer, setALer] = useState(false);
+  const [aGerar, setAGerar] = useState(false);
+  const [verIgnorados, setVerIgnorados] = useState(false);
+  const [importado, setImportado] = useState(null);
+
+  const ignorados = (riscos.ignorados || {})[epSel] || [];
+  const deteccoes = deteccoesDe(epSel, itens, ignorados);
+  const porCobrir = deteccoes.filter((d) => !d.cobertoPor.length && !d.ignorado);
+  const ignoradasLista = deteccoes.filter((d) => !d.cobertoPor.length && d.ignorado);
+  const daItem = (id) => deteccoes.filter((d) => d.cobertoPor.includes(id));
+  const poSugeridaDe = (it) => Math.max(0, ...daItem(it.id).filter((d) => d.po).map((d) => d.po));
+
+  const legendas = riscos.legendas || null;
+  const processos = [...new Set([...PROCESSOS_PADRAO.map((p) => p.codigo), ...Object.values(riscos.epocas || {}).flatMap((e) => (e.itens || []).map((i) => i.processo))].filter(Boolean))];
+  const responsaveis = (legendas && legendas.responsaveis) || [];
+
+  const guardarEpoca = (mudancas) => onGuardar({ ...riscos, epocas: { ...(riscos.epocas || {}), [epSel]: { ...dadosEp, ...mudancas } } });
+  const guardarItem = (item) => {
+    const existe = itens.some((i) => i.id === item.id);
+    const lista = existe ? itens.map((i) => (i.id === item.id ? item : i)) : [...itens, item];
+    guardarEpoca({ itens: lista.sort((a, b) => (a.n || 0) - (b.n || 0)) });
+    setEditar(null);
+    notificar(existe ? `Nº ${item.n} atualizado.` : `Nº ${item.n} acrescentado à época ${epSel}.`);
+  };
+  const apagarItem = (id) => {
+    const it = itens.find((i) => i.id === id);
+    if (!window.confirm(`Apagar o Nº ${it ? it.n : ""} da época ${epSel}?`)) return;
+    guardarEpoca({ itens: itens.filter((i) => i.id !== id) });
+    setEditar(null);
+  };
+  const proximoN = () => Math.max(0, ...itens.map((i) => Number(i.n) || 0)) + 1;
+  const novo = (base = {}) => setEditar({ __novo: true, id: novoIdRisco(), n: proximoN(), tipo: "R", processo: "", proveniencia: "", objetivo: "", identificacao: "", causa: "", impacto: "", po: null, gr: null, aceitacao: "", acao: "", responsavel: "", data: "", estado: "Em análise", observacoes: "", ...base });
+  const daDeteccao = (d) => novo({ tipo: d.tipo, processo: d.processo, identificacao: d.titulo, causa: d.causa, impacto: d.impacto, po: d.po, gr: d.gr, aceitacao: aceitacaoSugerida(d.po && d.gr ? d.po * d.gr : null), detetores: [d.id], observacoes: `Identificado a partir dos dados: ${d.detalhe}.` });
+  const ligar = (d, idItem) => {
+    guardarEpoca({ itens: itens.map((i) => (i.id === idItem ? { ...i, detetores: [...new Set([...(i.detetores || []), d.id])] } : i)) });
+    notificar(`"${d.titulo}" ligado ao Nº ${(itens.find((i) => i.id === idItem) || {}).n}.`);
+  };
+  const ignorar = (d, sim) => {
+    const l = sim ? [...new Set([...ignorados, d.id])] : ignorados.filter((x) => x !== d.id);
+    onGuardar({ ...riscos, ignorados: { ...(riscos.ignorados || {}), [epSel]: l } });
+  };
+  const novaEpoca = () => {
+    const seg = epocaSeguinte(epocasR[0] || epSel);
+    if ((riscos.epocas || {})[seg]) return setEp(seg);
+    const base = (riscos.epocas || {})[epocasR[0]] || { itens: [] };
+    const copia = (base.itens || []).map((i) => ({ ...i, id: novoIdRisco() }));
+    onGuardar({ ...riscos, epocas: { ...(riscos.epocas || {}), [seg]: { aprovacao: "", itens: copia, copiadaDe: epocasR[0] || null } } });
+    setEp(seg);
+    notificar(`Época ${seg} criada a partir de ${epocasR[0] || "zero"} (${copia.length} linhas). Revê e atualiza o que mudou.`);
+  };
+
+  const importar = async (f) => {
+    if (!f) return;
+    setALer(true);
+    try {
+      const folhas = await lerExcelInq(f, { todas: true });
+      const r = lerRiscosDoExcel(folhas);
+      const eps = Object.keys(r.epocas).sort();
+      if (!eps.length) throw new Error(r.avisos.join(" ") || "não encontrei folhas de época");
+      setImportado({ ...r, eps, sobrepoe: eps.filter((e) => (riscos.epocas || {})[e]) });
+    } catch (e) {
+      notificar(`Não consegui ler o ficheiro: ${e?.message || e}`, "erro");
+    } finally {
+      setALer(false);
+    }
+  };
+  const confirmarImportacao = (substituir) => {
+    const epocas = { ...(riscos.epocas || {}) };
+    importado.eps.forEach((e) => {
+      if (!epocas[e] || substituir) epocas[e] = importado.epocas[e];
+    });
+    onGuardar({ ...riscos, epocas, legendas: importado.legendas || riscos.legendas || null });
+    setEp(importado.eps[importado.eps.length - 1]);
+    notificar(`Importadas ${importado.eps.length} épocas do documento.`);
+    setImportado(null);
+  };
+  const descarregar = async (apenas) => {
+    setAGerar(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const buf = await gerarExcelRiscos(ExcelJS, { epocas: riscos.epocas || {}, legendas, apenas });
+      const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `DFF.151.01 - PENSAMENTO BASEADO NO RISCO E OPORTUNIDADES${apenas && apenas.length === 1 ? ` ${folhaDaEpoca(apenas[0])}` : ""}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) {
+      notificar(`Não foi possível gerar o Excel: ${e?.message || e}`, "erro");
+    } finally {
+      setAGerar(false);
+    }
+  };
+
+  const visiveis = itens
+    .filter((i) => fTipo === "todos" || (i.tipo || "R") === fTipo)
+    .filter((i) => fProc === "todos" || codigoProcesso(i.processo) === fProc)
+    .filter((i) => {
+      if (fNivel === "todos") return true;
+      if (fNivel === "rever") return i.tipo !== "O" && poSugeridaDe(i) > (Number(i.po) || 0);
+      return faixaRisco(nivelRisco(i)) === fNivel;
+    })
+    .filter((i) => !fCel || `${i.po}|${i.gr}` === fCel)
+    .filter((i) => !texto.trim() || normChave([i.identificacao, i.causa, i.impacto, i.acao, i.responsavel].join(" ")).includes(normChave(texto)));
+  const R = itens.filter((i) => i.tipo !== "O");
+  const nAlto = R.filter((i) => faixaRisco(nivelRisco(i)) === "alto").length;
+  const nMedio = R.filter((i) => faixaRisco(nivelRisco(i)) === "medio").length;
+  const nRever = R.filter((i) => poSugeridaDe(i) > (Number(i.po) || 0)).length;
+  const codigosProc = [...new Set(itens.map((i) => codigoProcesso(i.processo)).filter(Boolean))].sort();
+  const selF = { ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 };
+
+  const botoes = (
+    <>
+      <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
+        <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
+      </label>
+      {epocasR.length > 0 && (
+        <button className="press" disabled={aGerar} onClick={() => descarregar(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
+        </button>
+      )}
+    </>
+  );
+
+  return (
+    <div>
+      {importado && (
+        <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={() => setImportado(null)}>
+          <div className="sheet" style={{ width: "min(560px, 100%)", background: COLORS.paperRaised, borderRadius: 14, padding: 22, border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 10px", fontSize: 19, color: COLORS.navy }}>Importar o documento</h2>
+            <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.6 }}>
+              {importado.eps.map((e) => (
+                <div key={e}>
+                  Época {e}: {importado.epocas[e].itens.filter((i) => i.tipo !== "O").length} riscos e {importado.epocas[e].itens.filter((i) => i.tipo === "O").length} oportunidades
+                  {importado.epocas[e].aprovacao ? ` · aprovada a ${importado.epocas[e].aprovacao}` : ""}
+                </div>
+              ))}
+              {importado.legendas && <div style={{ marginTop: 6 }}>Legendas: {importado.legendas.processos.length} processos e {importado.legendas.responsaveis.length} siglas de responsáveis.</div>}
+              {importado.avisos.length > 0 && <div style={{ color: COLORS.warn, marginTop: 6 }}>{importado.avisos.join(" ")}</div>}
+              {importado.sobrepoe.length > 0 && <div style={{ marginTop: 8, color: COLORS.ink }}>Já existem na app: {importado.sobrepoe.join(", ")}.</div>}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button onClick={() => setImportado(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                Cancelar
+              </button>
+              {importado.sobrepoe.length > 0 && importado.sobrepoe.length < importado.eps.length && (
+                <button onClick={() => confirmarImportacao(false)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                  Só as épocas novas
+                </button>
+              )}
+              <button onClick={() => confirmarImportacao(true)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
+                {importado.sobrepoe.length ? "Importar e substituir" : "Importar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {epocasR.length === 0 ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          <Vazio icon={ShieldAlert} titulo="Ainda sem riscos e oportunidades" texto="Importa o Excel do documento DFF.151.01 (todas as épocas de uma vez) ou começa a lista desta época na app." />
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            {botoes}
+            <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
+              Começar {epAtual} do zero
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+            <select value={epSel} onChange={(e) => setEp(e.target.value)} aria-label="Época" style={{ ...selF, fontWeight: 600 }}>
+              {epocasR.map((e) => (
+                <option key={e} value={e}>
+                  Época {e}
+                </option>
+              ))}
+            </select>
+            <label style={{ fontSize: 12.5, color: COLORS.ink2, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Aprovação
+              <input value={dadosEp.aprovacao || ""} onChange={(e) => guardarEpoca({ aprovacao: e.target.value })} placeholder="dd-mm-aaaa" style={{ ...inputStyle, width: 110, padding: "5px 8px", fontSize: 12.5 }} />
+            </label>
+            <span style={{ flex: 1 }} />
+            {botoes}
+            <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Copia a última época para a seguinte, para atualizares">
+              {(riscos.epocas || {})[epocaSeguinte(epocasR[0])] ? "Ir para a época seguinte" : `Criar ${epocaSeguinte(epocasR[0])}`}
+            </button>
+            <button className="press" onClick={() => novo()} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Plus size={14} /> Novo
+            </button>
+          </div>
+
+          {porCobrir.length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.warn, background: COLORS.warnBg }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <AlertTriangle size={16} color={COLORS.warn} />
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  Os dados de {epSel} mostram {porCobrir.length} {porCobrir.length === 1 ? "tema que não está" : "temas que não estão"} na lista
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {porCobrir.map((d) => (
+                  <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}` }}>
+                    <TipoRisco tipo={d.tipo} />
+                    <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{d.titulo}</div>
+                      <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 2 }}>
+                        {d.detalhe}
+                        {d.po ? ` · possibilidade de ocorrência sugerida ${d.po} (${PO_ROTULOS[d.po]})` : ""}
+                      </div>
+                      {d.relacionados.length > 0 && (
+                        <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          Talvez já esteja em:
+                          {d.relacionados.map((id) => {
+                            const it = itens.find((i) => i.id === id);
+                            return it ? (
+                              <button key={id} onClick={() => ligar(d, id)} title={`Ligar a: ${it.identificacao}`} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "2px 8px", fontSize: 11.5 }}>
+                                É o Nº {it.n}
+                              </button>
+                            ) : null;
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <select value="" onChange={(e) => e.target.value && ligar(d, e.target.value)} aria-label="Já está na lista como" style={{ ...inputStyle, width: 150, padding: "5px 8px", fontSize: 12 }}>
+                        <option value="">Já está como…</option>
+                        {itens
+                          .filter((i) => (i.tipo || "R") === d.tipo)
+                          .map((i) => (
+                            <option key={i.id} value={i.id}>
+                              Nº {i.n} · {String(i.identificacao).slice(0, 50)}
+                            </option>
+                          ))}
+                      </select>
+                      <button onClick={() => daDeteccao(d)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
+                        Adicionar à lista
+                      </button>
+                      <button onClick={() => ignorar(d, true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
+                        Ignorar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+            <StatCard label="Riscos" value={R.length} subtitle={`${itens.length - R.length} oportunidades`} />
+            <StatCard label="Não aceitáveis" value={nAlto} color={nAlto ? COLORS.danger : undefined} subtitle="nível 9 a 16" />
+            <StatCard label="Aceitáveis com monitorização" value={nMedio} color={nMedio ? COLORS.warn : undefined} subtitle="nível 4 a 8" />
+            <StatCard label="A rever pelos dados" value={nRever} color={nRever ? COLORS.warn : undefined} subtitle="possibilidade abaixo do que os dados mostram" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 14, marginBottom: 14, alignItems: "start" }} className="riscosTopo">
+            <div style={{ ...panelStyle, marginBottom: 0 }}>
+              <div style={panelTitle}>Matriz de risco</div>
+              <MatrizRiscos itens={itens} filtro={fCel} onFiltro={setFCel} />
+            </div>
+            <div style={{ ...panelStyle, marginBottom: 0 }}>
+              <div style={panelTitle}>Temas detetados nos dados de {epSel}</div>
+              {deteccoes.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem temas com expressão nos dados desta época.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 5 }}>
+                  {deteccoes
+                    .filter((d) => d.cobertoPor.length)
+                    .map((d) => (
+                      <div key={d.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12.5 }}>
+                        <Check size={13} color={COLORS.ok} />
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {d.titulo} <span style={{ color: COLORS.slate }}>· {d.detalhe}</span>
+                        </span>
+                        <span style={{ color: COLORS.slate, whiteSpace: "nowrap" }}>Nº {d.cobertoPor.map((id) => (itens.find((i) => i.id === id) || {}).n).join(", ")}</span>
+                      </div>
+                    ))}
+                  {ignoradasLista.length > 0 && (
+                    <button onClick={() => setVerIgnorados((v) => !v)} style={{ ...linkBtnStyle, marginTop: 4, fontSize: 12, textAlign: "left" }}>
+                      {verIgnorados ? "Esconder" : "Ver"} {ignoradasLista.length} {ignoradasLista.length === 1 ? "tema ignorado" : "temas ignorados"}
+                    </button>
+                  )}
+                  {verIgnorados &&
+                    ignoradasLista.map((d) => (
+                      <div key={d.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12.5, color: COLORS.slate }}>
+                        <span style={{ flex: 1 }}>
+                          {d.titulo} · {d.detalhe}
+                        </span>
+                        <button onClick={() => ignorar(d, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                          Voltar a avisar
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <Filtros>
+            <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Procurar" style={{ ...inputStyle, width: 180 }} />
+            <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={{ ...inputStyle, width: 170 }}>
+              <option value="todos">Riscos e oportunidades</option>
+              <option value="R">Só riscos</option>
+              <option value="O">Só oportunidades</option>
+            </select>
+            <select value={fProc} onChange={(e) => setFProc(e.target.value)} style={{ ...inputStyle, width: 150 }}>
+              <option value="todos">Todos os processos</option>
+              {codigosProc.map((c) => (
+                <option key={c} value={c}>
+                  PR.0{c}
+                </option>
+              ))}
+            </select>
+            <select value={fNivel} onChange={(e) => setFNivel(e.target.value)} style={{ ...inputStyle, width: 190 }}>
+              <option value="todos">Todos os níveis</option>
+              <option value="alto">Não aceitáveis (9–16)</option>
+              <option value="medio">Com monitorização (4–8)</option>
+              <option value="baixo">Aceitáveis (1–3)</option>
+              <option value="rever">A rever pelos dados</option>
+            </select>
+            {fCel && (
+              <button onClick={() => setFCel(null)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+                Limpar célula da matriz (PO {fCel.split("|")[0]} × GR {fCel.split("|")[1]})
+              </button>
+            )}
+          </Filtros>
+
+          <div style={panelStyle}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Nº", "", "Risco / oportunidade", "PO", "GR", "NR", "Aceit.", "Responsável", "Estado", "Dados"].map((h, i) => (
+                      <th key={i} style={{ ...thStyle, textAlign: i >= 3 && i <= 6 ? "center" : "left" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.map((i) => {
+                    const ds = daItem(i.id);
+                    const poS = poSugeridaDe(i);
+                    const rever = i.tipo !== "O" && poS > (Number(i.po) || 0);
+                    return (
+                      <tr key={i.id} onClick={() => setEditar(i)} style={{ cursor: "pointer" }} className="linhaClicavel">
+                        <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", color: COLORS.slate }}>{i.n}</td>
+                        <td style={tdStyle}>
+                          <TipoRisco tipo={i.tipo} />
+                        </td>
+                        <td style={{ ...tdStyle, minWidth: 260 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{i.identificacao}</div>
+                          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 2 }}>
+                            {i.processo ? `PR.0${codigoProcesso(i.processo)}` : ""}
+                            {i.proveniencia ? ` · ${i.proveniencia}` : ""}
+                            {i.causa ? ` · ${String(i.causa).slice(0, 90)}${String(i.causa).length > 90 ? "…" : ""}` : ""}
+                          </div>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{i.tipo === "O" ? "" : i.po || "—"}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{i.tipo === "O" ? "" : i.gr || "—"}</td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <ChipNivel it={i} />
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontSize: 12, fontWeight: 600, color: i.aceitacao === "NA" ? COLORS.danger : COLORS.ink2 }}>{i.tipo === "O" ? "" : i.aceitacao || "—"}</td>
+                        <td style={{ ...tdStyle, fontSize: 12.5 }}>{i.responsavel || "—"}</td>
+                        <td style={{ ...tdStyle, fontSize: 12, color: COLORS.ink2 }}>{i.estado || "—"}</td>
+                        <td style={{ ...tdStyle, fontSize: 12 }}>
+                          {ds.length ? (
+                            <span style={{ color: rever ? COLORS.warn : COLORS.ink2, fontWeight: rever ? 600 : 400 }} title={ds.map((d) => d.detalhe).join("\n")}>
+                              {ds.reduce((t, d) => t + d.n, 0)} nos dados{rever ? ` · PO ${poS}?` : ""}
+                            </span>
+                          ) : (
+                            <span style={{ color: COLORS.rule }}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visiveis.length === 0 && (
+                    <tr>
+                      <td colSpan={10} style={{ ...tdStyle, color: COLORS.slate, textAlign: "center", padding: 20 }}>
+                        Nada com estes filtros.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 8 }}>NR = PO × GR. Aceitável até 3, aceitável com monitorização de 4 a 8, não aceitável de 9 a 16. Carrega numa linha para a editar.</div>
+          </div>
+        </>
+      )}
+
+      {editar && <EditorRisco inicial={editar} processos={processos} responsaveis={responsaveis} deteccoes={deteccoes} onGuardar={guardarItem} onApagar={apagarItem} onFechar={() => setEditar(null)} />}
+    </div>
+  );
+}
+
 function AppPrincipal({ onSair }) {
   const [entries, setEntries] = useState([]);
   const [options, setOptions] = useState({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ });
@@ -19909,6 +20664,7 @@ function AppPrincipal({ onSair }) {
   const [desvinculacoes, setDesvinculacoes] = useState([]);
   const [espacos, setEspacos] = useState([]);
   const [eventos, setEventos] = useState([]);
+  const [riscos, setRiscos] = useState({ epocas: {} });
   const [inqueritos, setInqueritos] = useState([]);
   const [notasRelatorio, setNotasRelatorio] = useState({});
   const [planoInq, setPlanoInq] = useState([]);
@@ -20039,6 +20795,7 @@ function AppPrincipal({ onSair }) {
   const persistDesvinc = fazPersist(setDesvinculacoes, STORAGE_DESVINC_KEY, "as desvinculações");
   const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
+  const persistRiscos = fazPersist(setRiscos, STORAGE_RISCOS_KEY, "os riscos e oportunidades");
   const persistSatisfacao = fazPersist(setSatisfacao, STORAGE_SATISFACAO_KEY, "a satisfação");
   const persistInqueritos = fazPersist(setInqueritos, STORAGE_INQUERITOS_KEY, "os inquéritos");
   const persistNotasRel = fazPersist(setNotasRelatorio, STORAGE_NOTAS_REL_KEY, "as notas do relatório");
@@ -20135,6 +20892,7 @@ function AppPrincipal({ onSair }) {
         [STORAGE_DESVINC_KEY, setDesvinculacoes],
         [STORAGE_ESPACOS_KEY, setEspacos],
         [STORAGE_EVENTOS_KEY, setEventos],
+        [STORAGE_RISCOS_KEY, setRiscos],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
         [STORAGE_INQUERITOS_KEY, setInqueritos],
         [STORAGE_NOTAS_REL_KEY, setNotasRelatorio],
@@ -20852,6 +21610,7 @@ function AppPrincipal({ onSair }) {
     inqueritos: "Inquéritos",
     relatorio: "Geral",
     hoje: "Geral",
+    riscos: "Geral",
   }[page];
 
   const titulo =
@@ -20867,6 +21626,8 @@ function AppPrincipal({ onSair }) {
       ? "Relatórios"
       : page === "hoje"
       ? "Hoje"
+      : page === "riscos"
+      ? "Riscos e oportunidades"
       : "Reclamações";
 
   // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
@@ -20985,6 +21746,7 @@ function AppPrincipal({ onSair }) {
     { id: "p-inscritos", grupo: "Ir para", titulo: "Inscritos", icon: Users, acao: () => setPage("inscritos") },
     { id: "p-relatorio", grupo: "Ir para", titulo: "Relatórios (escola e geral)", icon: FileText, acao: () => setPage("relatorio") },
     { id: "p-inqueritos", grupo: "Ir para", titulo: "Inquéritos de satisfação", icon: MessageSquareText, acao: () => setPage("inqueritos") },
+    { id: "p-riscos", grupo: "Ir para", titulo: "Riscos e oportunidades", icon: ShieldAlert, acao: () => setPage("riscos") },
     {
       id: "a-nova",
       grupo: "Ações",
@@ -21028,9 +21790,38 @@ function AppPrincipal({ onSair }) {
   // A lista de causas é lida pelos componentes de causa raiz.
   CAUSAS_ATUAIS = options.causasRaiz && options.causasRaiz.length ? options.causasRaiz : DEFAULT_CAUSAS_RAIZ;
 
+  // Riscos e oportunidades: o que os dados mostram em cada época, face à lista.
+  const deteccoesDe = (ep, itensEp, ign) =>
+    detetarRiscos(
+      {
+        ep,
+        audits: auditsVista,
+        reclamacoes: withStatus,
+        sanctions,
+        desistencias,
+        eventos,
+        registoAlunos,
+        capacidadeDe: (e, t) => (options.capacidades || {})[`${e}|${t}`] || capacidadeSugerida(t, options.niveis || DEFAULT_NIVEIS),
+      },
+      itensEp || [],
+      ign || []
+    );
+  const avisosRiscos = (() => {
+    const eps = Object.keys(riscos.epocas || {}).sort();
+    if (!eps.length) return null;
+    const epHoje = epocaDe(isoDe(new Date()));
+    const ep = eps.includes(epHoje) ? epHoje : eps[eps.length - 1];
+    try {
+      const ds = deteccoesDe(ep, riscos.epocas[ep].itens, (riscos.ignorados || {})[ep]).filter((d) => !d.cobertoPor.length && !d.ignorado);
+      return { ep, n: ds.length, titulos: ds.map((d) => d.titulo) };
+    } catch (e) {
+      return null;
+    }
+  })();
+
   const contagemHoje = (() => {
     try {
-      const ctx = { reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
+      const ctx = { avisosRiscos, reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
       return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
     } catch (e) {
       return 0;
@@ -21050,6 +21841,7 @@ function AppPrincipal({ onSair }) {
         { key: "sancoes", label: "Sanções", icon: Scale, contador: sanctions.length || null },
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
+        { key: "riscos", label: "Riscos e oportunidades", icon: ShieldAlert, contador: avisosRiscos && avisosRiscos.n ? `${avisosRiscos.n} ⚠` : null },
       ],
     },
     {
@@ -21073,7 +21865,7 @@ function AppPrincipal({ onSair }) {
     >
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Sora:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap');
         .spin { animation: spin 0.9s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .navItem:hover { background: ${COLORS.paperSunken}; }
@@ -21189,7 +21981,8 @@ function AppPrincipal({ onSair }) {
 
         /* ---- relatório: o que aparece no ecrã e o que sai no PDF ---- */
         .relSoImpressao { display: none; }
-        .relFolha { counter-reset: relSec; }
+        .relFolha { counter-reset: relSec; font-family: 'Manrope', 'Inter', system-ui, sans-serif; font-feature-settings: "tnum" 1, "lnum" 1; }
+        .relFolha h2, .relFolha h3 { letter-spacing: -0.02em; }
         .relSeccao { counter-increment: relSec; }
         .relNum::before { content: counter(relSec, decimal-leading-zero); }
         .relRotulo { font-size: 10px; font-weight: 600; color: ${COLORS.slate}; text-transform: uppercase; letter-spacing: 0.12em; }
@@ -21555,8 +22348,11 @@ function AppPrincipal({ onSair }) {
             onAddOption={addOption}
             onRemoveOption={removeOption}
           />
+        ) : page === "riscos" ? (
+          <RiscosPage riscos={riscos} onGuardar={persistRiscos} deteccoesDe={deteccoesDe} notificar={notificar} />
         ) : page === "hoje" ? (
           <HojePage
+            avisosRiscos={avisosRiscos}
             reclamacoes={withStatus}
             plano={planoInq}
             regrasEnvio={{ ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }}
