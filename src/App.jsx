@@ -119,6 +119,7 @@ const STORAGE_PLANO_INQ_KEY = "reclamacoes:inqueritos-plano";
 const STORAGE_RESPOSTAS_KEY = "reclamacoes:respostas-tipo";
 const STORAGE_RISCOS_KEY = "reclamacoes:riscos";
 const STORAGE_OCORRENCIAS_KEY = "reclamacoes:ocorrencias";
+const STORAGE_RADAR_KEY = "reclamacoes:radar";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
 function easterSunday(year) {
@@ -18676,6 +18677,23 @@ function diasEntre(aISO, bISO) {
 // Cada fonte recebe o contexto e devolve itens:
 // { id, area, quando: "atraso" | "hoje" | "semana", data, nivel, titulo, detalhe, abrir }
 const FONTES_HOJE = [
+  // Radar: oportunidades do mundo lá fora ainda por avaliar.
+  (c) =>
+    c.radarNovas && c.radarNovas.length
+      ? [
+          {
+            id: "radar-novas",
+            area: "Riscos",
+            quando: "semana",
+            data: c.hoje,
+            nivel: "info",
+            titulo: `${c.radarNovas.length} ${c.radarNovas.length === 1 ? "oportunidade nova" : "oportunidades novas"} no radar`,
+            detalhe: c.radarNovas.slice(0, 3).map((r) => r.titulo).join(" · ") + (c.radarNovas.length > 3 ? " …" : ""),
+            abrir: () => c.irPara && c.irPara("riscos"),
+          },
+        ]
+      : [],
+
   // Ocorrências abertas: as de gravidade alta pedem atenção hoje; as outras ao fim de 14 dias.
   (c) =>
     (c.ocorrencias || [])
@@ -20236,7 +20254,119 @@ function MatrizRiscos({ itens, filtro, onFiltro }) {
   );
 }
 
-function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [] }) {
+// Radar de oportunidades: o que acontece lá fora (IA, tecnologia desportiva, normas,
+// financiamento, contexto escolar) e pode ser oportunidade para a Dragon Force.
+// A lista vem de pesquisa periódica (com fontes) e fica em reclamacoes:radar.
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar }) {
+  const itens = (radar && radar.itens) || [];
+  const [fCat, setFCat] = useState("todas");
+  const [verTodas, setVerTodas] = useState(false);
+  const [aberto, setAberto] = useState(true);
+  if (!itens.length) return null;
+  const estado = (r) => (jaNaLista.has(r.id) ? "lista" : ignorados.includes(r.id) ? "ignorada" : "nova");
+  const novas = itens.filter((r) => estado(r) === "nova");
+  const cats = [...new Set(itens.map((r) => r.categoria).filter(Boolean))];
+  const visiveis = itens
+    .filter((r) => verTodas || estado(r) === "nova")
+    .filter((r) => fCat === "todas" || r.categoria === fCat)
+    .sort((a, b) => String(b.adicionadoEm).localeCompare(String(a.adicionadoEm)));
+  const chip = (on, txt, fn, key) => (
+    <button key={key || txt} type="button" onClick={fn} style={{ border: `1px solid ${on ? COLORS.navy : COLORS.rule}`, background: on ? COLORS.navy : "transparent", color: on ? "#fff" : COLORS.ink2, borderRadius: 14, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>
+      {txt}
+    </button>
+  );
+  return (
+    <div style={{ ...panelStyle, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button onClick={() => setAberto((v) => !v)} aria-expanded={aberto} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: COLORS.ink, fontFamily: "inherit" }}>
+          <span style={{ display: "inline-block", transform: aberto ? "rotate(90deg)" : "none", transition: "transform 160ms ease", color: COLORS.slate }}>›</span>
+          <Sparkles size={16} color={COLORS.navySoft} />
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Radar de oportunidades</span>
+          <span style={{ fontSize: 12.5, color: COLORS.slate }}>
+            {novas.length ? `${novas.length} ${novas.length === 1 ? "nova" : "novas"}` : "nada de novo"} · do mundo lá fora
+          </span>
+        </button>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11.5, color: COLORS.slate }}>Pesquisa atualizada a {radar.atualizadoEm ? fmt(new Date(radar.atualizadoEm + "T00:00:00")) : "—"}</span>
+      </div>
+      {aberto && (
+        <>
+          <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px" }}>IA, tecnologia desportiva, saúde, normas, financiamento e contexto das escolas. Cada sugestão tem a fonte; adiciona à lista as que fizerem sentido.</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {chip(fCat === "todas", "Todas", () => setFCat("todas"), "__t")}
+            {cats.map((c) => chip(fCat === c, c, () => setFCat(fCat === c ? "todas" : c)))}
+            <span style={{ flex: 1 }} />
+            <label style={{ fontSize: 12, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+              <input type="checkbox" checked={verTodas} onChange={(e) => setVerTodas(e.target.checked)} /> Mostrar também as já tratadas
+            </label>
+          </div>
+          {visiveis.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}. A pesquisa traz mais todos os meses.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+              {visiveis.map((r) => {
+                const e = estado(r);
+                return (
+                  <div key={r.id} style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "12px 14px", background: e === "nova" ? COLORS.paperRaised : COLORS.paperSunken, display: "flex", flexDirection: "column", gap: 6, opacity: e === "ignorada" ? 0.7 : 1 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", color: COLORS.navySoft }}>{r.categoria}</span>
+                      {e === "lista" && <span style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.ok }}>· na lista</span>}
+                      {e === "ignorada" && <span style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.slate }}>· ignorada</span>}
+                    </div>
+                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.3 }}>{r.titulo}</div>
+                    <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5 }}>{r.resumo}</div>
+                    {r.relevancia && (
+                      <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                        <strong style={{ fontWeight: 600 }}>Para a Dragon Force: </strong>
+                        {r.relevancia}
+                      </div>
+                    )}
+                    {r.acao && (
+                      <div style={{ fontSize: 12.5, lineHeight: 1.5, color: COLORS.ink2 }}>
+                        <strong style={{ fontWeight: 600, color: COLORS.ink }}>Primeiro passo: </strong>
+                        {r.acao}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11.5, color: COLORS.slate, lineHeight: 1.5 }}>
+                      {(r.fontes || []).map((f, i) => (
+                        <div key={i}>
+                          Fonte:{" "}
+                          <a href={/^https?:\/\//i.test(f.url || "") ? f.url : undefined} target="_blank" rel="noreferrer" style={{ color: COLORS.navySoft }}>
+                            {f.titulo}
+                          </a>
+                          {f.data ? ` · ${f.data}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: "auto", paddingTop: 4 }}>
+                      {e !== "lista" && (
+                        <button onClick={() => onAdicionar(r)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
+                          Adicionar como oportunidade
+                        </button>
+                      )}
+                      {e === "nova" && (
+                        <button onClick={() => onIgnorar(r.id, true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
+                          Não interessa
+                        </button>
+                      )}
+                      {e === "ignorada" && (
+                        <button onClick={() => onIgnorar(r.id, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+                          Voltar a mostrar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [], radar = null }) {
   const epocasR = Object.keys(riscos.epocas || {}).sort().reverse();
   const epAtual = epocaDe(isoDe(new Date()));
   const [ep, setEp] = useState(() => (epocasR.includes(epAtual) ? epAtual : epocasR[0] || epAtual));
@@ -20363,6 +20493,30 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
   const codigosProc = [...new Set(itens.map((i) => codigoProcesso(i.processo)).filter(Boolean))].sort();
   const selF = { ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 };
 
+  const radarNaLista = new Set(Object.values(riscos.epocas || {}).flatMap((e) => (e.itens || []).map((i) => i.radar).filter(Boolean)));
+  const radarIgnorados = riscos.radarIgnorados || [];
+  const painelRadar = (
+    <RadarOportunidades
+      radar={radar}
+      jaNaLista={radarNaLista}
+      ignorados={radarIgnorados}
+      onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
+      onAdicionar={(r) =>
+        novo({
+          tipo: "O",
+          radar: r.id,
+          processo: r.processo || "",
+          proveniencia: "QE",
+          identificacao: r.titulo,
+          causa: r.resumo || "",
+          impacto: r.relevancia || "",
+          acao: r.acao || "",
+          estado: "Em análise",
+          observacoes: (r.fontes || []).map((f) => `Fonte: ${f.titulo}${f.url ? ` (${f.url})` : ""}`).join("\n"),
+        })
+      }
+    />
+  );
   const linhaProposta = (d) => (
                   <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}` }}>
                     <TipoRisco tipo={d.tipo} />
@@ -20484,6 +20638,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       {epocasR.length === 0 ? (
         <div style={{ display: "grid", gap: 12 }}>
           {painelPropostas}
+          {painelRadar}
           <Vazio icon={ShieldAlert} titulo="Ainda sem riscos e oportunidades" texto="Importa o Excel do documento DFF.151.01 (todas as épocas de uma vez) ou começa a lista desta época na app." />
           <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
             {botoes}
@@ -20517,6 +20672,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
           </div>
 
           {painelPropostas}
+          {painelRadar}
 
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
             <StatCard label="Riscos" value={R.length} subtitle={`${itens.length - R.length} oportunidades`} />
@@ -20700,7 +20856,7 @@ const GRAVIDADE_OC = {
 const novoIdOc = () => `oc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
 function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar, onApagar, onFechar, onGerirLista }) {
-  const [o, setO] = useState(() => ({ ...inicial }));
+  const [o, setO] = useState(() => ({ ...inicial, afetouAtividade: inicial.afetouAtividade ?? (Number(inicial.treinosSuspensos) > 0 || Number(inicial.alunosAfetados) > 0) }));
   const muda = (k, v) => setO((x) => ({ ...x, [k]: v }));
   const itensRisco = riscosDaEpoca(epocaDe(o.data || isoDe(new Date())));
   const sugeridos = itensRisco.length ? riscosParaOcorrencia(o, itensRisco) : [];
@@ -20765,7 +20921,7 @@ function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar
 
         <div style={{ marginTop: 10 }}>
           <label style={lbl}>O que aconteceu</label>
-          <input value={o.titulo || ""} onChange={(e) => muda("titulo", e.target.value)} placeholder="Ex: Treinos suspensos por tempestade" style={inputStyle} />
+          <input value={o.titulo || ""} onChange={(e) => muda("titulo", e.target.value)} placeholder="Ex: Parceiro não fez a manutenção do relvado prevista no contrato" style={inputStyle} />
         </div>
         <div style={{ marginTop: 10 }}>
           <label style={lbl}>Descrição</label>
@@ -20773,24 +20929,33 @@ function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar
         </div>
 
         <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "16px 0 8px" }}>Impacto</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, alignItems: "end" }}>
-          <div>
-            <label style={lbl}>Treinos suspensos</label>
-            <input type="number" min="0" value={o.treinosSuspensos ?? ""} onChange={(e) => muda("treinosSuspensos", e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} style={inputStyle} />
-          </div>
-          <div>
-            <label style={lbl}>Alunos afetados</label>
-            <input type="number" min="0" value={o.alunosAfetados ?? ""} onChange={(e) => muda("alunosAfetados", e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} style={inputStyle} />
-          </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer", paddingBottom: 9 }}>
+        <input value={o.impacto || ""} onChange={(e) => muda("impacto", e.target.value)} placeholder="Ex: obras atrasadas, custos, evento adiado, imagem junto dos encarregados" style={inputStyle} />
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={!!o.afetouAtividade}
+              onChange={(e) => setO((x) => ({ ...x, afetouAtividade: e.target.checked, ...(e.target.checked ? {} : { treinosSuspensos: "", alunosAfetados: "" }) }))}
+            />
+            Afetou treinos ou atividades
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, cursor: "pointer" }}>
             <input type="checkbox" checked={!!o.comunicadoEE} onChange={(e) => muda("comunicadoEE", e.target.checked)} />
             Comunicado aos encarregados
           </label>
         </div>
-        <div style={{ marginTop: 10 }}>
-          <label style={lbl}>Outro impacto</label>
-          <input value={o.impacto || ""} onChange={(e) => muda("impacto", e.target.value)} placeholder="Ex: evento adiado, custos de reparação, imagem" style={inputStyle} />
-        </div>
+        {o.afetouAtividade && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 220px))", gap: 10, marginTop: 10 }}>
+            <div>
+              <label style={lbl}>Treinos suspensos</label>
+              <input type="number" min="0" value={o.treinosSuspensos ?? ""} onChange={(e) => muda("treinosSuspensos", e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={lbl}>Alunos afetados</label>
+              <input type="number" min="0" value={o.alunosAfetados ?? ""} onChange={(e) => muda("alunosAfetados", e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} style={inputStyle} />
+            </div>
+          </div>
+        )}
 
         <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "16px 0 8px" }}>Resposta</div>
         <div>
@@ -20991,7 +21156,11 @@ function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSa
             <StatCard label="Ocorrências" value={lista.length} subtitle={textoSelecao(eps).toLowerCase()} />
             <StatCard label="Abertas" value={abertas.length} color={abertas.length ? COLORS.warn : undefined} />
             <StatCard label="Gravidade alta" value={altas} color={altas ? COLORS.danger : undefined} />
-            <StatCard label="Treinos suspensos" value={treinos} subtitle={alunos ? `${fmtNum(alunos)} alunos afetados` : "nas ocorrências registadas"} />
+            {treinos > 0 ? (
+              <StatCard label="Treinos suspensos" value={treinos} subtitle={alunos ? `${fmtNum(alunos)} alunos afetados` : "nas ocorrências que afetaram a atividade"} />
+            ) : (
+              <StatCard label="Resolvidas" value={lista.length - abertas.length} color={COLORS.ok} />
+            )}
           </div>
 
           {lista.length > 0 && (
@@ -21142,6 +21311,7 @@ function AppPrincipal({ onSair }) {
   const [eventos, setEventos] = useState([]);
   const [riscos, setRiscos] = useState({ epocas: {} });
   const [ocorrencias, setOcorrencias] = useState([]);
+  const [radar, setRadar] = useState(null);
   const [inqueritos, setInqueritos] = useState([]);
   const [notasRelatorio, setNotasRelatorio] = useState({});
   const [planoInq, setPlanoInq] = useState([]);
@@ -21375,6 +21545,7 @@ function AppPrincipal({ onSair }) {
         [STORAGE_EVENTOS_KEY, setEventos],
         [STORAGE_RISCOS_KEY, setRiscos],
         [STORAGE_OCORRENCIAS_KEY, setOcorrencias],
+        [STORAGE_RADAR_KEY, setRadar],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
         [STORAGE_INQUERITOS_KEY, setInqueritos],
         [STORAGE_NOTAS_REL_KEY, setNotasRelatorio],
@@ -22312,9 +22483,16 @@ function AppPrincipal({ onSair }) {
     }
   })();
 
+  // Sugestões do radar que ainda ninguém tratou (nem na lista, nem ignoradas).
+  const radarNovas = (() => {
+    const naLista = new Set(Object.values(riscos.epocas || {}).flatMap((e) => (e.itens || []).map((i) => i.radar).filter(Boolean)));
+    const ign = new Set(riscos.radarIgnorados || []);
+    return ((radar && radar.itens) || []).filter((r) => !naLista.has(r.id) && !ign.has(r.id));
+  })();
+
   const contagemHoje = (() => {
     try {
-      const ctx = { avisosRiscos, ocorrencias, reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
+      const ctx = { avisosRiscos, radarNovas, ocorrencias, reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
       return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
     } catch (e) {
       return 0;
@@ -22843,7 +23021,7 @@ function AppPrincipal({ onSair }) {
             onRemoveOption={removeOption}
           />
         ) : page === "riscos" ? (
-          <RiscosPage riscos={riscos} onGuardar={persistRiscos} deteccoesDe={deteccoesDe} notificar={notificar} ocorrencias={ocorrencias} />
+          <RiscosPage riscos={riscos} onGuardar={persistRiscos} deteccoesDe={deteccoesDe} notificar={notificar} ocorrencias={ocorrencias} radar={radar} />
         ) : page === "ocorrencias" ? (
           <OcorrenciasPage
             ocorrencias={ocorrencias}
@@ -22861,6 +23039,7 @@ function AppPrincipal({ onSair }) {
         ) : page === "hoje" ? (
           <HojePage
             avisosRiscos={avisosRiscos}
+            radarNovas={radarNovas}
             ocorrencias={ocorrencias}
             reclamacoes={withStatus}
             plano={planoInq}
