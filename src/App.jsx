@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -17,6 +17,7 @@ import {
   Line,
   ScatterChart,
   Scatter,
+  ZAxis,
   ReferenceLine,
   AreaChart,
   Area,
@@ -475,6 +476,8 @@ const TAG_PALETTE = [
   { color: COLORS.ok, bg: COLORS.okBg },
   { color: COLORS.navySoft, bg: COLORS.rule },
 ];
+// Cores bem distintas para séries empilhadas (até 10 sem repetir).
+const SERIES_DISTINTAS = ["#2F5FD0", "#D94F4F", "#E0A030", "#7A5AC8", "#2E9E6A", "#14A3B8", "#E26FA8", "#8A6D3B", "#6B7A8C", "#9DB83A"];
 function colorForLabel(label) {
   if (!label) return { color: COLORS.slate, bg: COLORS.doneBg };
   let hash = 0;
@@ -1551,6 +1554,56 @@ function Vazio({ icon: Icon, titulo, texto, acao, onAcao }) {
   );
 }
 
+// Rótulos de eixo que nunca se atropelam.
+// Eixo vertical com nomes: corta com "…" quando não cabe e mostra o nome completo ao passar o rato.
+function TickNome({ x, y, payload, largura = 130, tamanho = 12, cor }) {
+  const t = String(payload && payload.value != null ? payload.value : "");
+  const max = Math.max(4, Math.floor((largura - 12) / (tamanho * 0.6)));
+  const curto = t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <title>{t}</title>
+      <text x={-6} y={0} dy={4} textAnchor="end" fontSize={tamanho} fill={cor || COLORS.ink}>
+        {curto}
+      </text>
+    </g>
+  );
+}
+// Eixo horizontal com nomes: parte em até duas linhas pelo espaço de cada coluna; se não couber, corta com "…".
+function TickEixoX({ x, y, payload, width, visibleTicksCount, index = 0, tamanho = 11, cor }) {
+  const t = String(payload && payload.value != null ? payload.value : "");
+  const banda = width && visibleTicksCount ? width / visibleTicksCount : 80;
+  // Colunas muito estreitas: mostra só um nome em cada N para não se encavalitarem (o nome completo fica no tooltip).
+  const passo = Math.max(1, Math.ceil(44 / Math.max(1, banda)));
+  if (index % passo !== 0) return null;
+  const porLinha = Math.max(3, Math.floor((banda * passo - 8) / (tamanho * 0.6)));
+  const linhas = [];
+  let atual = "";
+  t.split(/\s+/).forEach((w) => {
+    const prox = atual ? `${atual} ${w}` : w;
+    if (prox.length <= porLinha) atual = prox;
+    else {
+      if (atual) linhas.push(atual);
+      atual = w;
+    }
+  });
+  if (atual) linhas.push(atual);
+  let mostrar = linhas.slice(0, 2).map((l) => (l.length > porLinha ? `${l.slice(0, porLinha - 1)}…` : l));
+  if (linhas.length > 2) mostrar[1] = `${mostrar[1].slice(0, Math.max(1, porLinha - 1))}…`.replace(/……$/, "…");
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <title>{t}</title>
+      <text x={0} y={0} dy={12} textAnchor="middle" fontSize={tamanho} fill={cor || COLORS.slate}>
+        {mostrar.map((l, i) => (
+          <tspan key={i} x={0} dy={i ? tamanho + 2 : 12}>
+            {l}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+}
+
 // Tooltip dos gráficos, com o desenho da app em vez do padrão do Recharts.
 function DicaGrafico({ active, payload, label, sufixo }) {
   if (!active || !payload || !payload.length) return null;
@@ -2370,7 +2423,7 @@ function AnalysisDashboard({ withStatus, audits = [], schoolOptions, categoryOpt
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} padding={{ left: 18, right: 18 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
                   <Tooltip content={<DicaGrafico />} cursor={{ stroke: COLORS.rule }} />
                   <Area
@@ -2504,7 +2557,7 @@ function AnalysisDashboard({ withStatus, audits = [], schoolOptions, categoryOpt
                     <BarChart data={temaData} layout="vertical" margin={{ left: 8 }}>
                       <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={130} tick={<TickNome largura={130} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                       <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                       <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                     </BarChart>
@@ -2523,7 +2576,7 @@ function AnalysisDashboard({ withStatus, audits = [], schoolOptions, categoryOpt
                     <BarChart data={schoolData} layout="vertical" margin={{ left: 8 }}>
                       <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={130} tick={<TickNome largura={130} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                       <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                       <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                     </BarChart>
@@ -3409,14 +3462,34 @@ function observacoesInscritos({ escolas, inscritos, turmasAlunos, epocaAnterior,
 }
 
 // ---------- Quadrant matrix (shared by audits and enrolment analysis) ----------
-function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
+function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label, tamanho, nota, semCaixa }) {
   const keys = Object.keys(metrics);
   const [mx, setMx] = useState(defaultX && metrics[defaultX] ? defaultX : keys[0]);
   const [my, setMy] = useState(defaultY && metrics[defaultY] ? defaultY : keys[1] || keys[0]);
   const MX = metrics[mx] || metrics[keys[0]];
   const MY = metrics[my] || metrics[keys[0]];
 
-  const pts = subjects.map((s) => ({ x: MX.v(s), y: MY.v(s), name: s }));
+  const finito = (v) => typeof v === "number" && isFinite(v);
+  const pts = subjects
+    .map((s) => ({ x: MX.v(s), y: MY.v(s), z: tamanho ? tamanho.v(s) || 0 : 1, name: s, rotulo: tamanho && tamanho.nome ? tamanho.nome(s) : s }))
+    .filter((p) => finito(p.x) && finito(p.y));
+  const semValor = subjects.length - pts.length;
+  // Eixo ajustado aos dados (com folga), e percentagens nunca acima de 100%.
+  const dominio = (M, eixo) => {
+    const vs = pts.map((p) => p[eixo]);
+    if (!vs.length) return ["auto", "auto"];
+    const lo = Math.max(0, Math.floor((Math.min(...vs) - 2) / 5) * 5);
+    let hi = Math.ceil((Math.max(...vs) + 2) / 5) * 5;
+    if (M.pct) hi = Math.min(100, hi);
+    return [lo, Math.max(hi, lo + 5)];
+  };
+  const marcas = (d) => {
+    if (typeof d[0] !== "number") return undefined;
+    const passo = [5, 10, 20, 25, 50, 100, 250, 500, 1000].find((p) => (d[1] - d[0]) / p <= 6) || Math.ceil((d[1] - d[0]) / 5);
+    const out = [];
+    for (let v = Math.ceil(d[0] / passo) * passo; v <= d[1]; v += passo) out.push(v);
+    return out;
+  };
   const median = (arr) => {
     if (!arr.length) return 0;
     const v = [...arr].sort((a, b) => a - b);
@@ -3432,11 +3505,27 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
     { label: `${MX.label} baixo · ${MY.label} baixo`, color: COLORS.slate, pts: pts.filter((p) => p.x < cx && p.y < cy) },
     { label: `${MX.label} alto · ${MY.label} baixo`, color: COLORS.danger, pts: pts.filter((p) => p.x >= cx && p.y < cy) },
   ];
-  const colorFor = (p) => (p.x >= cx && p.y >= cy ? COLORS.warn : p.x < cx && p.y >= cy ? COLORS.ok : p.x >= cx ? COLORS.danger : COLORS.slate);
+  let colorFor = (p) => (p.x >= cx && p.y >= cy ? COLORS.warn : p.x < cx && p.y >= cy ? COLORS.ok : p.x >= cx ? COLORS.danger : COLORS.slate);
+  // Quando cada métrica diz se "mais" é melhor ou pior, os quadrantes passam a ler-se como bom / misto / a vigiar.
+  if (MX.melhor && MY.melhor) {
+    const bomX = (p) => (MX.melhor === "alto" ? p.x >= cx : p.x <= cx);
+    const bomY = (p) => (MY.melhor === "alto" ? p.y >= cy : p.y <= cy);
+    colorFor = (p) => (bomX(p) && bomY(p) ? COLORS.ok : !bomX(p) && !bomY(p) ? COLORS.danger : COLORS.warn);
+    const grupo = (bx, by, titulo, color) => ({ label: titulo, color, pts: pts.filter((p) => bomX(p) === bx && bomY(p) === by) });
+    quads.splice(
+      0,
+      4,
+      grupo(true, true, `Bem nas duas`, COLORS.ok),
+      grupo(false, false, `A vigiar nas duas`, COLORS.danger),
+      grupo(true, false, `Bem em ${MX.label.toLowerCase()}, a melhorar em ${MY.label.toLowerCase()}`, COLORS.warn),
+      grupo(false, true, `Bem em ${MY.label.toLowerCase()}, a melhorar em ${MX.label.toLowerCase()}`, COLORS.warn),
+    );
+  }
 
   return (
-    <div style={panelStyle}>
-      <div style={panelTitle}>{label}</div>
+    <div style={semCaixa ? undefined : panelStyle}>
+      {label && <div style={panelTitle}>{label}</div>}
+      {nota && <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 10, lineHeight: 1.5 }}>{nota}</div>}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <div>
           <label style={{ ...labelStyle, marginTop: 0 }}>Eixo horizontal (X)</label>
@@ -3470,6 +3559,11 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
                 type="number"
                 dataKey="x"
                 name={MX.label}
+                domain={tamanho ? dominio(MX, "x") : undefined}
+                ticks={tamanho ? marcas(dominio(MX, "x")) : undefined}
+                padding={tamanho ? { left: 14, right: 14 } : undefined}
+                allowDataOverflow={!!tamanho}
+                tickFormatter={tamanho ? (v) => MX.fmt(v) : undefined}
                 tick={{ fontSize: 11, fill: COLORS.slate }}
                 label={{ value: MX.label, position: "insideBottom", offset: -18, fontSize: 11, fill: COLORS.slate }}
               />
@@ -3477,6 +3571,12 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
                 type="number"
                 dataKey="y"
                 name={MY.label}
+                domain={tamanho ? dominio(MY, "y") : undefined}
+                ticks={tamanho ? marcas(dominio(MY, "y")) : undefined}
+                padding={tamanho ? { top: 14, bottom: 10 } : undefined}
+                allowDataOverflow={!!tamanho}
+                tickFormatter={tamanho ? (v) => MY.fmt(v) : undefined}
+                width={tamanho ? 52 : undefined}
                 tick={{ fontSize: 11, fill: COLORS.slate }}
                 label={{ value: MY.label, angle: -90, position: "insideLeft", fontSize: 11, fill: COLORS.slate }}
               />
@@ -3489,22 +3589,28 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
                   const d = payload[0].payload;
                   return (
                     <div style={{ background: COLORS.paperRaised, color: COLORS.ink, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "7px 10px", fontSize: 12, boxShadow: COLORS.lift }}>
-                      <strong>{d.name}</strong>
+                      <strong>{d.rotulo}</strong>
                       <div>
                         {MX.label}: {MX.fmt(d.x)}
                       </div>
                       <div>
                         {MY.label}: {MY.fmt(d.y)}
                       </div>
+                      {tamanho && (
+                        <div style={{ color: COLORS.slate }}>
+                          {tamanho.label}: {tamanho.fmt ? tamanho.fmt(d.z) : d.z}
+                        </div>
+                      )}
                     </div>
                   );
                 }}
               />
               <ReferenceLine x={cx} stroke={COLORS.slate} strokeDasharray="5 4" />
               <ReferenceLine y={cy} stroke={COLORS.slate} strokeDasharray="5 4" />
+              {tamanho && <ZAxis type="number" dataKey="z" range={[40, 520]} name={tamanho.label} />}
               <Scatter data={pts}>
                 {pts.map((p, i) => (
-                  <Cell key={i} fill={colorFor(p)} />
+                  <Cell key={i} fill={colorFor(p)} fillOpacity={tamanho ? 0.7 : 1} stroke={tamanho ? colorFor(p) : undefined} />
                 ))}
               </Scatter>
             </ScatterChart>
@@ -3513,13 +3619,14 @@ function QuadrantMatrix({ subjects, metrics, defaultX, defaultY, label }) {
             {quads.map((q) => (
               <div key={q.label} style={{ border: `1px solid ${COLORS.rule}`, borderLeft: `3px solid ${q.color}`, padding: "8px 10px" }}>
                 <div style={{ fontSize: 11, color: COLORS.slate, marginBottom: 3 }}>{q.label}</div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{q.pts.length ? q.pts.map((p) => p.name).join(", ") : "—"}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{q.pts.length ? q.pts.map((p) => p.rotulo).join(", ") : "—"}</div>
               </div>
             ))}
           </div>
           <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 8 }}>
             As linhas tracejadas marcam a mediana de cada eixo, por isso os quadrantes são uma comparação relativa entre
-            escolas, não um padrão de qualidade absoluto.
+            escolas, não um padrão de qualidade absoluto.{tamanho ? ` O tamanho de cada bola é ${tamanho.label.toLowerCase()}.` : ""}
+            {semValor > 0 ? ` ${semValor} ${semValor === 1 ? "escola fica" : "escolas ficam"} de fora por não terem valor num dos eixos.` : ""}
           </div>
         </>
       )}
@@ -3710,19 +3817,38 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
     [F]
   );
 
-  const stackedBars = (data, keys, colors, height) => (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data}>
-        <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-        <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
-        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
-        <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
-        {keys.map((k, i) => (
-          <Bar key={k} dataKey={k} stackId="a" fill={colors[i]} />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  );
+  // Com nomes compridos ou muitas colunas, as barras deitam-se (nomes à esquerda, sem se atropelarem).
+  const stackedBars = (data, keys, colors, height) => {
+    const deitado = data.length > 6 || data.some((d) => String(d.name).length > 14);
+    if (!deitado)
+      return (
+        <ResponsiveContainer width="100%" height={height}>
+          <BarChart data={data}>
+            <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="name" tick={<TickEixoX tamanho={11} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+            <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+            {keys.map((k, i) => (
+              <Bar key={k} dataKey={k} stackId="a" fill={colors[i]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    const largura = Math.min(210, Math.max(90, Math.max(...data.map((d) => String(d.name).length)) * 6.6 + 14));
+    return (
+      <ResponsiveContainer width="100%" height={Math.max(height, data.length * 30 + 36)}>
+        <BarChart data={data} layout="vertical" margin={{ left: 4, right: 12, top: 4 }}>
+          <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
+          <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
+          <YAxis type="category" dataKey="name" width={largura} tick={<TickNome largura={largura} tamanho={11.5} cor={COLORS.ink} />} axisLine={false} tickLine={false} interval={0} />
+          <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
+          {keys.map((k, i) => (
+            <Bar key={k} dataKey={k} stackId="a" fill={colors[i]} barSize={16} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
 
   const legend = (items) => (
     <div style={{ display: "flex", justifyContent: "center", gap: 14, fontSize: 11.5, marginTop: 6, flexWrap: "wrap" }}>
@@ -3833,7 +3959,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
                 <div style={{ fontSize: 13, color: COLORS.slate }}>Sem categorias registadas nas constatações.</div>
               ) : (
                 <>
-                  {stackedBars(catAreaData, areas, areas.map((_, i) => TAG_PALETTE[i % TAG_PALETTE.length].color), 260)}
+                  {stackedBars(catAreaData, areas, areas.map((_, i) => SERIES_DISTINTAS[i % SERIES_DISTINTAS.length]), 260)}
                   {legend(areas.map((a, i) => [a, TAG_PALETTE[i % TAG_PALETTE.length].color]))}
                 </>
               )}
@@ -3868,7 +3994,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
                   <BarChart data={rankData} layout="vertical" margin={{ left: 8 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={130} tick={<TickNome largura={130} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                     <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                     <Bar dataKey="value" fill={COLORS.navy} radius={[0, 3, 3, 0]} barSize={16} animationDuration={800} />
                   </BarChart>
@@ -3891,7 +4017,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={pendData}>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                  <XAxis dataKey="name" tick={<TickEixoX tamanho={11} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
                   <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="pendentes" name="Por resolver" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -3924,7 +4050,7 @@ function AuditsAnalysis({ audits, schoolOptions, areaOptions, auditCategoryOptio
               <ResponsiveContainer width="100%" height={230}>
                 <BarChart data={totAreaData}>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                  <XAxis dataKey="name" tick={<TickEixoX tamanho={11} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
                   <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} barSize={34} />
@@ -5649,7 +5775,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
             <BarChart data={motivoData} layout="vertical" margin={{ left: 8 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={100} tick={<TickNome largura={100} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.navySoft} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
@@ -5664,7 +5790,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
             <BarChart data={tipoSancaoData} layout="vertical" margin={{ left: 8 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={140} tick={<TickNome largura={140} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.danger} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
@@ -5679,7 +5805,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
             <BarChart data={escalaoData} layout="vertical" margin={{ left: 8 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={120} tick={<TickNome largura={120} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               <Bar dataKey="value" fill={COLORS.warn} radius={[0, 3, 3, 0]} barSize={18} />
             </BarChart>
@@ -7372,7 +7498,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={dadosGrafico} margin={{ left: -18, right: 8, top: 18 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tickFormatter={(n) => { const t = String(n).split(" · ")[0]; return t.length > 16 ? `${t.slice(0, 15)}…` : t; }} tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                    <XAxis dataKey="name" tick={<TickEixoX tamanho={10.5} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                     <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={[0, 100]} unit="%" />
                     <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.paperSunken }} />
                     <Bar dataKey="Adesão" fill={COLORS.navy} radius={[5, 5, 0, 0]} maxBarSize={44} isAnimationActive={false}>
@@ -7796,7 +7922,7 @@ function SecaoSatisfacao({ escolas, turmas, niveis, categorias, satisfacao, onSa
           <BarChart data={dados} layout="vertical" margin={{ left: 8 }}>
             <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
-            <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="name" width={150} tick={<TickNome largura={150} tamanho={11.5} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
             <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
             <Bar dataKey="valor" radius={[0, 3, 3, 0]} barSize={16}>
               {dados.map((d, i) => (
@@ -10263,7 +10389,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={serie} margin={{ left: -6, right: 10, top: 8 }}>
+              <LineChart data={serie} margin={{ left: 6, right: 10, top: 8 }}>
                 <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
@@ -11413,6 +11539,13 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
   const cols = (sel && sel.length ? sel : epocas).filter((e) => registoAlunos[e]).sort().reverse();
   const I = Object.fromEntries(cols.map((ep) => [ep, indicadoresDaEpoca(ep, registoAlunos, niveis, capacidades, escola)]));
   const [aberto, setAberto] = useState(null);
+  // Mapa das escolas: os indicadores calculados escola a escola, só quando o mapa está aberto.
+  const epMapa = cols[0];
+  const porEscola = useMemo(() => {
+    if (aberto !== "mapa" || !epMapa || !registoAlunos[epMapa]) return null;
+    const nomes = [...new Set(Object.values(registoAlunos[epMapa].alunos || {}).map((a) => a.escola).filter(Boolean))];
+    return Object.fromEntries(nomes.map((e) => [e, indicadoresDaEpoca(epMapa, registoAlunos, niveis, capacidades, e)]));
+  }, [aberto, epMapa, registoAlunos, niveis, capacidades]);
   if (!cols.length) return <Vazio icon={Users} titulo="Sem alunos importados nas épocas escolhidas" texto="Importa os ficheiros de inscritos no Painel ou escolhe outras épocas." />;
 
   const th = { ...thStyle, textAlign: "right" };
@@ -11510,6 +11643,22 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
           </button>
         );
       })}
+      {!escola && (
+        <button
+          type="button"
+          onClick={() => setAberto(aberto === "mapa" ? null : "mapa")}
+          aria-expanded={aberto === "mapa"}
+          className="liftable"
+          style={{ textAlign: "left", cursor: "pointer", background: COLORS.paperRaised, border: `1px solid ${aberto === "mapa" ? COLORS.navy : COLORS.rule}`, boxShadow: aberto === "mapa" ? `0 0 0 1px ${COLORS.navy}` : COLORS.shadow, borderRadius: 12, padding: "12px 14px", fontFamily: "inherit", color: COLORS.ink }}
+        >
+          <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500 }}>Mapa das escolas</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, color: COLORS.navy }}>
+            <Target size={22} strokeWidth={1.8} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Cruzar dois indicadores</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4, lineHeight: 1.4 }}>cada escola é uma bola, do tamanho do nº de alunos</div>
+        </button>
+      )}
     </div>
   );
   const tabela = (titulo, linhas) => (
@@ -11524,6 +11673,27 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
     <div>
       {cartoes}
       {!aberto && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: -4 }}>Carrega num indicador para ver o detalhe por escola, escalão ou mês.</div>}
+      {aberto === "mapa" && porEscola && (
+        <Bloco k="mapa" titulo={`Mapa das escolas · ${epMapa}`} nota="Cruza dois indicadores para ver que escolas estão bem nos dois, quais precisam de atenção e quais estão a meio caminho. Passa o rato por uma bola para ver a escola.">
+          <QuadrantMatrix
+            semCaixa
+            subjects={Object.keys(porEscola)}
+            defaultX="ocup"
+            defaultY="ret"
+            tamanho={{ label: "Alunos ativos", v: (e) => porEscola[e]?.ativos || 0, fmt: (v) => fmtNum(v), nome: (e) => e.replace(/^Dragon Force\s+/, "") }}
+            metrics={{
+              ocup: { label: "Ocupação", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].ocupados, porEscola[e].lugares)), fmt: (v) => P(v, 0) },
+              ret: { label: "Retenção", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.ret?.taxa), fmt: (v) => P(v, 0) },
+              desistTotal: { label: "Taxa de desistência", melhor: "baixo", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].desist, porEscola[e].entradas)), fmt: (v) => P(v, 0) },
+              novos: { label: "Desistência dos novos", melhor: "baixo", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].novosRen.novosDes, porEscola[e].novosRen.novos)), fmt: (v) => P(v, 0) },
+              cedo: { label: "Saem nas 4 primeiras semanas", melhor: "baixo", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].semanas.ate4, porEscola[e].desist)), fmt: (v) => P(v, 0) },
+              exp: { label: "Conversão das experiências", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].conv, porEscola[e].exps)), fmt: (v) => P(v, 0) },
+              fem: { label: "Feminino", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.fem), fmt: (v) => P(v, 0) },
+              trans: { label: "Passam para competição", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.trans?.doUltimo ? pctDe(porEscola[e].trans.passaram, porEscola[e].trans.doUltimo) : null), fmt: (v) => P(v, 0) },
+            }}
+          />
+        </Bloco>
+      )}
       <Bloco k="ret" titulo="1. Retenção entre épocas" nota="Dos alunos ativos no fim da época anterior, quantos voltaram nesta e quantos voltaram noutra escola.">
         {tabela("Dragon Force" + (escola ? ` · ${escola}` : ""), [
           linha("Ativos no fim da época anterior", (x) => N(x.ret && x.ret.base)),
@@ -11761,7 +11931,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     return (
       <>
         <ResponsiveContainer width="100%" height={altura}>
-          <LineChart data={linhas} margin={{ left: -8, right: 12, top: 8 }}>
+          <LineChart data={linhas} margin={{ left: 4, right: 16, top: 8 }}>
             <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={3} />
             <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
@@ -11847,7 +12017,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     const linhas = meses.map((m) => ({ name: MES_CURTO[Number(m) - 1], Entradas: n.entradasMes[m] || 0, Desistências: n.desistMes[m] || 0 }));
     return (
       <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={linhas} margin={{ left: -14, right: 8, top: 8 }}>
+        <BarChart data={linhas} margin={{ left: 4, right: 12, top: 8 }}>
           <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
           <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} />
@@ -11934,7 +12104,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     // Escolas da época anterior que não têm alunos nesta: para onde foram os alunos.
     const fechadas = temAnt ? Object.keys(dados[epAnt].escolas).filter((e) => !D.escolas[e]) : [];
     return (
-      <div>
+      <div className="vistaTroca">
         {cab}
         <AvisoDadosEpoca registos={[[ep, registoAlunos[ep]], ...(temAnt ? [[epAnt, registoAlunos[epAnt]]] : [])]} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
@@ -12057,7 +12227,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   // ---------------- indicadores ----------------
   if (vista === "indicadores") {
     return (
-      <div>
+      <div className="vistaTroca">
         {cab}
         <IndicadoresInscritos registoAlunos={registoAlunos} niveis={niveis} capacidades={options.capacidades || {}} epocas={epocas} sel={eps} escola={escInd} />
       </div>
@@ -12071,7 +12241,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     const k = kComp;
     const valor = (n) => naSemana(n, n.ep === epHoje ? null : k);
     return (
-      <div>
+      <div className="vistaTroca">
         {cab}
         <AvisoDadosEpoca registos={recentes.map((n) => [n.ep, registoAlunos[n.ep]])} />
         <div style={{ ...panelStyle, marginBottom: 14 }}>
@@ -12183,7 +12353,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   const k = kComp;
   const valor = (n) => naSemana(n, n.ep === epHoje ? null : k);
   return (
-    <div>
+    <div className="vistaTroca">
       {cab}
       {!escola ? (
         <div style={panelStyle}>
@@ -12640,7 +12810,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             <LineChart data={evolucaoData}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               {series.map((s, i) => (
                 <Line
@@ -12691,7 +12861,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                   <BarChart data={escalaoData} layout="vertical" margin={{ left: 8 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11.5, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={110} tick={<TickNome largura={110} tamanho={11.5} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                     <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                     <Bar dataKey="M" name="Masculino" stackId="g" fill={COLORS.progress} />
                     <Bar dataKey="F" name="Feminino" stackId="g" fill={COLORS.purple} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -12712,8 +12882,8 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={escolinhaData}>
                 <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                <XAxis dataKey="name" tick={<TickEixoX tamanho={11} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
                 <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                 <Bar dataKey="M" name="Masculino" stackId="g" fill={COLORS.progress} />
                 <Bar dataKey="F" name="Feminino" stackId="g" fill={COLORS.purple} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -12763,7 +12933,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                 <BarChart data={anoData}>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={28} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
                   <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="value" fill={COLORS.navy} radius={[3, 3, 0, 0]} animationDuration={800} />
                 </BarChart>
@@ -12782,7 +12952,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                 <BarChart data={homologoData}>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
                   <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
                   <Bar dataKey="atual" name="Época atual" fill={COLORS.progress} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -12799,7 +12969,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
                 <BarChart data={desistHomData}>
                   <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
                   <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                   <Bar dataKey="passada" name="Época passada" fill={COLORS.slate} radius={[3, 3, 0, 0]} animationDuration={800} />
                   <Bar dataKey="atual" name="Época atual" fill={COLORS.danger} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -12820,7 +12990,7 @@ function InscritosAnalise({ escolas, inscritos, turmasAlunos, epocaAnterior, niv
               <BarChart data={fluxoData} stackOffset="sign">
                 <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={34} />
+                <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} width={44} />
                 <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} formatter={(v) => Math.abs(v)} />
                 <ReferenceLine y={0} stroke={COLORS.slate} />
                 <Bar dataKey="novas" name="Novas" stackId="f" fill={COLORS.ok} radius={[3, 3, 0, 0]} animationDuration={800} />
@@ -14055,7 +14225,7 @@ function InqueritosAnalise({ inqueritos, tiposEvento }) {
                   <BarChart data={porEvento} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis {...eixoPct} />
-                    <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={130} tick={<TickNome largura={130} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                     <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
                     <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" label={{ value: "70%", position: "top", fontSize: 10, fill: COLORS.danger }} />
                     <Bar dataKey="valor" name="Satisfeitos" radius={[0, 4, 4, 0]} barSize={18}>
@@ -14103,7 +14273,7 @@ function InqueritosAnalise({ inqueritos, tiposEvento }) {
                   <BarChart data={dimData} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis {...eixoPct} />
-                    <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={140} tick={<TickNome largura={140} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                     <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
                     <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" />
                     <Bar dataKey="valor" name="Satisfeitos" fill={COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={16} />
@@ -14160,7 +14330,7 @@ function InqueritosAnalise({ inqueritos, tiposEvento }) {
                   <BarChart data={segData} layout="vertical" margin={{ left: 8, right: 16 }}>
                     <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
                     <XAxis {...eixoPct} />
-                    <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={150} tick={<TickNome largura={150} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
                     <Tooltip content={<DicaGrafico sufixo="%" />} cursor={{ fill: COLORS.ruleSoft }} />
                     <ReferenceLine x={70} stroke={COLORS.danger} strokeDasharray="4 4" />
                     <Bar dataKey="valor" name="Satisfeitos" fill={COLORS.navySoft} radius={[0, 4, 4, 0]} barSize={16} />
@@ -15467,7 +15637,7 @@ function BarrasRel({ dados, cor, largura = 150, sufixo = "" }) {
     <ResponsiveContainer width="100%" height={Math.max(80, dados.length * 26 + 8)}>
       <BarChart data={dados} layout="vertical" margin={{ left: 0, right: 34, top: 2, bottom: 2 }}>
         <XAxis type="number" hide domain={[0, "dataMax"]} />
-        <YAxis type="category" dataKey="name" width={largura} tick={{ fontSize: 11.5, fill: COLORS.ink2 }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="name" width={largura} tick={<TickNome largura={largura} tamanho={11.5} cor={COLORS.ink2} />} axisLine={false} tickLine={false} />
         <Tooltip content={<DicaGrafico sufixo={sufixo} />} cursor={{ fill: COLORS.ruleSoft }} />
         <Bar dataKey="value" name="Total" fill={cor || azulRel()} barSize={9} isAnimationActive={false}>
           <LabelList dataKey="value" position="right" formatter={(v) => `${v}${sufixo}`} style={{ fontSize: 11.5, fontWeight: 600, fill: COLORS.ink }} />
@@ -16038,7 +16208,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                           <ResponsiveContainer width="100%" height={190}>
                             <LineChart data={serie} margin={{ left: -22, right: 8, top: 6 }}>
                               <CartesianGrid stroke={COLORS.ruleSoft} vertical={false} />
-                              <XAxis dataKey="name" tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
+                              <XAxis dataKey="name" tick={<TickEixoX tamanho={10} cor={COLORS.slate} />} height={38} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={0} />
                               <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={false} tickLine={false} />
                               <Tooltip content={<DicaGrafico />} />
                               {epocas.map((ep, i) => (
@@ -16116,7 +16286,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                             <ResponsiveContainer width="100%" height={Math.max(90, epocas.length * 44)}>
                               <BarChart data={empilhado} layout="vertical" margin={{ left: 0, right: 30 }}>
                                 <XAxis type="number" hide />
-                                <YAxis type="category" dataKey="name" width={62} tick={{ fontSize: 11.5, fill: COLORS.ink2 }} axisLine={false} tickLine={false} />
+                                <YAxis type="category" dataKey="name" width={62} tick={<TickNome largura={62} tamanho={11.5} cor={COLORS.ink2} />} axisLine={false} tickLine={false} />
                                 <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
                                 {["NCM", "NC", "OM", "AS"].map((c, i, arr) => (
                                   <Bar key={c} dataKey={c} stackId="t" fill={CORES_CLS[c]} barSize={14} isAnimationActive={false}>
@@ -16963,7 +17133,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                 <div className="relSub">Evolução semanal</div>
                 {serie.length > 1 ? (
                   <ResponsiveContainer width="100%" height={190}>
-                    <AreaChart data={serie} margin={{ left: -14, right: 10, top: 6 }}>
+                    <AreaChart data={serie} margin={{ left: 0, right: 18, top: 6 }}>
                       <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 10, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={Math.max(0, Math.ceil(serie.length / 6) - 1)} />
                       <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
@@ -19316,7 +19486,7 @@ function PainelCausas({ itens, titulo }) {
             <BarChart data={dados} layout="vertical" margin={{ left: 4, right: 20 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 12, fill: COLORS.ink }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={170} tick={<TickNome largura={170} tamanho={12} cor={COLORS.ink} />} axisLine={false} tickLine={false} />
               <Tooltip content={<DicaGrafico />} cursor={{ fill: COLORS.ruleSoft }} />
               {origens.map((o, i) => (
                 <Bar key={o} dataKey={o} name={o} stackId="c" fill={corOrigem[o] || COLORS.navySoft} radius={i === origens.length - 1 ? [0, 4, 4, 0] : 0} barSize={16} />
@@ -19628,7 +19798,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
       ) : (
         <>
           <ResponsiveContainer width="100%" height={250}>
-            <ComposedChart data={dadosGraf} margin={{ left: -6, right: 16, top: 10 }}>
+            <ComposedChart data={dadosGraf} margin={{ left: 6, right: 16, top: 10 }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} interval={Math.max(0, Math.ceil(dadosGraf.length / 10) - 1)} />
               <YAxis tick={{ fontSize: 11, fill: COLORS.slate }} axisLine={false} tickLine={false} domain={["auto", "auto"]} width={44} />
@@ -21359,6 +21529,15 @@ function AppPrincipal({ onSair }) {
     }
   });
   const setTema = (t) => {
+    // Durante um instante as cores passam a ter transição, para a troca não ser seca.
+    try {
+      const raiz = document.documentElement;
+      raiz.classList.add("temaTransicao");
+      clearTimeout(setTema.t);
+      setTema.t = setTimeout(() => raiz.classList.remove("temaTransicao"), 380);
+    } catch (e) {
+      // sem DOM: troca direta
+    }
     setTemaState(t);
     try {
       window.localStorage.setItem("df-tema", t);
@@ -22575,10 +22754,22 @@ function AppPrincipal({ onSair }) {
         /* Linhas de tabela e cartões que aparecem depois de filtrar. */
         @keyframes softIn { from { opacity: 0; } to { opacity: 1; } }
         .softIn { animation: softIn 200ms ease both; }
+        /* Ao trocar de vista (ex.: Épocas → Por escola) o conteúdo novo entra com um fade. */
+        .vistaTroca > *:not(:first-child) { animation: softIn 240ms ease both; }
+
+        /* Entrada na app depois do login e saída ao terminar sessão. */
+        .appEcra { transition: opacity 260ms ease, transform 260ms var(--ease); }
+        html.aSair .appEcra { opacity: 0; transform: scale(0.985); }
+
+        /* Troca de tema claro/escuro: as cores mudam em 320 ms em vez de saltarem. */
+        html.temaTransicao *, html.temaTransicao *::before, html.temaTransicao *::after {
+          transition: background-color 320ms ease, color 320ms ease, border-color 320ms ease, fill 320ms ease, stroke 320ms ease, box-shadow 320ms ease !important;
+        }
 
         /* Respeita quem desativou animações no sistema. */
         @media (prefers-reduced-motion: reduce) {
-          .pageIn, .veil, .sheet, .drawer, .softIn { animation: none; }
+          .pageIn, .veil, .sheet, .drawer, .softIn, .vistaTroca > * { animation: none; }
+          html.temaTransicao *, html.temaTransicao *::before, html.temaTransicao *::after { transition: none !important; }
           .navItem, button, select, input, textarea { transition: none; }
           .navItem:active, .btnPress:active { transform: none; }
         }
@@ -23652,7 +23843,7 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         html, body { margin: 0; padding: 0; background: #07142A; overscroll-behavior: none; }
         .entrada {
-          position: fixed; inset: 0; overflow-y: auto; overscroll-behavior: contain;
+          position: fixed; inset: 0; z-index: 100; overflow-y: auto; overscroll-behavior: contain;
           display: grid; place-items: center; padding: 24px 16px; box-sizing: border-box;
           font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #EAF0F8;
           background: #0A1D38;
@@ -23716,8 +23907,12 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         .entradaRodape { margin-top: 34px; font-size: 11px; color: #5F7391; letter-spacing: 0.04em; }
         @keyframes entradaLogo { from { opacity: 0; transform: translateY(10px) scale(0.94); } to { opacity: 1; transform: none; } }
         @keyframes entradaSobe { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+        /* Depois de entrar: o ecrã de login desvanece por cima da app. */
+        @keyframes entradaSai { from { opacity: 1; } to { opacity: 0; transform: scale(1.02); } }
+        .entradaSaida .entrada { pointer-events: none; animation: entradaSai 600ms cubic-bezier(0.32, 0.72, 0, 1) forwards; }
         @media (prefers-reduced-motion: reduce) {
           .entradaLogo, .entradaTitulo, .entradaSub, .entradaForm { animation: none; opacity: 1; }
+          .entradaSaida .entrada { animation: none; opacity: 0; }
         }
       `}</style>
       <div className="entradaFundo" aria-hidden="true">
@@ -23771,19 +23966,74 @@ function EcraEntrada({ onEntrar, aVerificar }) {
 // Porta de entrada: mostra o ecrã de entrada até haver sessão.
 export default function App() {
   const [sessao, setSessao] = useState(undefined);
+  // Ao entrar, o ecrã de login fica por cima uns instantes e desvanece enquanto a app aparece por baixo.
+  // "verificar" = já havia sessão ao abrir (mostra só o logótipo); "login" = acabou de entrar.
+  const [cortina, setCortina] = useState(false);
+  const atual = useRef(undefined);
 
   useEffect(() => {
     let ativo = true;
-    supabase.auth.getSession().then(({ data }) => ativo && setSessao(data?.session || null));
-    const { data } = supabase.auth.onAuthStateChange((_evento, s) => setSessao(s || null));
+    const recebe = (s) => {
+      const novo = s || null;
+      if (novo && !atual.current) setCortina(atual.current === undefined ? "verificar" : "login");
+      if (!novo) setCortina(false);
+      atual.current = novo;
+      setSessao(novo);
+    };
+    supabase.auth.getSession().then(({ data }) => ativo && recebe(data?.session));
+    const { data } = supabase.auth.onAuthStateChange((_evento, s) => recebe(s));
     return () => {
       ativo = false;
       data?.subscription?.unsubscribe?.();
     };
   }, []);
 
-  if (sessao === undefined) return <EcraEntrada aVerificar onEntrar={() => {}} />;
-  if (!sessao) return <EcraEntrada onEntrar={(email, password) => supabase.auth.signInWithPassword({ email, password })} />;
-  return <AppPrincipal onSair={() => supabase.auth.signOut()} />;
+  // A app monta primeiro por baixo do ecrã de login (ainda opaco); só depois de pintada é que o login desvanece.
+  // Assim o trabalho pesado do primeiro render não "come" a animação.
+  const [aDesvanecer, setADesvanecer] = useState(false);
+  useEffect(() => {
+    if (!cortina) {
+      setADesvanecer(false);
+      return undefined;
+    }
+    let t;
+    let r2;
+    const r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => {
+        setADesvanecer(true);
+        t = setTimeout(() => setCortina(false), 650);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+      clearTimeout(t);
+    };
+  }, [cortina]);
+
+  // Ao sair, a app desvanece primeiro e só depois termina a sessão.
+  const sair = () => {
+    const raiz = document.documentElement;
+    raiz.classList.add("aSair");
+    setTimeout(async () => {
+      try {
+        await supabase.auth.signOut();
+      } finally {
+        raiz.classList.remove("aSair");
+      }
+    }, 260);
+  };
+
+  const mostrarEntrada = !sessao || cortina;
+  return (
+    <>
+      {sessao && <AppPrincipal onSair={sair} />}
+      {mostrarEntrada && (
+        <div className={sessao && aDesvanecer ? "entradaSaida" : undefined}>
+          <EcraEntrada aVerificar={sessao === undefined || cortina === "verificar"} onEntrar={(email, password) => supabase.auth.signInWithPassword({ email, password })} />
+        </div>
+      )}
+    </>
+  );
 }
 
