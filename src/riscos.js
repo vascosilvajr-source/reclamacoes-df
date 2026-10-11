@@ -541,6 +541,111 @@ export const DETETORES = [
     },
   },
   {
+    id: "op-clima",
+    tipo: "O",
+    processo: P1,
+    titulo: "Alternativas aos treinos em dias de mau tempo",
+    causa: "Treinos e atividades suspensos por condições climatéricas.",
+    impacto: "Menos treinos perdidos; alunos ativos mesmo com mau tempo; encarregados informados a tempo.",
+    acao: "Definir espaços cobertos alternativos, treinos digitais para casa e aviso automático aos encarregados quando há alerta meteorológico.",
+    limiar: 1,
+    cobre: /mau tempo|treinos? (digita|online|em casa)|espaco coberto|alternativ|plano de contingencia/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /climat|meteorolog|tempestade|chuva|vento|intemperie|calor|neve|granizo|incendio/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-infra",
+    tipo: "O",
+    processo: P1,
+    titulo: "Plano de manutenção preventiva e renovação das instalações",
+    causa: "Avarias e problemas recorrentes nas instalações e equipamentos.",
+    impacto: "Menos treinos afetados; instalações mais seguras; custos de reparação previsíveis.",
+    acao: "Calendário de inspeções por escola, lista de equipamentos em fim de vida e plano de substituição.",
+    limiar: 1,
+    cobre: /manutencao preventiva|plano de manutencao|renovac|substituicao de equipamentos|sustentave|fim de vida/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /infraestrutur|instalac|equipamento|avaria|vandal/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-energia",
+    tipo: "O",
+    processo: P2,
+    titulo: "Autonomia energética nas instalações",
+    causa: "Falhas de energia ou de água que obrigam a suspender atividades.",
+    impacto: "Continuidade dos treinos; segurança com iluminação de emergência.",
+    acao: "Avaliar iluminação de emergência, UPS para equipamentos críticos e contacto rápido com os fornecedores de energia.",
+    limiar: 1,
+    cobre: /autonomia energ|iluminacao (de emergencia|autonoma)|ups|gerador|eficiencia energ/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /energ|apagao|eletric|luz|agua|gas/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-comportamento",
+    tipo: "O",
+    processo: P1,
+    titulo: "Campanha de fair-play e código de conduta para pais e atletas",
+    causa: "Comportamentos inadequados de pais, atletas ou staff em treinos, jogos e eventos.",
+    impacto: "Melhor ambiente nas escolas; menos conflitos e sanções; imagem do FC Porto.",
+    acao: "Código de conduta assinado na inscrição, ações de sensibilização e comunicação regular sobre fair-play.",
+    limiar: 1,
+    cobre: /fair.?play|codigo de conduta|sensibiliza|desportivismo/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /comportament|agress|conduta|conflito|insult|violen|discussao/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-seguranca",
+    tipo: "O",
+    processo: P1,
+    titulo: "Formação do staff em primeiros socorros e protocolo de lesões",
+    causa: "Acidentes e lesões em treinos ou nas instalações.",
+    impacto: "Resposta mais rápida e segura; confiança dos encarregados.",
+    acao: "Formação anual de primeiros socorros, protocolo escrito de atuação e registo de cada lesão.",
+    limiar: 1,
+    cobre: /primeiros socorros|protocolo de (lesoes|lesao|atuacao)|formacao.{0,30}(socorr|seguranc)/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /seguranc|acidente|saude|lesao|lesoes|ferid|socorr/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-staff",
+    tipo: "O",
+    processo: P1,
+    titulo: "Bolsa de treinadores e staff substitutos",
+    causa: "Ausências de treinadores ou staff que deixam treinos ou escolas sem resposta.",
+    impacto: "Nenhum treino cancelado por falta de treinador; continuidade do serviço.",
+    acao: "Lista de treinadores disponíveis por zona e regras de substituição rápida.",
+    limiar: 1,
+    cobre: /substitut|bolsa de (treinadores|staff)|polivalen/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /recursos humanos|staff|ausencia|treinador|absentismo|colaborador/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "op-parceiro",
+    tipo: "O",
+    processo: P1,
+    titulo: "Revisão do contrato com o clube parceiro",
+    causa: "Incumprimentos repetidos do parceiro.",
+    impacto: "Obrigações claras, prazos de resposta e penalizações; relação mais equilibrada.",
+    acao: "Rever o contrato ou caderno de encargos na próxima renovação, com níveis de serviço mensuráveis.",
+    limiar: 1,
+    cobre: /revisao (do|de|dos) contrat|caderno de encargos|renegocia|niveis de servico/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /contrat|parceiro|protocolo/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? "ocorrência pode virar oportunidade de melhoria" : "ocorrências podem virar oportunidade de melhoria"]]), evidencias: evOc(os) };
+    },
+  },
+  {
     id: "turmas-cheias",
     tipo: "O",
     processo: P1,
@@ -603,40 +708,70 @@ const ligadosPor = (ctx, ids) => {
 const escapar = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Ocorrências de categorias que nenhum tema acima apanha: um tema por categoria.
-function detetoresDinamicos(ctx, usadas) {
+function detetoresDinamicos(ctx, usadas, usadasO) {
   const grupos = {};
   (ctx.ocorrencias || [])
-    .filter((o) => epocaDeData(o.data) === ctx.ep && !usadas.has(o.id))
+    .filter((o) => epocaDeData(o.data) === ctx.ep)
     .forEach((o) => {
       const cat = String(o.categoria || "Outra").trim() || "Outra";
       (grupos[cat] = grupos[cat] || []).push(o);
     });
-  return Object.entries(grupos)
-    .filter(([, os]) => os.length >= 2 || os.some((o) => o.gravidade === "alta"))
-    .map(([cat, os]) => {
-      const palavras = norm(cat)
-        .split(/[^a-z0-9]+/)
-        .filter((w) => w.length >= 5 && !["outra", "outro", "outros", "questoes", "problemas"].includes(w))
-        .map((w) => escapar(w.slice(0, Math.max(5, w.length - 2))));
+  const peso = { alta: 0, media: 1, baixa: 2 };
+  const ord = (os) => [...os].sort((a, b) => (peso[a.gravidade] ?? 1) - (peso[b.gravidade] ?? 1) || String(b.data).localeCompare(String(a.data)));
+  const lista = [];
+  Object.entries(grupos).forEach(([cat, todas]) => {
+    const palavras = norm(cat)
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 5 && !["outra", "outro", "outros", "questoes", "problemas", "servicos"].includes(w))
+      .map((w) => escapar(w.slice(0, Math.max(5, w.length - 2))));
+    const cobre = palavras.length ? new RegExp(palavras.join("|")) : /^$/;
+    const vaga = /^outr[ao]s?$/.test(norm(cat));
+    // Risco: ocorrências desta categoria que nenhum tema conhecido apanhou.
+    const os = ord(todas.filter((o) => !usadas.has(o.id)));
+    if (os.length) {
       const altas = os.filter((o) => o.gravidade === "alta").length;
-      return {
-        id: `oc:${norm(cat)}`,
+      const p = os[0];
+      const tr = os.reduce((t, o) => t + (Number(o.treinosSuspensos) || 0), 0);
+      const al = os.reduce((t, o) => t + (Number(o.alunosAfetados) || 0), 0);
+      lista.push({
+        id: vaga ? `oc:${norm(cat)}:${norm(p.titulo).slice(0, 40)}` : `oc:${norm(cat)}`,
         tipo: "R",
         processo: P1,
-        titulo: `Ocorrências recorrentes: ${cat}`,
-        causa: os[0].descricao || os[0].titulo || "",
-        impacto: os.find((o) => o.impacto)?.impacto || "",
-        gr: altas ? 4 : 3,
+        titulo: os.length === 1 || vaga ? p.titulo : `${cat}: ${os.slice(0, 2).map((o) => o.titulo).join("; ")}`,
+        causa: [...new Set(os.map((o) => o.descricao).filter(Boolean))].slice(0, 2).join(" ") || p.titulo,
+        impacto: [p.impacto, tr ? `${tr} treinos suspensos` : "", al ? `${al} alunos afetados` : ""].filter(Boolean).join("; "),
+        acao: [...new Set(os.map((o) => o.acao).filter(Boolean))].slice(0, 2).join(" "),
+        gr: altas ? 4 : os.some((o) => o.gravidade === "media") ? 3 : 2,
         limiar: 1,
-        cobre: palavras.length ? new RegExp(palavras.join("|")) : /^$/,
-        medir: () => ({ n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, `ocorrências de ${cat.toLowerCase()}`], [altas, "de gravidade alta"]]), evidencias: evOc(os) }),
-      };
-    });
+        cobre: vaga ? /^$/ : cobre,
+        medir: () => ({ n: os.length, ocorrIds: os.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[os.length, os.length === 1 ? `ocorrência de ${cat.toLowerCase()}` : `ocorrências de ${cat.toLowerCase()}`], [altas, "de gravidade alta"]]), evidencias: evOc(os) }),
+      });
+    }
+    // Oportunidade: uma resposta que resultou pode passar a procedimento.
+    const comAcao = ord(todas.filter((o) => !usadasO.has(o.id) && String(o.acao || "").trim() && (o.estado || "aberta") === "resolvida"));
+    if (comAcao.length && !vaga) {
+      const p = comAcao[0];
+      lista.push({
+        id: `op-oc:${norm(cat)}`,
+        tipo: "O",
+        processo: P1,
+        titulo: `Padronizar a resposta a ocorrências de ${cat.toLowerCase()}`,
+        causa: `A resposta a "${p.titulo}" resolveu a situação.`,
+        impacto: "Resposta mais rápida e igual em todas as escolas da próxima vez.",
+        acao: `Passar a procedimento: ${p.acao}`,
+        limiar: 1,
+        cobre,
+        medir: () => ({ n: comAcao.length, ocorrIds: comAcao.map((o) => o.id), daOcorrencia: true, detalhe: resumo([[comAcao.length, comAcao.length === 1 ? "ocorrência resolvida com uma resposta que pode virar procedimento" : "ocorrências resolvidas com respostas que podem virar procedimento"]]), evidencias: evOc(comAcao) }),
+      });
+    }
+  });
+  return lista;
 }
 
 export function detetarRiscos(ctx, itens, ignorados = []) {
   const ign = new Set(ignorados);
   const usadas = new Set();
+  const usadasO = new Set();
   const medidas = DETETORES.map((d) => {
     let m;
     try {
@@ -644,12 +779,13 @@ export function detetarRiscos(ctx, itens, ignorados = []) {
     } catch (e) {
       m = { n: 0 };
     }
-    (m.ocorrIds || []).forEach((id) => usadas.add(id));
+    (m.ocorrIds || []).forEach((id) => (d.tipo === "O" ? usadasO : usadas).add(id));
     return [d, m];
   });
-  detetoresDinamicos(ctx, usadas).forEach((d) => medidas.push([d, d.medir()]));
+  detetoresDinamicos(ctx, usadas, usadasO).forEach((d) => medidas.push([d, d.medir()]));
   return medidas.map(([d, m]) => {
-    if (!m.n || m.n < (d.limiar || 3)) return null;
+    // Com ocorrências pelo meio, uma basta: são registos escolhidos à mão, não ruído.
+    if (!m.n || m.n < ((m.ocorrIds || []).length ? 1 : d.limiar || 3)) return null;
     const doTipo = itens.filter((it) => (it.tipo || "R") === d.tipo);
     const ligados = ligadosPor(ctx, m.ocorrIds);
     const cobertoPor = doTipo.filter((it) => (it.detetores || []).includes(d.id) || ligados.has(it.id) || d.cobre.test(textoChave(it))).map((it) => it.id);
@@ -661,6 +797,8 @@ export function detetarRiscos(ctx, itens, ignorados = []) {
       titulo: d.titulo,
       causa: d.causa,
       impacto: d.impacto,
+      acao: d.acao || "",
+      daOcorrencia: !!m.daOcorrencia || (m.ocorrIds || []).length > 0,
       gr: d.gr || null,
       po: d.tipo === "O" ? null : poDaFrequencia(m.n),
       n: m.n,

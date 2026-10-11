@@ -18699,7 +18699,7 @@ const FONTES_HOJE = [
             quando: "hoje",
             data: c.hoje,
             nivel: "atencao",
-            titulo: `${c.avisosRiscos.n} ${c.avisosRiscos.n === 1 ? "tema nos dados sem lugar" : "temas nos dados sem lugar"} nos riscos e oportunidades de ${c.avisosRiscos.ep}`,
+            titulo: `${c.avisosRiscos.n} ${c.avisosRiscos.n === 1 ? "proposta nova" : "propostas novas"} de riscos e oportunidades (${c.avisosRiscos.ep})`,
             detalhe: c.avisosRiscos.titulos.slice(0, 3).join(" · ") + (c.avisosRiscos.n > 3 ? " …" : ""),
             abrir: () => c.irPara && c.irPara("riscos"),
           },
@@ -20282,7 +20282,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
   };
   const proximoN = () => Math.max(0, ...itens.map((i) => Number(i.n) || 0)) + 1;
   const novo = (base = {}) => setEditar({ __novo: true, id: novoIdRisco(), n: proximoN(), tipo: "R", processo: "", proveniencia: "", objetivo: "", identificacao: "", causa: "", impacto: "", po: null, gr: null, aceitacao: "", acao: "", responsavel: "", data: "", estado: "Em análise", observacoes: "", ...base });
-  const daDeteccao = (d) => novo({ tipo: d.tipo, processo: d.processo, identificacao: d.titulo, causa: d.causa, impacto: d.impacto, po: d.po, gr: d.gr, aceitacao: aceitacaoSugerida(d.po && d.gr ? d.po * d.gr : null), detetores: [d.id], observacoes: `Identificado a partir dos dados: ${d.detalhe}.` });
+  const daDeteccao = (d) => novo({ tipo: d.tipo, processo: d.processo, identificacao: d.titulo, causa: d.causa, impacto: d.impacto, acao: d.acao || "", po: d.po, gr: d.gr, aceitacao: aceitacaoSugerida(d.po && d.gr ? d.po * d.gr : null), detetores: [d.id], observacoes: `Identificado a partir dos dados: ${d.detalhe}.` });
   const ligar = (d, idItem) => {
     guardarEpoca({ itens: itens.map((i) => (i.id === idItem ? { ...i, detetores: [...new Set([...(i.detetores || []), d.id])] } : i)) });
     notificar(`"${d.titulo}" ligado ao Nº ${(itens.find((i) => i.id === idItem) || {}).n}.`);
@@ -20363,6 +20363,76 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
   const codigosProc = [...new Set(itens.map((i) => codigoProcesso(i.processo)).filter(Boolean))].sort();
   const selF = { ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 };
 
+  const linhaProposta = (d) => (
+                  <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}` }}>
+                    <TipoRisco tipo={d.tipo} />
+                    <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>
+                        {d.titulo}
+                        {d.daOcorrencia && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 600, color: COLORS.warn, border: `1px solid ${COLORS.warn}`, borderRadius: 5, padding: "1px 5px", whiteSpace: "nowrap" }}>das ocorrências</span>}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 2 }}>
+                        {d.detalhe}
+                        {d.po ? ` · possibilidade de ocorrência sugerida ${d.po} (${PO_ROTULOS[d.po]})` : ""}
+                      </div>
+                      {d.relacionados.length > 0 && (
+                        <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          Talvez já esteja em:
+                          {d.relacionados.map((id) => {
+                            const it = itens.find((i) => i.id === id);
+                            return it ? (
+                              <button key={id} onClick={() => ligar(d, id)} title={`Ligar a: ${it.identificacao}`} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "2px 8px", fontSize: 11.5 }}>
+                                É o Nº {it.n}
+                              </button>
+                            ) : null;
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <select value="" onChange={(e) => e.target.value && ligar(d, e.target.value)} aria-label="Já está na lista como" style={{ ...inputStyle, width: 150, padding: "5px 8px", fontSize: 12 }}>
+                        <option value="">Já está como…</option>
+                        {itens
+                          .filter((i) => (i.tipo || "R") === d.tipo)
+                          .map((i) => (
+                            <option key={i.id} value={i.id}>
+                              Nº {i.n} · {String(i.identificacao).slice(0, 50)}
+                            </option>
+                          ))}
+                      </select>
+                      <button onClick={() => daDeteccao(d)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
+                        Adicionar à lista
+                      </button>
+                      <button onClick={() => ignorar(d, true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
+                        Ignorar
+                      </button>
+                    </div>
+                  </div>
+  );
+  const propR = porCobrir.filter((d) => d.tipo !== "O");
+  const propO = porCobrir.filter((d) => d.tipo === "O");
+  const painelPropostas = porCobrir.length > 0 && (
+    <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.warn, background: COLORS.warnBg }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <Sparkles size={16} color={COLORS.warn} />
+        <div style={{ fontWeight: 600, fontSize: 14 }}>
+          Propostas a partir dos dados de {epSel}: {propR.length} {propR.length === 1 ? "risco novo" : "riscos novos"} e {propO.length} {propO.length === 1 ? "oportunidade" : "oportunidades"}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10 }}>Vêm das ocorrências, auditorias, reclamações, sanções, desistências, eventos e inscritos, e ainda não estão na lista.</div>
+      {[
+        ["Riscos novos", propR],
+        ["Oportunidades novas", propO],
+      ]
+        .filter(([, l]) => l.length)
+        .map(([t, l]) => (
+          <div key={t} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "4px 0 6px" }}>{t}</div>
+            <div style={{ display: "grid", gap: 8 }}>{l.map(linhaProposta)}</div>
+          </div>
+        ))}
+    </div>
+  );
   const botoes = (
     <>
       <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -20413,6 +20483,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
 
       {epocasR.length === 0 ? (
         <div style={{ display: "grid", gap: 12 }}>
+          {painelPropostas}
           <Vazio icon={ShieldAlert} titulo="Ainda sem riscos e oportunidades" texto="Importa o Excel do documento DFF.151.01 (todas as épocas de uma vez) ou começa a lista desta época na app." />
           <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
             {botoes}
@@ -20445,61 +20516,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
             </button>
           </div>
 
-          {porCobrir.length > 0 && (
-            <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.warn, background: COLORS.warnBg }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <AlertTriangle size={16} color={COLORS.warn} />
-                <div style={{ fontWeight: 600, fontSize: 14 }}>
-                  Os dados de {epSel} mostram {porCobrir.length} {porCobrir.length === 1 ? "tema que não está" : "temas que não estão"} na lista
-                </div>
-              </div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {porCobrir.map((d) => (
-                  <div key={d.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}` }}>
-                    <TipoRisco tipo={d.tipo} />
-                    <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13.5 }}>{d.titulo}</div>
-                      <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 2 }}>
-                        {d.detalhe}
-                        {d.po ? ` · possibilidade de ocorrência sugerida ${d.po} (${PO_ROTULOS[d.po]})` : ""}
-                      </div>
-                      {d.relacionados.length > 0 && (
-                        <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          Talvez já esteja em:
-                          {d.relacionados.map((id) => {
-                            const it = itens.find((i) => i.id === id);
-                            return it ? (
-                              <button key={id} onClick={() => ligar(d, id)} title={`Ligar a: ${it.identificacao}`} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "2px 8px", fontSize: 11.5 }}>
-                                É o Nº {it.n}
-                              </button>
-                            ) : null;
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                      <select value="" onChange={(e) => e.target.value && ligar(d, e.target.value)} aria-label="Já está na lista como" style={{ ...inputStyle, width: 150, padding: "5px 8px", fontSize: 12 }}>
-                        <option value="">Já está como…</option>
-                        {itens
-                          .filter((i) => (i.tipo || "R") === d.tipo)
-                          .map((i) => (
-                            <option key={i.id} value={i.id}>
-                              Nº {i.n} · {String(i.identificacao).slice(0, 50)}
-                            </option>
-                          ))}
-                      </select>
-                      <button onClick={() => daDeteccao(d)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
-                        Adicionar à lista
-                      </button>
-                      <button onClick={() => ignorar(d, true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
-                        Ignorar
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {painelPropostas}
 
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
             <StatCard label="Riscos" value={R.length} subtitle={`${itens.length - R.length} oportunidades`} />
@@ -20811,11 +20828,13 @@ function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar
           )}
         </div>
 
-        <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "16px 0 8px" }}>Riscos e oportunidades de {epocaDe(o.data || isoDe(new Date()))}</div>
-        {itensRisco.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: COLORS.slate }}>Ainda não há lista de riscos para esta época. A ocorrência entra na mesma nos avisos da área Riscos e oportunidades.</div>
-        ) : (
-          <>
+        <div style={{ fontSize: 12, color: COLORS.ink2, margin: "16px 0 0", padding: "8px 10px", borderRadius: 8, background: COLORS.paperSunken, lineHeight: 1.5 }}>
+          Ao guardar, a app usa esta ocorrência para propor riscos e oportunidades novos em <strong>Riscos e oportunidades</strong> ({epocaDe(o.data || isoDe(new Date()))}). Escrever a <strong>ação tomada</strong> e marcar como resolvida ajuda a propor oportunidades de melhoria.
+        </div>
+        {itensRisco.length > 0 && (
+          <details style={{ marginTop: 10 }} open={ligados.length > 0}>
+            <summary style={{ cursor: "pointer", fontSize: 12.5, color: COLORS.ink2 }}>Já está prevista num risco da lista? (opcional){ligados.length ? ` · ligada a ${ligados.length}` : ""}</summary>
+            <div style={{ marginTop: 8 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {[...new Set([...ligados, ...sugeridos])].map((id) => {
                 const it = itensRisco.find((i) => i.id === id);
@@ -20838,8 +20857,9 @@ function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar
                   ))}
               </select>
             </div>
-            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>{sugeridos.length ? "Os que têm + são sugestões pelo tema. Ligar ajuda a avaliar a possibilidade de ocorrência desse risco." : "Liga a ocorrência ao risco que ela concretiza, se existir."}</div>
-          </>
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Liga só se a ocorrência concretiza um risco que já existe: deixa de ser proposta como risco novo e passa a contar para a possibilidade de ocorrência desse risco.</div>
+            </div>
+          </details>
         )}
 
         <div style={{ display: "flex", gap: 10, marginTop: 20, alignItems: "center" }}>
@@ -20868,7 +20888,10 @@ function OcorrenciaForm({ inicial, escolas, categorias, riscosDaEpoca, onGuardar
   );
 }
 
-function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSave, onRemove, onGerirLista, irParaRiscos, notificar }) {
+function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSave, onRemove, onGerirLista, irParaRiscos, propostas = [], epPropostas, notificar }) {
+  const geraProposta = new Set(propostas.flatMap((d) => d.ocorrIds || []));
+  const propR = propostas.filter((d) => d.tipo !== "O");
+  const propO = propostas.filter((d) => d.tipo === "O");
   const epocasOc = [...new Set(ocorrencias.map((o) => epocaDe(o.data)).filter(Boolean))];
   const [eps, setEps] = useState(() => selecaoInicial(epocasOc));
   const [fEsc, setFEsc] = useState("todas");
@@ -20929,6 +20952,30 @@ function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSa
           <Plus size={14} /> Nova ocorrência
         </button>
       </div>
+
+      {propostas.length > 0 && (
+        <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.warn, background: COLORS.warnBg, display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <Sparkles size={17} color={COLORS.warn} style={{ marginTop: 2 }} />
+          <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>
+              As ocorrências de {epPropostas} sugerem {propR.length ? `${propR.length} ${propR.length === 1 ? "risco novo" : "riscos novos"}` : ""}
+              {propR.length && propO.length ? " e " : ""}
+              {propO.length ? `${propO.length} ${propO.length === 1 ? "oportunidade nova" : "oportunidades novas"}` : ""}
+            </div>
+            <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 4, lineHeight: 1.6 }}>
+              {propostas.slice(0, 6).map((d) => (
+                <div key={d.id}>
+                  <strong style={{ fontWeight: 600, color: d.tipo === "O" ? "#1F5E78" : "#8A4A12" }}>{d.tipo === "O" ? "Oportunidade" : "Risco"}:</strong> {d.titulo}
+                </div>
+              ))}
+              {propostas.length > 6 && <div>e mais {propostas.length - 6}</div>}
+            </div>
+          </div>
+          <button onClick={irParaRiscos} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "8px 14px", fontSize: 13 }}>
+            Rever e adicionar
+          </button>
+        </div>
+      )}
 
       {ocorrencias.length === 0 ? (
         <Vazio
@@ -21003,6 +21050,7 @@ function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSa
                         </span>
                       </span>
                       <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {geraProposta.has(o.id) && <span title="Esta ocorrência gerou uma proposta de risco ou oportunidade" style={{ fontSize: 11, fontWeight: 600, padding: "2px 7px", borderRadius: 5, color: COLORS.warn, border: `1px solid ${COLORS.warn}` }}>proposta</span>}
                         <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 5, color: g.color, background: g.bg }}>{g.label}</span>
                         <span style={{ fontSize: 11.5, fontWeight: 600, color: aberta ? COLORS.warn : COLORS.ok }}>{aberta ? "Aberta" : "Resolvida"}</span>
                       </span>
@@ -21017,7 +21065,7 @@ function OcorrenciasPage({ ocorrencias, escolas, categorias, riscosDaEpoca, onSa
             <button onClick={irParaRiscos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11.5 }}>
               Riscos e oportunidades
             </button>
-            : se uma categoria se repetir e não estiver na lista de riscos, a app avisa.
+            : cada ocorrência pode dar origem a um risco novo (se o tema não estiver na lista) e a uma oportunidade de melhoria (por exemplo, passar a procedimento uma resposta que resultou).
           </div>
         </>
       )}
@@ -22254,12 +22302,11 @@ function AppPrincipal({ onSair }) {
     );
   const avisosRiscos = (() => {
     const eps = Object.keys(riscos.epocas || {}).sort();
-    if (!eps.length) return null;
     const epHoje = epocaDe(isoDe(new Date()));
-    const ep = eps.includes(epHoje) ? epHoje : eps[eps.length - 1];
+    const ep = eps.includes(epHoje) || !eps.length ? epHoje : eps[eps.length - 1];
     try {
-      const ds = deteccoesDe(ep, riscos.epocas[ep].itens, (riscos.ignorados || {})[ep]).filter((d) => !d.cobertoPor.length && !d.ignorado);
-      return { ep, n: ds.length, titulos: ds.map((d) => d.titulo) };
+      const ds = deteccoesDe(ep, ((riscos.epocas || {})[ep] || {}).itens || [], (riscos.ignorados || {})[ep]).filter((d) => !d.cobertoPor.length && !d.ignorado);
+      return { ep, n: ds.length, titulos: ds.map((d) => d.titulo), lista: ds };
     } catch (e) {
       return null;
     }
@@ -22807,6 +22854,8 @@ function AppPrincipal({ onSair }) {
             onRemove={apagarOcorrencia}
             onGerirLista={setListaAberta}
             irParaRiscos={() => setPage("riscos")}
+            propostas={(avisosRiscos && avisosRiscos.lista ? avisosRiscos.lista : []).filter((d) => d.daOcorrencia)}
+            epPropostas={avisosRiscos ? avisosRiscos.ep : null}
             notificar={notificar}
           />
         ) : page === "hoje" ? (
