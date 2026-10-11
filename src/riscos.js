@@ -220,6 +220,14 @@ const reclDaEpoca = (c, re) => c.reclamacoes.filter((r) => (r.epoca || epocaDeDa
 const evAud = (fs) => fs.slice(0, 40).map((f) => ({ origem: "Auditoria", texto: `${f.classification || ""} ${f.category || f.area || ""}: ${String(f.description || "").slice(0, 110)}`.trim(), escola: f.escola, data: f.data }));
 const evRecl = (rs) => rs.slice(0, 40).map((r) => ({ origem: "Reclamação", texto: `Nº ${String(r.entryNumber || "").padStart(4, "0")} · ${r.tema || r.categoria || ""}`, escola: r.school, data: r.receivedDate }));
 const resumo = (partes) => partes.filter(([n]) => n > 0).map(([n, t]) => `${n} ${t}`).join(" · ");
+// Ocorrências (registos que não são reclamações nem sanções: clima, infraestruturas, contratos…).
+// A categoria escolhida manda; o texto só conta quando a categoria é "Outra" ou está vazia.
+const textoOcorr = (o) => norm([o.categoria, o.titulo, o.descricao].join(" "));
+const categoriaVaga = (o) => !String(o.categoria || "").trim() || /^outr[ao]s?$/.test(norm(o.categoria));
+const ocorrBate = (o, re) => (categoriaVaga(o) ? re.test(textoOcorr(o)) : re.test(norm(o.categoria)));
+const ocorrDaEpoca = (c, re) => (c.ocorrencias || []).filter((o) => epocaDeData(o.data) === c.ep && ocorrBate(o, re));
+const evOc = (os) => os.slice(0, 40).map((o) => ({ origem: "Ocorrência", texto: `${o.categoria ? `${o.categoria}: ` : ""}${o.titulo || ""}${o.treinosSuspensos ? ` · ${o.treinosSuspensos} treinos suspensos` : ""}`, escola: o.escola, data: o.data }));
+const PO_OC = "PR.05-Gestão de Compras";
 
 export const DETETORES = [
   {
@@ -262,7 +270,8 @@ export const DETETORES = [
     medir: (c) => {
       const fs = constatacoes(c, (f) => /instalac/.test(norm(f.category)));
       const rs = reclDaEpoca(c, /infraestrutura|instalac|balneari|baliza|limpez/);
-      return { n: fs.length + rs.length, detalhe: resumo([[fs.length, "constatações de instalações"], [rs.length, "reclamações"]]), evidencias: [...evRecl(rs), ...evAud(fs)] };
+      const os = ocorrDaEpoca(c, /infraestrutur|instalac|avaria|vandal|balneari|relvado|piso|vedac|iluminac|baliza/);
+      return { n: fs.length + rs.length + os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[fs.length, "constatações de instalações"], [rs.length, "reclamações"], [os.length, "ocorrências"]]), evidencias: [...evOc(os), ...evRecl(rs), ...evAud(fs)] };
     },
   },
   {
@@ -321,7 +330,8 @@ export const DETETORES = [
     medir: (c) => {
       const fs = constatacoes(c, (f) => /fisio|nutri|psico/.test(norm(`${f.category} ${f.area}`)));
       const rs = reclDaEpoca(c, /saude|lesao|fisio/);
-      return { n: fs.length + rs.length, detalhe: resumo([[fs.length, "constatações de fisioterapia, nutrição ou psicologia"], [rs.length, "reclamações de saúde"]]), evidencias: [...evRecl(rs), ...evAud(fs)] };
+      const os = ocorrDaEpoca(c, /saude|lesao|lesoes|acidente|ferid|socorr|ambulanc|hospital|inem/);
+      return { n: fs.length + rs.length + os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[fs.length, "constatações de fisioterapia, nutrição ou psicologia"], [rs.length, "reclamações de saúde"], [os.length, "ocorrências de saúde ou acidentes"]]), evidencias: [...evOc(os), ...evRecl(rs), ...evAud(fs)] };
     },
   },
   {
@@ -349,7 +359,8 @@ export const DETETORES = [
     cobre: /informatic|software|internet/,
     medir: (c) => {
       const fs = constatacoes(c, (f) => /software/.test(norm(f.category)));
-      return { n: fs.length, detalhe: resumo([[fs.length, "constatações de software/internet"]]), evidencias: evAud(fs) };
+      const os = ocorrDaEpoca(c, /informatic|software|internet|rede|sistema de gestao|faturac|servidor|computador/);
+      return { n: fs.length + os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[fs.length, "constatações de software/internet"], [os.length, "ocorrências"]]), evidencias: [...evOc(os), ...evAud(fs)] };
     },
   },
   {
@@ -363,7 +374,8 @@ export const DETETORES = [
     cobre: /parceiro|contrato/,
     medir: (c) => {
       const fs = constatacoes(c, (f) => /parceiro/.test(norm(f.area)));
-      return { n: fs.length, detalhe: resumo([[fs.length, "constatações na área do parceiro"]]), evidencias: evAud(fs) };
+      const os = ocorrDaEpoca(c, /contrat|parceiro|protocolo/);
+      return { n: fs.length + os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[fs.length, "constatações na área do parceiro"], [os.length, "ocorrências contratuais"]]), evidencias: [...evOc(os), ...evAud(fs)] };
     },
   },
   {
@@ -378,7 +390,8 @@ export const DETETORES = [
     cobre: /agress|violen|ma conduta|comportament|disciplin|conflito/,
     medir: (c) => {
       const ss = (c.sanctions || []).filter((s) => epocaDeData(s.date) === c.ep);
-      return { n: ss.length, detalhe: resumo([[ss.length, "ocorrências disciplinares"]]), evidencias: ss.slice(0, 40).map((s) => ({ origem: "Sanção", texto: `${s.motivo || s.sanctionType || "Ocorrência"}${s.personType ? ` · ${s.personType}` : ""}`, escola: s.school, data: s.date })) };
+      const os = ocorrDaEpoca(c, /comportament|agress|conduta|conflito|insult|violen|discussao/);
+      return { n: ss.length + os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[ss.length, "ocorrências disciplinares"], [os.length, "ocorrências de comportamento"]]), evidencias: [...evOc(os), ...ss.slice(0, 40).map((s) => ({ origem: "Sanção", texto: `${s.motivo || s.sanctionType || "Ocorrência"}${s.personType ? ` · ${s.personType}` : ""}`, escola: s.school, data: s.date }))] };
     },
   },
   {
@@ -467,6 +480,67 @@ export const DETETORES = [
     },
   },
   {
+    id: "clima",
+    tipo: "R",
+    processo: P1,
+    titulo: "Condições climatéricas adversas (treinos ou eventos suspensos)",
+    causa: "Tempestades, chuva intensa, calor extremo, incêndios ou similares.",
+    impacto: "Cancelamento de treinos e eventos; fecho das instalações.",
+    gr: 3,
+    limiar: 1,
+    cobre: /climat|meteorolog|tempestade|chuva|intemperie|calor extremo/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /climat|meteorolog|tempestade|chuva|vento|intemperie|calor|neve|granizo|incendio|alerta (amarelo|laranja|vermelho)/);
+      const tr = os.reduce((t, o) => t + (Number(o.treinosSuspensos) || 0), 0);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, "ocorrências por condições climatéricas"], [tr, "treinos suspensos"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "energia",
+    tipo: "R",
+    processo: P2,
+    titulo: "Falhas de energia, água ou outros serviços essenciais",
+    causa: "Cortes de eletricidade (incluindo apagões), de água ou de outros serviços nas instalações.",
+    impacto: "Suspensão de treinos e atividades; balneários e iluminação sem funcionar.",
+    gr: 4,
+    limiar: 1,
+    cobre: /energ|apagao|eletric|corte de (luz|agua)/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /energ|apagao|eletric|corte de luz|sem luz|falta de luz|corte de agua|sem agua|falta de agua|gas/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, "ocorrências de energia ou serviços"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "fornecedores",
+    tipo: "R",
+    processo: PO_OC,
+    titulo: "Incumprimento de fornecedores (atrasos ou material defeituoso)",
+    causa: "Falha ou erro do fornecedor de materiais ou serviços.",
+    impacto: "Atraso na prestação do serviço ou na entrega de materiais; reclamações.",
+    gr: 3,
+    limiar: 1,
+    cobre: /fornecedor/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /fornecedor|encomenda|entrega|defeituos|material em falta/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, "ocorrências com fornecedores"]]), evidencias: evOc(os) };
+    },
+  },
+  {
+    id: "staff",
+    tipo: "R",
+    processo: P1,
+    titulo: "Ausência de treinadores ou staff no treino ou na escola",
+    causa: "Falta do treinador, do responsável operacional ou de outro staff, por razões pessoais ou profissionais.",
+    impacto: "Alunos sem o treino que pagam; falta de controlo na escola; insatisfação do cliente.",
+    gr: 3,
+    limiar: 1,
+    cobre: /ausencia (do|de) (treinador|responsavel|colaborador|staff)|falta (do|de) (treinador|staff|colaborador)|absentismo/,
+    medir: (c) => {
+      const os = ocorrDaEpoca(c, /ausencia|faltou|falta do treinador|falta de treinador|sem treinador|absentismo|baixa medica|staff em falta/);
+      return { n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, "ocorrências de ausência de staff"]]), evidencias: evOc(os) };
+    },
+  },
+  {
     id: "turmas-cheias",
     tipo: "O",
     processo: P1,
@@ -521,18 +595,64 @@ const textoChave = (it) => norm([it.identificacao, it.causa].join(" "));
 const textoLargo = (it) => norm([it.identificacao, it.causa, it.impacto, it.acao, it.observacoes].join(" "));
 
 // Devolve, para a época, os temas que os dados mostram, se a lista já os cobre, e a PO sugerida.
+// Riscos a que as ocorrências foram ligadas à mão.
+const ligadosPor = (ctx, ids) => {
+  const set = new Set(ids || []);
+  return new Set((ctx.ocorrencias || []).filter((o) => set.has(o.id)).flatMap((o) => o.riscos || []));
+};
+const escapar = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Ocorrências de categorias que nenhum tema acima apanha: um tema por categoria.
+function detetoresDinamicos(ctx, usadas) {
+  const grupos = {};
+  (ctx.ocorrencias || [])
+    .filter((o) => epocaDeData(o.data) === ctx.ep && !usadas.has(o.id))
+    .forEach((o) => {
+      const cat = String(o.categoria || "Outra").trim() || "Outra";
+      (grupos[cat] = grupos[cat] || []).push(o);
+    });
+  return Object.entries(grupos)
+    .filter(([, os]) => os.length >= 2 || os.some((o) => o.gravidade === "alta"))
+    .map(([cat, os]) => {
+      const palavras = norm(cat)
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length >= 5 && !["outra", "outro", "outros", "questoes", "problemas"].includes(w))
+        .map((w) => escapar(w.slice(0, Math.max(5, w.length - 2))));
+      const altas = os.filter((o) => o.gravidade === "alta").length;
+      return {
+        id: `oc:${norm(cat)}`,
+        tipo: "R",
+        processo: P1,
+        titulo: `Ocorrências recorrentes: ${cat}`,
+        causa: os[0].descricao || os[0].titulo || "",
+        impacto: os.find((o) => o.impacto)?.impacto || "",
+        gr: altas ? 4 : 3,
+        limiar: 1,
+        cobre: palavras.length ? new RegExp(palavras.join("|")) : /^$/,
+        medir: () => ({ n: os.length, ocorrIds: os.map((o) => o.id), detalhe: resumo([[os.length, `ocorrências de ${cat.toLowerCase()}`], [altas, "de gravidade alta"]]), evidencias: evOc(os) }),
+      };
+    });
+}
+
 export function detetarRiscos(ctx, itens, ignorados = []) {
   const ign = new Set(ignorados);
-  return DETETORES.map((d) => {
+  const usadas = new Set();
+  const medidas = DETETORES.map((d) => {
     let m;
     try {
       m = d.medir(ctx) || { n: 0 };
     } catch (e) {
       m = { n: 0 };
     }
+    (m.ocorrIds || []).forEach((id) => usadas.add(id));
+    return [d, m];
+  });
+  detetoresDinamicos(ctx, usadas).forEach((d) => medidas.push([d, d.medir()]));
+  return medidas.map(([d, m]) => {
     if (!m.n || m.n < (d.limiar || 3)) return null;
     const doTipo = itens.filter((it) => (it.tipo || "R") === d.tipo);
-    const cobertoPor = doTipo.filter((it) => (it.detetores || []).includes(d.id) || d.cobre.test(textoChave(it))).map((it) => it.id);
+    const ligados = ligadosPor(ctx, m.ocorrIds);
+    const cobertoPor = doTipo.filter((it) => (it.detetores || []).includes(d.id) || ligados.has(it.id) || d.cobre.test(textoChave(it))).map((it) => it.id);
     const relacionados = cobertoPor.length ? [] : doTipo.filter((it) => d.cobre.test(textoLargo(it))).map((it) => it.id).slice(0, 4);
     return {
       id: d.id,
@@ -546,6 +666,7 @@ export function detetarRiscos(ctx, itens, ignorados = []) {
       n: m.n,
       detalhe: m.detalhe,
       evidencias: m.evidencias || [],
+      ocorrIds: m.ocorrIds || [],
       cobertoPor,
       relacionados,
       ignorado: ign.has(d.id),
@@ -919,4 +1040,27 @@ export async function gerarExcelRiscos(ExcelJS, { epocas, legendas, apenas }) {
   lista.forEach((ep) => folhaEpoca(wb, ep, epocas[ep], legendas));
   folhaCriterios(wb);
   return wb.xlsx.writeBuffer();
+}
+
+// Riscos da lista que parecem tratar o mesmo tema de uma ocorrência (para a ligar).
+export function riscosParaOcorrencia(o, itens) {
+  const t = textoOcorr(o);
+  const porTema = new Set();
+  DETETORES.forEach((d) => {
+    const ctx = { ep: epocaDeData(o.data), ocorrencias: [o], audits: [], reclamacoes: [], sanctions: [], desistencias: [], eventos: [], registoAlunos: {} };
+    let m;
+    try {
+      m = d.medir(ctx);
+    } catch (e) {
+      m = null;
+    }
+    if (m && (m.ocorrIds || []).includes(o.id)) itens.filter((it) => (it.tipo || "R") === "R" && ((it.detetores || []).includes(d.id) || d.cobre.test(textoChave(it)))).forEach((it) => porTema.add(it.id));
+  });
+  const palavras = new Set(t.split(/[^a-z0-9]+/).filter((w) => w.length >= 5).map((w) => w.slice(0, 6)));
+  const porPalavras = itens
+    .map((it) => ({ id: it.id, s: textoChave(it).split(/[^a-z0-9]+/).filter((w) => w.length >= 5 && palavras.has(w.slice(0, 6))).length }))
+    .filter((x) => x.s >= 2)
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.id);
+  return [...new Set([...porTema, ...porPalavras])].slice(0, 5);
 }
