@@ -6586,10 +6586,20 @@ function RegrasTreinadores({ regras, onGuardar, onFechar }) {
   );
 }
 
+// Horas sempre no formato 18:15 (24 horas), de 15 em 15 minutos.
+const HORAS_TREINO = (() => {
+  const l = [];
+  for (let h = 7; h <= 23; h++) for (const m of [0, 15, 30, 45]) l.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  return l;
+})();
+const horaFmt = (h) => {
+  const m = String(h || "").match(/(\d{1,2})\D?(\d{2})?/);
+  return m ? `${String(Number(m[1])).padStart(2, "0")}:${m[2] || "00"}` : String(h || "");
+};
+
 function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacidades, regras, onSave, onUpdate, onRemove, onGerirLista, onGuardarRegras }) {
   const regrasT = regras && regras.length ? regras : DEFAULT_REGRAS_TREINADORES;
   const [escola, setEscola] = useState(escolas[0] || "");
-  const [espaco, setEspaco] = useState(listaEspacos[0] || "");
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
   const [hora, setHora] = useState("18:00");
   const [treinadores, setTreinadores] = useState(1);
@@ -6610,8 +6620,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     });
   const listaTurmas = Object.values(porTurma).sort((a, b) => a.turma.localeCompare(b.turma, "pt", { numeric: true }));
   const doEscola = espacos.filter((s) => s.escola === escola);
-  const usados = [...new Set(doEscola.map((s) => s.espaco))];
-  const mostrar = usados.length ? usados : listaEspacos.slice(0, 3);
+  // Linhas do mapa: as horas com treinos nesta escola.
+  const horas = [...new Set(doEscola.map((s) => horaFmt(s.hora)))].sort();
 
   // Turmas que treinam juntas: a soma dos alunos não pode passar a lotação mais baixa entre elas,
   // mais a tolerância que os treinadores do horário permitem.
@@ -6637,8 +6647,9 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
       setErro(listaTurmas.length ? "Escolhe a turma ou as turmas que treinam neste horário." : "Esta escola não tem turmas com alunos importados.");
       return;
     }
-    if (espacos.some((s) => s.escola === escola && s.espaco === espaco && s.dia === dia && s.hora === hora)) {
-      setErro(`${espaco} já está ocupado ${dia} às ${hora}. Remove esse bloco e cria-o de novo com todas as turmas que treinam juntas.`);
+    const repetidas = escolhidas.filter((t) => doEscola.some((s) => s.dia === dia && horaFmt(s.hora) === hora && turmasDoBloco(s).includes(t)));
+    if (repetidas.length) {
+      setErro(`${repetidas.join(", ")} já ${repetidas.length === 1 ? "tem" : "têm"} treino ${dia} às ${hora}.`);
       return;
     }
     if (!forcar && atual.estado === "acima") {
@@ -6648,7 +6659,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     }
     setErro("");
     setAcima(false);
-    onSave({ id: `s_${Date.now()}`, escola, espaco, dia, hora, treinadores: Number(treinadores) || 1, turmas: escolhidas, turma: escolhidas.join(" + ") });
+    onSave({ id: `s_${Date.now()}`, escola, dia, hora, treinadores: Number(treinadores) || 1, turmas: escolhidas, turma: escolhidas.join(" + ") });
     setEscolhidas([]);
   };
 
@@ -6713,21 +6724,6 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginTop: 10 }}>
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-              <label style={{ ...labelStyle, marginTop: 0 }}>Espaço</label>
-              <button type="button" onClick={() => onGerirLista("espacosLista")} style={{ ...linkBtnStyle, marginTop: 0 }}>
-                Gerir
-              </button>
-            </div>
-            <select value={espaco} onChange={(e) => setEspaco(e.target.value)} style={{ ...inputStyle, width: 160 }}>
-              {listaEspacos.map((sp) => (
-                <option key={sp} value={sp}>
-                  {sp}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Dia</label>
             <select value={dia} onChange={(e) => setDia(e.target.value)} style={{ ...inputStyle, width: 130 }}>
               {DIAS_SEMANA.map((d) => (
@@ -6739,7 +6735,13 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Hora</label>
-            <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} style={{ ...inputStyle, width: 120 }} />
+            <select value={hora} onChange={(e) => setHora(e.target.value)} style={{ ...inputStyle, width: 100, fontVariantNumeric: "tabular-nums" }}>
+              {HORAS_TREINO.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Treinadores</label>
@@ -6748,6 +6750,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         </div>
 
         <label style={{ ...labelStyle, marginTop: 14 }}>Turmas / equipas que treinam juntas neste horário</label>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: -2, marginBottom: 8 }}>Se treinam à mesma hora mas separadas, guarda cada uma num horário próprio: a lotação conta-se para cada grupo.</div>
         {listaTurmas.length === 0 ? (
           <div style={{ fontSize: 13, color: COLORS.slate }}>Esta escola não tem turmas com alunos importados na época atual.</div>
         ) : (
@@ -6804,7 +6807,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
 
       {doEscola.length > 0 && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-          <StatCard label="Horários" value={doEscola.length} subtitle={`${usados.length} ${usados.length === 1 ? "espaço" : "espaços"}`} />
+          <StatCard label="Treinos por semana" value={doEscola.length} subtitle={`${horas.length} ${horas.length === 1 ? "horário" : "horários"} diferentes`} />
           <StatCard label="Dentro da lotação" value={nOk} color={COLORS.ok} />
           <StatCard label="Aceitáveis pelos treinadores" value={nTolerados} color={nTolerados ? COLORS.warn : undefined} subtitle="acima da lotação, dentro da tolerância" />
           <StatCard label="Acima do limite" value={nAcima} color={nAcima ? COLORS.danger : undefined} subtitle="mesmo com os treinadores" />
@@ -6840,7 +6843,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={thStyle}>Espaço</th>
+                <th style={thStyle}>Hora</th>
                 {DIAS_SEMANA.map((d) => (
                   <th key={d} style={thStyle}>
                     {d}
@@ -6849,11 +6852,11 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
               </tr>
             </thead>
             <tbody>
-              {mostrar.map((sp) => (
-                <tr key={sp}>
-                  <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap" }}>{sp}</td>
+              {horas.map((h) => (
+                <tr key={h}>
+                  <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", verticalAlign: "top", fontVariantNumeric: "tabular-nums" }}>{h}</td>
                   {DIAS_SEMANA.map((d) => {
-                    const blocos = doEscola.filter((x) => x.espaco === sp && x.dia === d).sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+                    const blocos = doEscola.filter((x) => horaFmt(x.hora) === h && x.dia === d).sort((a, b) => turmasDoBloco(a).join().localeCompare(turmasDoBloco(b).join(), "pt", { numeric: true }));
                     return (
                       <td key={d} style={{ ...tdStyle, verticalAlign: "top", minWidth: 170 }}>
                         {blocos.length === 0 ? (
@@ -6876,7 +6879,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 11.5, color: COLORS.navy }}>{b.hora}</span>
+                                  <span style={{ fontSize: 11, color: COLORS.slate }}>{nomes.length > 1 ? "Treinam juntas" : ""}</span>
                                   <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>
                                     <X size={11} />
                                   </button>
