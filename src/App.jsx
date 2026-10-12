@@ -9580,6 +9580,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
   const [aEscrever, setAEscrever] = useState({});
   const [procuraTurma, setProcuraTurma] = useState("");
   const [faltaComo, setFaltaComo] = useState("manter");
+  const [copiadoFalta, setCopiadoFalta] = useState(false);
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
   const [nomeFicheiro, setNomeFicheiro] = useState("");
@@ -9812,6 +9813,10 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       novos,
       desistNovas,
       emFalta: emFalta.length,
+      // Quem são, para se poder confirmar à mão no sistema de inscrições.
+      emFaltaLista: emFalta
+        .map((a) => ({ id: a.id, escola: a.escola, turma: a.turma, semCodigo: !!a.semCodigo }))
+        .sort((a, b) => (a.escola || "").localeCompare(b.escola || "", "pt") || String(a.id).localeCompare(String(b.id), "pt", { numeric: true })),
       convertidas,
       pendentesExp: Object.values(experiencias).filter((x) => x.resultado === "pendente").length,
       foraEpoca: foraEpoca.map((r) => ({ id: r.id, data: saidaDe(r), linha: r.linha })),
@@ -9982,7 +9987,40 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
               <>
                 {resultado.emFalta > 0 && (
                   <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, fontSize: 13 }}>
-                    <strong>{resultado.emFalta} alunos</strong> da importação anterior não estão neste ficheiro nem nas desistências.
+                    <strong>{resultado.emFalta === 1 ? "1 aluno" : `${resultado.emFalta} alunos`}</strong> da importação anterior {resultado.emFalta === 1 ? "não está" : "não estão"} neste ficheiro nem nas desistências.
+                    {resultado.emFaltaLista && resultado.emFaltaLista.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                          <span style={{ fontSize: 12, color: COLORS.ink2, flex: 1 }}>Para confirmares no sistema de inscrições:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const txt = resultado.emFaltaLista.map((a) => (a.semCodigo ? `(sem código) ${a.escola} · ${a.turma}` : String(a.id))).join("\n");
+                              try {
+                                navigator.clipboard.writeText(txt);
+                                setCopiadoFalta(true);
+                                setTimeout(() => setCopiadoFalta(false), 1600);
+                              } catch (e) {
+                                // sem acesso à área de transferência: os IDs ficam visíveis na lista
+                              }
+                            }}
+                            style={{ background: "transparent", border: `1px solid ${COLORS.rule}`, borderRadius: 7, padding: "4px 10px", fontSize: 12, color: COLORS.ink, cursor: "pointer" }}
+                          >
+                            {copiadoFalta ? "Copiado" : resultado.emFaltaLista.length === 1 ? "Copiar ID" : "Copiar IDs"}
+                          </button>
+                        </div>
+                        <div style={{ maxHeight: 180, overflowY: "auto", border: `1px solid ${COLORS.rule}`, borderRadius: 8, background: COLORS.paperRaised }}>
+                          {resultado.emFaltaLista.map((a, i) => (
+                            <div key={a.id} style={{ display: "flex", gap: 10, padding: "5px 10px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 12.5 }}>
+                              <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: 90, userSelect: "all" }}>{a.semCodigo ? "sem código" : a.id}</span>
+                              <span style={{ color: COLORS.ink2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {a.escola} · {a.turma}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
                       <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
                         <input type="radio" checked={faltaComo === "manter"} onChange={() => setFaltaComo("manter")} /> Manter como inscritos (assinalados "em falta")
