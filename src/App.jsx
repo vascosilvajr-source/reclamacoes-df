@@ -20981,7 +20981,12 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
     setEditar({ __novo: true, id: `obj-${Date.now().toString(36)}`, grupo: `g-${Date.now().toString(36)}`, intencao: "", objetivo: "", indicador: "", meta: "", metaFmt: "", processo: "", responsavel: "", meios: "", atividades: "", prazo: `Final da época ${epSel}`, monitorizacao: "Mensal", meses: Array(12).fill(null), totalModo: "soma", fonte: null, ...base });
 
   // Sugestões de ligação aos dados da app (linhas sem fonte).
-  const sugestoes = (dadosEp.itens || []).map((i) => (!i.fonte && !i.semFonte ? { id: i.id, f: sugerirFonte(i, escolas) } : null)).filter((x) => x && x.f);
+  // Só sugere ligar quando a app tem mesmo dados disso nesta época.
+  const temDados = (f, e) => {
+    const m = f ? mesesDaFonte(f, e, contexto) : null;
+    return !!(m && m.some((v) => v !== null && v !== undefined));
+  };
+  const sugestoes = (dadosEp.itens || []).map((i) => (!i.fonte && !i.semFonte ? { id: i.id, f: sugerirFonte(i, escolas) } : null)).filter((x) => x && x.f && temDados(x.f, epSel));
   const aplicarSugestoes = () => {
     const por = Object.fromEntries(sugestoes.map((s) => [s.id, s.f]));
     guardarItens((dadosEp.itens || []).map((i) => (por[i.id] ? { ...i, fonte: por[i.id] } : i)));
@@ -21009,8 +21014,15 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
     importado.eps.forEach((e) => {
       if (epocas[e] && !substituir) return;
       const d = importado.epocas[e];
-      // Na época mais recente, os indicadores que a app conhece ficam logo ligados aos dados.
-      epocas[e] = e === ultima ? { ...d, itens: d.itens.map((i) => ({ ...i, fonte: i.fonte || sugerirFonte(i, escolas) })) } : d;
+      // Ao atualizar uma época, as ligações aos dados que já existiam mantêm-se.
+      const chave = (i) => normChave(`${i.objetivo}|${i.indicador}`);
+      const antes = Object.fromEntries((((epocas[e] || {}).itens) || []).filter((i) => i.fonte).map((i) => [chave(i), i.fonte]));
+      const liga = (i) => {
+        if (antes[chave(i)]) return antes[chave(i)];
+        const f = sugerirFonte(i, escolas);
+        return f && temDados(f, e) ? f : null;
+      };
+      epocas[e] = { ...d, itens: d.itens.map((i) => ({ ...i, fonte: i.fonte || liga(i) })) };
     });
     onGuardar({ ...(objetivos || {}), epocas });
     setEp(ultima);
@@ -21020,12 +21032,20 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
   const novaEpoca = () => {
     const seg = epocaSeguinteObj(epocasO[0] || epSel);
     if (((objetivos && objetivos.epocas) || {})[seg]) return setEp(seg);
-    const base = ((objetivos && objetivos.epocas) || {})[epocasO[0]] || { itens: [] };
-    const copia = copiarEpocaObjetivos(base, seg);
-    copia.itens = copia.itens.map((i) => ({ ...i, fonte: i.fonte || sugerirFonte(i, escolas) }));
-    onGuardar({ ...(objetivos || {}), epocas: { ...((objetivos && objetivos.epocas) || {}), [seg]: copia } });
+    // A época nova começa vazia: os objetivos entram pelo Excel ou à mão.
+    const ano = Number(seg.slice(0, 4));
+    onGuardar({ ...(objetivos || {}), epocas: { ...((objetivos && objetivos.epocas) || {}), [seg]: { titulo: `MAPA DE OBJECTIVOS ${ano}/${ano + 1}`, anos: [ano, ano + 1], itens: [] } } });
     setEp(seg);
-    notificar(`Época ${seg} criada a partir de ${epocasO[0] || "zero"} (${copia.itens.length} linhas, sem acompanhamento). Revê as metas e os responsáveis.`);
+    notificar(`Época ${seg} criada, vazia. Importa o Excel ou acrescenta os indicadores.`);
+  };
+  // Opcional: trazer as linhas de outra época (sem valores) para servir de base.
+  const anteriorComLinhas = epocasO.filter((e) => e < epSel && (((objetivos && objetivos.epocas) || {})[e] || {}).itens?.length)[0];
+  const copiarEstrutura = () => {
+    const base = objetivos.epocas[anteriorComLinhas];
+    const copia = copiarEpocaObjetivos(base, epSel);
+    copia.itens = copia.itens.map((i) => ({ ...i, fonte: i.fonte || sugerirFonte(i, escolas) }));
+    guardarEpoca({ itens: copia.itens });
+    notificar(`${copia.itens.length} indicadores copiados de ${anteriorComLinhas}, sem valores. Revê as metas e os responsáveis.`);
   };
   const descarregar = async (apenas) => {
     setAGerar(true);
@@ -21121,7 +21141,7 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
             <div>
               {importado.eps.length} épocas, de {importado.eps[0]} a {importado.eps[importado.eps.length - 1]}.
             </div>
-            <div>Na mais recente ({importado.eps[importado.eps.length - 1]}): {importado.epocas[importado.eps[importado.eps.length - 1]].itens.length} indicadores. Os que a app conhece (inscrições, desistências, reclamações, satisfação, retenção…) ficam ligados aos dados.</div>
+            <div>Na mais recente ({importado.eps[importado.eps.length - 1]}): {importado.epocas[importado.eps[importado.eps.length - 1]].itens.length} indicadores. Nas épocas em que a app tem dados (inscrições, desistências, reclamações, satisfação…), os meses vazios passam a ser preenchidos com eles.</div>
             {importado.avisos.map((a) => (
               <div key={a} style={{ color: COLORS.warn }}>
                 {a}
@@ -21167,14 +21187,27 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
             </select>
             <span style={{ flex: 1 }} />
             {botoes}
-            <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Copia a última época para a seguinte, sem o acompanhamento">
+            {((((objetivos && objetivos.epocas) || {})[epocasO[0]] || {}).itens || []).length > 0 && <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Cria a época seguinte, vazia">
               {((objetivos && objetivos.epocas) || {})[epocaSeguinteObj(epocasO[0])] ? "Ir para a época seguinte" : `Criar ${epocaSeguinteObj(epocasO[0])}`}
-            </button>
+            </button>}
             <button className="press" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Plus size={14} /> Novo indicador
             </button>
           </div>
 
+          {itens.length === 0 ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              <Vazio icon={Target} titulo={`Época ${epSel} ainda sem objetivos`} texto="Importa o Excel do mapa de objetivos com esta época (atualiza-a) ou acrescenta os indicadores um a um." />
+              {anteriorComLinhas && (
+                <div style={{ textAlign: "center" }}>
+                  <button onClick={copiarEstrutura} style={{ ...linkBtnStyle, fontSize: 12.5 }}>
+                    Ou copiar os indicadores de {anteriorComLinhas}, sem valores
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
             <StatCard label="Indicadores" value={itens.length} subtitle={`${comMeta.length} com meta e dados`} />
             <StatCard label={acomp.fim ? "Atingidos" : "Na meta"} value={n("ok")} color={n("ok") ? COLORS.ok : undefined} />
@@ -21313,6 +21346,8 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
               {vis.length === 0 && <div style={{ padding: 18, fontSize: 13, color: COLORS.slate }}>Nenhum indicador com estes filtros.</div>}
             </div>
           </div>
+          </>
+          )}
         </>
       )}
     </div>
