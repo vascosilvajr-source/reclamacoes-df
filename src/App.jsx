@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
+import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados } from "./sgq";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target } from "lucide-react";
 import {
@@ -120,6 +121,8 @@ const STORAGE_PLANO_INQ_KEY = "reclamacoes:inqueritos-plano";
 const STORAGE_RESPOSTAS_KEY = "reclamacoes:respostas-tipo";
 const STORAGE_RISCOS_KEY = "reclamacoes:riscos";
 const STORAGE_OCORRENCIAS_KEY = "reclamacoes:ocorrencias";
+const STORAGE_OBJETIVOS_KEY = "reclamacoes:objetivos";
+const STORAGE_DOCUMENTOS_KEY = "reclamacoes:documentos";
 const STORAGE_RADAR_KEY = "reclamacoes:radar";
 
 // ---------- Date / business-day helpers (PT holidays) ----------
@@ -20130,6 +20133,1192 @@ function PaletaComandos({ aberta, onFechar, comandos }) {
 
 // ---------- Main App ----------
 // ======================================================================
+// ---------- Sistema de gestão: Controlo documental (DFF.001) e Mapa de objetivos (DFF.024) ----------
+async function descarregarXlsx(buf, nome) {
+  const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url;
+  // Sem acentos no nome: alguns browsers trocam o nome por "download".
+  a.download = String(nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+async function abrirLivroExcel(ficheiro) {
+  if (!/\.xlsx$/i.test(ficheiro.name)) throw new Error("escolhe um ficheiro .xlsx");
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await ficheiro.arrayBuffer());
+  return wb;
+}
+// Nome do ficheiro com a versão atual do documento na lista (ex.: "DFF.024.03 - MAPA DE OBJECTIVOS").
+function nomeComVersao(documentos, codigo, titulo) {
+  const d = ((documentos && documentos.itens) || []).find((x) => x.codigo === codigo && (x.lista || "DF") === "DF");
+  return `${d ? codigoComVersao(d) : codigo} - ${titulo}.xlsx`;
+}
+
+function JanelaSGQ({ titulo, largura = 760, onFechar, children, rodape }) {
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: `min(${largura}px, 100%)`, maxHeight: "calc(100vh - 32px)", display: "flex", flexDirection: "column", background: COLORS.paperRaised, borderRadius: 14, border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px 22px 10px" }}>
+          <h2 style={{ margin: 0, fontSize: 19, color: COLORS.navy, flex: 1, minWidth: 0 }}>{titulo}</h2>
+          <button onClick={onFechar} aria-label="Fechar" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ padding: "4px 22px 18px", overflowY: "auto", minHeight: 0 }}>{children}</div>
+        {rodape && <div style={{ display: "flex", gap: 8, padding: "12px 22px 18px", borderTop: `1px solid ${COLORS.ruleSoft}`, flexWrap: "wrap", alignItems: "center" }}>{rodape}</div>}
+      </div>
+    </div>
+  );
+}
+const chipSGQ = (ativo) => ({ border: `1px solid ${ativo ? COLORS.navy : COLORS.rule}`, background: ativo ? COLORS.navyWash : "transparent", color: ativo ? COLORS.navy : COLORS.ink2, borderRadius: 999, padding: "4px 10px", fontSize: 12, cursor: "pointer", fontWeight: ativo ? 600 : 500, fontFamily: "inherit" });
+const segSGQ = (opcoes, valor, onChange) => (
+  <div style={{ display: "inline-flex", gap: 3, background: COLORS.segTrack, borderRadius: 8, padding: 2, flexWrap: "wrap" }}>
+    {opcoes.map(([k, l]) => (
+      <button key={k} type="button" onClick={() => onChange(k)} style={{ border: "none", borderRadius: 6, padding: "5px 11px", fontSize: 12.5, cursor: "pointer", background: valor === k ? COLORS.paperRaised : "transparent", fontWeight: valor === k ? 600 : 500, color: valor === k ? COLORS.ink : COLORS.ink2, boxShadow: valor === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none", fontFamily: "inherit" }}>
+        {l}
+      </button>
+    ))}
+  </div>
+);
+
+// ======================= CONTROLO DOCUMENTAL =======================
+function EditorDocumento({ inicial, todos, colaboradores, locais, sugestoes, onGuardar, onApagar, onFechar }) {
+  const [d, setD] = useState(() => ({ ...inicial, versoes: [...(inicial.versoes || [])], colaboradores: [...(inicial.colaboradores || [])], locais: [...(inicial.locais || [])] }));
+  const [codigoManual, setCodigoManual] = useState(!inicial.__novo);
+  const muda = (k, v) => setD((x) => ({ ...x, [k]: v }));
+  const mudaTipo = (t) =>
+    setD((x) => {
+      const n = { ...x, tipo: t };
+      if (inicial.__novo && !codigoManual) n.codigo = t === "-" ? "-" : proximoCodigo(todos, t);
+      return n;
+    });
+  const nc = normalizarCodigo(d.codigo);
+  const repetidos = d.tipo === "-" || !nc.valido ? [] : todos.filter((x) => x.id !== d.id && (x.lista || "DF") === (d.lista || "DF") && normalizarCodigo(x.codigo).codigo === nc.codigo);
+  const prefixoCerto = d.tipo === "-" || !nc.valido || nc.prefixo === (TIPOS_DOC[d.tipo] || {}).prefixo;
+  const valido = String(d.identificacao || "").trim() && (d.tipo === "-" || nc.valido) && !repetidos.length;
+  const alterna = (k, v) => setD((x) => ({ ...x, [k]: x[k].includes(v) ? x[k].filter((y) => y !== v) : [...x[k], v] }));
+  const hoje = isoDe(new Date());
+  const versaoAtual = d.tipo === "-" ? null : codigoComVersao({ ...d, codigo: nc.valido ? nc.codigo : d.codigo });
+  const campo = (k, rotulo, lista) => (
+    <div>
+      <label style={{ ...labelStyle, marginTop: 0 }}>{rotulo}</label>
+      <input value={d[k] ?? ""} onChange={(e) => muda(k, e.target.value)} list={lista ? `sgq-${k}` : undefined} style={inputStyle} />
+      {lista && (
+        <datalist id={`sgq-${k}`}>
+          {lista.map((v) => (
+            <option key={v} value={v} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  );
+  const guardar = () => {
+    const limpo = { ...d, codigo: d.tipo === "-" ? "-" : nc.valido ? nc.codigo : d.codigo, versoes: [...d.versoes].filter(Boolean).sort() };
+    delete limpo.__novo;
+    onGuardar(limpo);
+  };
+  return (
+    <JanelaSGQ
+      titulo={inicial.__novo ? "Novo documento" : `${versaoAtual || "Documento"}`}
+      largura={860}
+      onFechar={onFechar}
+      rodape={
+        <>
+          {!inicial.__novo && (
+            <button onClick={() => onApagar(d.id)} style={{ ...linkBtnStyle, marginTop: 0, color: COLORS.danger }}>
+              Apagar
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+            Cancelar
+          </button>
+          <button disabled={!valido} onClick={guardar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px", opacity: valido ? 1 : 0.5 }}>
+            Guardar
+          </button>
+        </>
+      }
+    >
+      <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {segSGQ(
+            Object.entries(TIPOS_DOC).map(([k, v]) => [k, k === "-" ? "Sem código" : `${k} · ${v.rotulo.split(" ")[0]}`]),
+            d.tipo,
+            mudaTipo
+          )}
+          {segSGQ(
+            [
+              ["DF", "Lista DF"],
+              ["INT", "Lista INT"],
+            ],
+            d.lista || "DF",
+            (v) => muda("lista", v)
+          )}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 200px) 1fr", gap: 12 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Código</label>
+            <input
+              value={d.codigo || ""}
+              disabled={d.tipo === "-"}
+              onChange={(e) => {
+                setCodigoManual(true);
+                muda("codigo", e.target.value.toUpperCase());
+              }}
+              style={{ ...inputStyle, fontWeight: 600, borderColor: repetidos.length ? COLORS.danger : undefined }}
+            />
+            <div style={{ fontSize: 11.5, marginTop: 4, color: repetidos.length || !prefixoCerto ? COLORS.danger : COLORS.slate, lineHeight: 1.4 }}>
+              {d.tipo === "-"
+                ? "Pastas e arquivos não têm código."
+                : repetidos.length
+                ? `Já existe: ${repetidos[0].identificacao}`
+                : !nc.valido
+                ? "Formato: DFF.123"
+                : !prefixoCerto
+                ? `Um ${TIPOS_DOC[d.tipo].rotulo.toLowerCase()} costuma ser ${TIPOS_DOC[d.tipo].prefixo}.`
+                : inicial.__novo
+                ? "Gerado: o próximo número livre."
+                : "Sem duplicados."}
+            </div>
+            {inicial.__novo && codigoManual && d.tipo !== "-" && (
+              <button
+                onClick={() => {
+                  setCodigoManual(false);
+                  muda("codigo", proximoCodigo(todos, d.tipo));
+                }}
+                style={{ ...linkBtnStyle, marginTop: 2, fontSize: 12 }}
+              >
+                Voltar ao código gerado
+              </button>
+            )}
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Identificação</label>
+            <input value={d.identificacao || ""} onChange={(e) => muda("identificacao", e.target.value)} placeholder="Ex.: FICHA DE ATENDIMENTO" style={inputStyle} autoFocus={inicial.__novo} />
+          </div>
+        </div>
+
+        <div style={{ ...panelStyle, marginBottom: 0, padding: 14, background: COLORS.paperSunken }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13.5, flex: 1 }}>
+              Versões {versaoAtual && <span style={{ color: COLORS.navy, marginLeft: 6 }}>· em vigor: {versaoAtual}</span>}
+            </div>
+            <button onClick={() => muda("versoes", [...d.versoes, hoje])} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <Plus size={13} /> Nova versão
+            </button>
+          </div>
+          {d.versoes.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem datas. A primeira versão conta como 01.</div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {d.versoes.map((v, k) => (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 4, border: `1px solid ${k === d.versoes.length - 1 ? COLORS.navy : COLORS.rule}`, borderRadius: 8, padding: "3px 4px 3px 8px", background: COLORS.paperRaised }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{String(k + 1).padStart(2, "0")}</span>
+                  <input type="date" value={v || ""} onChange={(e) => muda("versoes", d.versoes.map((x, j) => (j === k ? e.target.value : x)))} style={{ ...inputStyle, width: 136, padding: "3px 6px", fontSize: 12, border: "none", background: "transparent" }} />
+                  <button onClick={() => muda("versoes", d.versoes.filter((_, j) => j !== k))} aria-label="Tirar esta versão" style={{ ...iconBtnStyle, padding: 2, color: COLORS.slate }}>
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Registo</label>
+            {segSGQ(
+              [
+                ["Sim", "Sim"],
+                ["Não", "Não"],
+              ],
+              /^s/i.test(d.registo || "") ? "Sim" : /^n/i.test(d.registo || "") ? "Não" : "",
+              (v) => muda("registo", v)
+            )}
+          </div>
+          {campo("elaborado", "Elaborado por", sugestoes.elaborado)}
+          {campo("aprovado", "Aprovado por", sugestoes.aprovado)}
+          {campo("armazenagem", "Armazenagem", sugestoes.armazenagem)}
+          {campo("protecao", "Proteção e recuperação", sugestoes.protecao)}
+          {campo("retencao", "Tempo de retenção e destino", sugestoes.retencao)}
+        </div>
+
+        {[
+          ["colaboradores", "Colaboradores", colaboradores],
+          ["locais", "Locais", locais],
+        ].map(([k, rotulo, lista]) => (
+          <div key={k}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <label style={{ ...labelStyle, margin: 0, flex: 1 }}>
+                {rotulo} <span style={{ color: COLORS.slate, fontWeight: 400 }}>· {d[k].length} de {lista.length}</span>
+              </label>
+              <button onClick={() => muda(k, d[k].length === lista.length ? [] : [...lista])} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                {d[k].length === lista.length ? "Nenhum" : "Todos"}
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {lista.map((v) => (
+                <button key={v} type="button" onClick={() => alterna(k, v)} style={chipSGQ(d[k].includes(v))}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, cursor: "pointer", padding: "10px 12px", borderRadius: 10, border: `1px solid ${d.obsoleto ? COLORS.warn : COLORS.rule}`, background: d.obsoleto ? COLORS.warnBg : "transparent" }}>
+          <input type="checkbox" checked={!!d.obsoleto} onChange={(e) => muda("obsoleto", e.target.checked)} />
+          <span>
+            <strong>Obsoleto</strong> <span style={{ color: COLORS.ink2 }}>· deixa de estar em vigor, mas fica no histórico e no Excel (a laranja)</span>
+          </span>
+        </label>
+      </div>
+    </JanelaSGQ>
+  );
+}
+
+function DocumentosPage({ dados, onGuardar, notificar }) {
+  const itens = (dados && dados.itens) || [];
+  const colaboradores = (dados && dados.colaboradores) || [];
+  const locais = (dados && dados.locais) || [];
+  const [texto, setTexto] = useState("");
+  const [fTipo, setFTipo] = useState("todos");
+  const [fEstado, setFEstado] = useState("vigor");
+  const [fLista, setFLista] = useState("todas");
+  const [fLocal, setFLocal] = useState("");
+  const [fColab, setFColab] = useState("");
+  const [ordem, setOrdem] = useState("codigo");
+  const [editar, setEditar] = useState(null);
+  const [importado, setImportado] = useState(null);
+  const [aLer, setALer] = useState(false);
+  const [aGerar, setAGerar] = useState(false);
+
+  const duplicados = codigosDuplicados(itens);
+  const idsDup = new Set(duplicados.flatMap((x) => x.itens.map((i) => i.id)));
+  const sugestoes = Object.fromEntries(["elaborado", "aprovado", "armazenagem", "protecao", "retencao"].map((k) => [k, [...new Set(itens.map((i) => i[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"))]));
+
+  const guardarItens = (novos) => onGuardar({ ...(dados || {}), colaboradores, locais, itens: novos });
+  const guardarItem = (d) => {
+    const existe = itens.some((x) => x.id === d.id);
+    const ordemNova = existe ? d.ordem : Math.max(0, ...itens.filter((x) => (x.lista || "DF") === (d.lista || "DF")).map((x) => x.ordem || 0)) + 1;
+    guardarItens(existe ? itens.map((x) => (x.id === d.id ? d : x)) : [...itens, { ...d, ordem: ordemNova }]);
+    setEditar(null);
+    notificar(existe ? `${codigoComVersao(d)} atualizado.` : `${codigoComVersao(d)} criado.`);
+  };
+  const apagar = (id) => {
+    const d = itens.find((x) => x.id === id);
+    if (!window.confirm(`Apagar ${d ? `${d.codigo} · ${d.identificacao}` : "este documento"}? Se só deixou de se usar, marca como obsoleto.`)) return;
+    guardarItens(itens.filter((x) => x.id !== id));
+    setEditar(null);
+  };
+  const novo = () => setEditar({ __novo: true, id: `doc-${Date.now().toString(36)}`, lista: fLista === "INT" ? "INT" : "DF", tipo: "F", codigo: proximoCodigo(itens, "F"), identificacao: "", registo: "Sim", armazenagem: "SGQ - Suporte Informático", protecao: "Backup semanal / cópia de segurança", retencao: "Enquanto em Vigor", elaborado: "GQ", aprovado: "DE", colaboradores: [], locais: [], obsoleto: false, versoes: [isoDe(new Date())] });
+  const novoCodigoPara = (d) => {
+    const c = proximoCodigo(itens, d.tipo);
+    guardarItens(itens.map((x) => (x.id === d.id ? { ...x, codigo: c } : x)));
+    notificar(`"${d.identificacao}" passa a ${c}.`);
+  };
+
+  const importar = async (f) => {
+    if (!f) return;
+    setALer(true);
+    try {
+      const wb = await abrirLivroExcel(f);
+      const r = lerDocumentosDoExcel(wb);
+      if (!r.itens.length) throw new Error(r.avisos.join(" ") || "não encontrei documentos");
+      setImportado(r);
+    } catch (e) {
+      notificar(`Não consegui ler o ficheiro: ${e?.message || e}`, "erro");
+    } finally {
+      setALer(false);
+    }
+  };
+  const confirmar = () => {
+    onGuardar({ itens: importado.itens, colaboradores: importado.colaboradores, locais: importado.locais, rodape: importado.rodape, importadoEm: isoDe(new Date()) });
+    notificar(`Importados ${importado.itens.length} documentos.`);
+    setImportado(null);
+  };
+  const descarregar = async () => {
+    setAGerar(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const proprio = itens.find((x) => x.codigo === "DFF.001" && (x.lista || "DF") === "DF");
+      const buf = await gerarExcelDocumentos(ExcelJS, { itens, colaboradores, locais, rodape: proprio ? codigoComVersao(proprio) : "DFF.001" });
+      await descarregarXlsx(buf, nomeComVersao(dados, "DFF.001", "CONTROLO E GESTÃO DOCUMENTAL"));
+    } catch (e) {
+      notificar(`Não foi possível gerar o Excel: ${e?.message || e}`, "erro");
+    } finally {
+      setAGerar(false);
+    }
+  };
+
+  const q = normChave(texto);
+  const visiveis = itens
+    .filter((d) => fTipo === "todos" || (d.tipo || "-") === fTipo)
+    .filter((d) => (fEstado === "todos" ? true : fEstado === "obsoletos" ? d.obsoleto : !d.obsoleto))
+    .filter((d) => fLista === "todas" || (d.lista || "DF") === fLista)
+    .filter((d) => !fLocal || (d.locais || []).includes(fLocal))
+    .filter((d) => !fColab || (d.colaboradores || []).includes(fColab))
+    .filter((d) => !q || normChave([d.codigo, codigoComVersao(d), d.identificacao, d.elaborado, d.aprovado, d.armazenagem].join(" ")).includes(q))
+    .sort((a, b) => {
+      if (ordem === "recentes") return String((b.versoes || []).slice(-1)[0] || "").localeCompare(String((a.versoes || []).slice(-1)[0] || ""));
+      if (ordem === "nome") return String(a.identificacao).localeCompare(String(b.identificacao), "pt");
+      const na = normalizarCodigo(a.codigo);
+      const nb = normalizarCodigo(b.codigo);
+      return (a.lista || "DF").localeCompare(b.lista || "DF") || String(na.prefixo || "~").localeCompare(String(nb.prefixo || "~")) || (na.numero || 0) - (nb.numero || 0) || (a.ordem || 0) - (b.ordem || 0);
+    });
+  const emVigor = itens.filter((d) => !d.obsoleto);
+  const nTipo = (t) => emVigor.filter((d) => d.tipo === t).length;
+  const ultimaRevisao = emVigor.map((d) => (d.versoes || []).slice(-1)[0]).filter(Boolean).sort().slice(-1)[0];
+  const selF = { ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 };
+  const th = { ...thStyle, whiteSpace: "nowrap" };
+
+  const botoes = (
+    <>
+      <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
+        <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
+      </label>
+      {itens.length > 0 && (
+        <button className="press" disabled={aGerar} onClick={descarregar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
+        </button>
+      )}
+    </>
+  );
+
+  return (
+    <div>
+      {importado && (
+        <JanelaSGQ
+          titulo="Importar o controlo documental"
+          largura={560}
+          onFechar={() => setImportado(null)}
+          rodape={
+            <>
+              <span style={{ flex: 1 }} />
+              <button onClick={() => setImportado(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                Cancelar
+              </button>
+              <button onClick={confirmar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
+                {itens.length ? "Importar e substituir" : "Importar"}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.6 }}>
+            <div>{importado.lidas.join(" · ")} documentos</div>
+            <div>
+              {importado.itens.filter((d) => d.obsoleto).length} obsoletos · {importado.colaboradores.length} cargos · {importado.locais.length} locais
+            </div>
+            {codigosDuplicados(importado.itens).length > 0 && (
+              <div style={{ color: COLORS.danger }}>
+                Códigos repetidos: {codigosDuplicados(importado.itens).map((x) => `${x.codigo} (${x.itens.length}×)`).join(", ")}. Ficam assinalados para corrigires.
+              </div>
+            )}
+            {importado.avisos.map((a) => (
+              <div key={a} style={{ color: COLORS.warn }}>
+                {a}
+              </div>
+            ))}
+            {itens.length > 0 && <div style={{ marginTop: 8, color: COLORS.ink }}>Substitui os {itens.length} documentos que estão na app.</div>}
+          </div>
+        </JanelaSGQ>
+      )}
+      {editar && <EditorDocumento inicial={editar} todos={itens} colaboradores={colaboradores} locais={locais} sugestoes={sugestoes} onGuardar={guardarItem} onApagar={apagar} onFechar={() => setEditar(null)} />}
+
+      {itens.length === 0 ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          <Vazio icon={FileText} titulo="Ainda sem documentos" texto="Importa o Excel DFF.001 (Controlo e gestão documental). A app lê as duas listas (DF e INT), as versões e os obsoletos." />
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>{botoes}</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 360 }}>
+              <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: COLORS.slate }} />
+              <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Pesquisar código ou nome" style={{ ...inputStyle, paddingLeft: 32 }} />
+            </div>
+            {segSGQ(
+              [
+                ["vigor", "Em vigor"],
+                ["obsoletos", `Obsoletos · ${itens.filter((d) => d.obsoleto).length}`],
+                ["todos", "Todos"],
+              ],
+              fEstado,
+              setFEstado
+            )}
+            <span style={{ flex: 1 }} />
+            {botoes}
+            <button className="press" onClick={novo} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Plus size={14} /> Novo documento
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+            <StatCard label="Em vigor" value={emVigor.length} subtitle={`${itens.length - emVigor.length} obsoletos`} />
+            <StatCard label="Formulários" value={nTipo("F")} subtitle={`próximo: ${proximoCodigo(itens, "F")}`} />
+            <StatCard label="Normativas" value={nTipo("N")} subtitle={`próximo: ${proximoCodigo(itens, "N")}`} />
+            <StatCard label="Processos e manuais" value={nTipo("P") + nTipo("M")} subtitle={`${proximoCodigo(itens, "P")} · ${proximoCodigo(itens, "M")}`} />
+            <StatCard label="Última revisão" value={ultimaRevisao ? fmt(new Date(`${ultimaRevisao}T00:00:00`)) : "—"} />
+          </div>
+
+          {duplicados.length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.danger, background: COLORS.dangerBg }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <AlertTriangle size={16} color={COLORS.danger} />
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  {duplicados.length === 1 ? "1 código repetido" : `${duplicados.length} códigos repetidos`}
+                </div>
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {duplicados.map((x) => (
+                  <div key={`${x.lista}${x.codigo}`} style={{ fontSize: 12.5 }}>
+                    <strong>{x.codigo}</strong>
+                    {x.lista === "INT" ? " (lista INT)" : ""}:{" "}
+                    {x.itens.map((d, k) => (
+                      <span key={d.id}>
+                        {k > 0 && " · "}
+                        <button onClick={() => setEditar(d)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+                          {d.identificacao}
+                        </button>
+                        {k > 0 && (
+                          <button onClick={() => novoCodigoPara(d)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "1px 8px", fontSize: 11.5, marginLeft: 6 }}>
+                            Dar {proximoCodigo(itens, d.tipo)}
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${COLORS.ruleSoft}` }}>
+              <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} style={selF} aria-label="Tipo">
+                <option value="todos">Todos os tipos</option>
+                {Object.entries(TIPOS_DOC).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {k === "-" ? v.rotulo : `${k} · ${v.rotulo}`}
+                  </option>
+                ))}
+              </select>
+              <select value={fLista} onChange={(e) => setFLista(e.target.value)} style={selF} aria-label="Lista">
+                <option value="todas">Listas DF e INT</option>
+                <option value="DF">Só DF</option>
+                <option value="INT">Só INT</option>
+              </select>
+              <select value={fLocal} onChange={(e) => setFLocal(e.target.value)} style={{ ...selF, maxWidth: 210 }} aria-label="Local">
+                <option value="">Todos os locais</option>
+                {locais.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+              <select value={fColab} onChange={(e) => setFColab(e.target.value)} style={{ ...selF, maxWidth: 230 }} aria-label="Colaborador">
+                <option value="">Todos os cargos</option>
+                {colaboradores.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+              <span style={{ flex: 1 }} />
+              <select value={ordem} onChange={(e) => setOrdem(e.target.value)} style={selF} aria-label="Ordenar">
+                <option value="codigo">Por código</option>
+                <option value="recentes">Revistos há menos tempo</option>
+                <option value="nome">Por nome</option>
+              </select>
+              <span style={{ fontSize: 12, color: COLORS.slate }}>{visiveis.length} documentos</span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Código</th>
+                    <th style={th}>Identificação</th>
+                    <th style={th}>Tipo</th>
+                    <th style={th}>Última versão</th>
+                    <th style={th}>Elab. / Aprov.</th>
+                    <th style={{ ...th, textAlign: "right" }}>Locais</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiveis.slice(0, 400).map((d) => {
+                    const ult = (d.versoes || []).slice(-1)[0];
+                    return (
+                      <tr key={d.id} className="rowHover" onClick={() => setEditar(d)} style={{ cursor: "pointer", background: d.obsoleto ? COLORS.warnBg : undefined }}>
+                        <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", color: idsDup.has(d.id) ? COLORS.danger : COLORS.ink }}>
+                          {d.tipo === "-" ? "—" : codigoComVersao(d)}
+                          {(d.lista || "DF") === "INT" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: COLORS.purple, border: `1px solid ${COLORS.purple}`, borderRadius: 4, padding: "0 4px" }}>INT</span>}
+                        </td>
+                        <td style={{ ...tdStyle, minWidth: 260 }}>
+                          {d.identificacao}
+                          {d.obsoleto && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: COLORS.warn }}>obsoleto</span>}
+                        </td>
+                        <td style={{ ...tdStyle, color: COLORS.ink2, whiteSpace: "nowrap" }}>{d.tipo === "-" ? "—" : d.tipo}</td>
+                        <td style={{ ...tdStyle, whiteSpace: "nowrap", color: COLORS.ink2, fontVariantNumeric: "tabular-nums" }}>{ult ? fmt(new Date(`${ult}T00:00:00`)) : "—"}</td>
+                        <td style={{ ...tdStyle, whiteSpace: "nowrap", color: COLORS.ink2 }}>
+                          {d.elaborado || "—"} / {d.aprovado || "—"}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: COLORS.ink2, fontVariantNumeric: "tabular-nums" }}>{(d.locais || []).length || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {visiveis.length === 0 && <div style={{ padding: 18, fontSize: 13, color: COLORS.slate }}>Nenhum documento com estes filtros.</div>}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ======================= MAPA DE OBJETIVOS =======================
+const ESTADO_OBJ = {
+  ok: { rotulo: "Atingido", cor: () => COLORS.ok, bg: () => COLORS.okBg },
+  risco: { rotulo: "Ainda não", cor: () => COLORS.warn, bg: () => COLORS.warnBg },
+  falha: { rotulo: "Não atingido", cor: () => COLORS.danger, bg: () => COLORS.dangerBg },
+};
+function EstadoObjetivo({ estado, fim }) {
+  if (!estado) return <span style={{ fontSize: 11.5, color: COLORS.slate }}>—</span>;
+  const e = ESTADO_OBJ[estado];
+  const rotulo = estado === "ok" && !fim ? "Na meta" : e.rotulo;
+  return <span style={{ fontSize: 11, fontWeight: 600, color: e.cor(), background: e.bg(), borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>{rotulo}</span>;
+}
+
+function CelulaMes({ valor, auto, fmt, onGuardar, desligada }) {
+  const [aEditar, setAEditar] = useState(false);
+  const [t, setT] = useState("");
+  const mostrado = mostrarValor(valor, fmt);
+  if (aEditar)
+    return (
+      <input
+        autoFocus
+        value={t}
+        onChange={(e) => setT(e.target.value)}
+        onBlur={() => {
+          setAEditar(false);
+          onGuardar(lerValorEscrito(t, fmt));
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setAEditar(false);
+        }}
+        style={{ width: "100%", minWidth: 44, boxSizing: "border-box", border: `1px solid ${COLORS.navy}`, borderRadius: 5, padding: "3px 4px", fontSize: 12, textAlign: "center", background: COLORS.paperRaised, color: COLORS.ink, fontFamily: "inherit" }}
+      />
+    );
+  return (
+    <button
+      type="button"
+      disabled={desligada}
+      onClick={() => {
+        setT(auto ? "" : mostrado);
+        setAEditar(true);
+      }}
+      title={auto ? "Dos dados da app. Escreve um valor para o substituir." : "Escrever valor"}
+      style={{ width: "100%", minWidth: 34, minHeight: 24, border: "1px solid transparent", borderRadius: 5, background: "transparent", cursor: desligada ? "default" : "text", fontSize: 12, fontVariantNumeric: "tabular-nums", color: auto ? COLORS.navy : COLORS.ink, fontWeight: auto ? 500 : 600, padding: "3px 2px", fontFamily: "inherit" }}
+    >
+      {mostrado || <span style={{ color: COLORS.rule }}>·</span>}
+    </button>
+  );
+}
+
+function EditorObjetivo({ inicial, ep, intencoes, objetivosLista, escolas, previa, onGuardar, onApagar, onFechar }) {
+  const [it, setIt] = useState(() => ({ ...inicial, meses: [...(inicial.meses || Array(12).fill(null))] }));
+  const muda = (k, v) => setIt((x) => ({ ...x, [k]: v }));
+  const fonte = it.fonte || null;
+  const F = fonte && FONTES_OBJ[fonte.tipo];
+  const mudaFonte = (k, v) => setIt((x) => ({ ...x, fonte: { ...(x.fonte || {}), [k]: v } }));
+  const area = (k, rotulo, linhas = 2, lista) => (
+    <div>
+      <label style={{ ...labelStyle, marginTop: 0 }}>{rotulo}</label>
+      {lista ? (
+        <>
+          <input value={it[k] || ""} onChange={(e) => muda(k, e.target.value)} list={`obj-${k}`} style={inputStyle} />
+          <datalist id={`obj-${k}`}>
+            {lista.map((v) => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        </>
+      ) : (
+        <textarea rows={linhas} value={it[k] ?? ""} onChange={(e) => muda(k, e.target.value)} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+      )}
+    </div>
+  );
+  const auto = previa ? mesesDaFonte(it.fonte, ep, previa) : null;
+  const metaTexto = typeof it.meta === "number" ? mostrarValor(it.meta, it.metaFmt) : it.meta || "";
+  const valido = String(it.indicador || "").trim() || String(it.objetivo || "").trim();
+  return (
+    <JanelaSGQ
+      titulo={inicial.__novo ? "Novo indicador" : it.indicador || it.objetivo || "Indicador"}
+      largura={900}
+      onFechar={onFechar}
+      rodape={
+        <>
+          {!inicial.__novo && (
+            <button onClick={() => onApagar(it.id)} style={{ ...linkBtnStyle, marginTop: 0, color: COLORS.danger }}>
+              Apagar linha
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+            Cancelar
+          </button>
+          <button
+            disabled={!valido}
+            onClick={() => {
+              const x = { ...it };
+              delete x.__novo;
+              if (x.fonte && !x.fonte.tipo) x.fonte = null;
+              onGuardar(x);
+            }}
+            style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px", opacity: valido ? 1 : 0.5 }}
+          >
+            Guardar
+          </button>
+        </>
+      }
+    >
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {area("intencao", "Intenção da política", 2, intencoes)}
+          {area("objetivo", "Objetivo", 2, objetivosLista)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+          {area("indicador", "Indicador (KPI)", 2)}
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Meta</label>
+            <input
+              value={metaTexto}
+              disabled={it.metaCalc === "ativos"}
+              onChange={(e) => {
+                const v = e.target.value;
+                const n = lerValorEscrito(v, it.metaFmt);
+                setIt((x) => ({ ...x, meta: typeof n === "number" && /^[\d.,\s%]+$/.test(v.trim()) ? n : v, metaFormula: undefined, metaFmt: /%$/.test(v.trim()) ? "0.00%" : x.metaFmt }));
+              }}
+              placeholder="Ex.: Inferior a 5% · 450 · Igual ou superior a 75%"
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
+              {it.metaCalc === "ativos"
+                ? "Calculada: inscrições ÷ (1 + desistências) do grupo."
+                : (() => {
+                    const m = lerMeta(it);
+                    return m ? `A app lê: ${{ "<": "abaixo de", "<=": "até", ">": "acima de", ">=": "pelo menos" }[m.op]} ${m.pct ? `${fmtNum(m.v * 100, 2)}%` : fmtNum(m.v, 2)}` : "Sem número: não dá para dizer se foi atingida.";
+                  })()}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+          {area("processo", "Processo associado", 1)}
+          {area("responsavel", "Responsável", 1)}
+          {area("meios", "Meios associados", 1)}
+          {area("prazo", "Prazo", 1)}
+          {area("monitorizacao", "Monitorização", 1)}
+        </div>
+        {area("atividades", "Atividades a desenvolver", 3)}
+
+        <div style={{ ...panelStyle, marginBottom: 0, padding: 14, background: COLORS.paperSunken }}>
+          <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 4 }}>Dados da app</div>
+          <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10 }}>Os meses que não escreveres são preenchidos com os dados da app e atualizam-se sozinhos (ex.: cada importação semanal de inscritos).</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Fonte</label>
+              <select value={(fonte && fonte.tipo) || ""} onChange={(e) => setIt((x) => ({ ...x, fonte: e.target.value ? { ...(x.fonte || {}), tipo: e.target.value } : null }))} style={inputStyle}>
+                <option value="">Sem ligação (escrito à mão)</option>
+                {Object.entries(FONTES_OBJ).map(([k, f]) => (
+                  <option key={k} value={k}>
+                    {f.rotulo}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {F && F.escola && (
+              <div>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
+                <select value={fonte.escola || ""} onChange={(e) => mudaFonte("escola", e.target.value)} style={inputStyle}>
+                  <option value="">Todas as escolas</option>
+                  {escolas.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {F && F.filtro && (
+              <div>
+                <label style={{ ...labelStyle, marginTop: 0 }}>{F.filtro}</label>
+                <input value={fonte.filtro || ""} onChange={(e) => mudaFonte("filtro", e.target.value)} placeholder="(opcional)" style={inputStyle} />
+              </div>
+            )}
+          </div>
+          {F && (
+            <div style={{ fontSize: 12, marginTop: 10, color: auto ? COLORS.navy : COLORS.slate }}>
+              {auto
+                ? `Na época ${ep}: ${auto
+                    .map((v, k) => (v === null || v === undefined ? null : `${NOMES_MESES_OBJ[k]} ${mostrarValor(v, it.mesFmt || F.fmt)}`))
+                    .filter(Boolean)
+                    .join(" · ") || "sem valores"}`
+                : `A app ainda não tem dados disto em ${ep}.`}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label style={{ ...labelStyle, marginTop: 0 }}>Acompanhamento escrito à mão</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(48px, 1fr))", gap: 4, overflowX: "auto" }}>
+            {NOMES_MESES_OBJ.map((m, k) => (
+              <div key={k} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10.5, color: COLORS.slate, textTransform: "uppercase", marginBottom: 2 }}>{m}</div>
+                <input
+                  defaultValue={mostrarValor(it.meses[k], it.mesFmt || (F && F.fmt))}
+                  placeholder={auto && auto[k] !== null && auto[k] !== undefined ? mostrarValor(auto[k], it.mesFmt || (F && F.fmt)) : ""}
+                  onBlur={(e) => {
+                    const v = lerValorEscrito(e.target.value, it.mesFmt || (F && F.fmt));
+                    setIt((x) => ({ ...x, meses: x.meses.map((y, j) => (j === k ? v : y)) }));
+                  }}
+                  style={{ ...inputStyle, padding: "5px 4px", fontSize: 12, textAlign: "center" }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Total (coluna TOTAL)</label>
+            <select
+              value={F && !it.totalFixo && it.totalModo !== "diferenca" ? "__fonte" : it.totalModo || "soma"}
+              onChange={(e) => (e.target.value === "__fonte" ? setIt((x) => ({ ...x, totalFixo: false })) : setIt((x) => ({ ...x, totalModo: e.target.value, totalFixo: true })))}
+              style={inputStyle}
+            >
+              {F && <option value="__fonte">Como a fonte ({MODOS_TOTAL[F.total].toLowerCase()})</option>}
+              {Object.entries(MODOS_TOTAL)
+                .filter(([k]) => k !== "formula" || it.totalFormula)
+                .map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {l}
+                  </option>
+                ))}
+            </select>
+          </div>
+          {(it.totalModo === "valor" || it.totalModo === "formula") && !(F && !it.totalFixo) && (
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Valor do total</label>
+              <input defaultValue={mostrarValor(it.totalValor, it.totalFmt)} onBlur={(e) => muda("totalValor", lerValorEscrito(e.target.value, it.totalFmt))} style={inputStyle} />
+            </div>
+          )}
+          {it.totalModo === "razao" && (
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Dividir por</label>
+              <input defaultValue={it.totalDenominador ?? ""} onBlur={(e) => setIt((x) => ({ ...x, totalDenominador: Number(String(e.target.value).replace(",", ".")) || null, totalDenominadorTexto: undefined }))} style={inputStyle} />
+            </div>
+          )}
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Coluna ao lado do total</label>
+            <select value={it.xModo || ""} onChange={(e) => muda("xModo", e.target.value || null)} style={inputStyle}>
+              <option value="">Nada</option>
+              <option value="taxa">Taxa (desistências ÷ inscrições + desistências)</option>
+              <option value="cumprimento">% da meta (total ÷ meta)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </JanelaSGQ>
+  );
+}
+
+function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, documentos }) {
+  const epocasO = Object.keys((objetivos && objetivos.epocas) || {}).sort().reverse();
+  const epAtual = epocaDe(isoDe(new Date()));
+  const [ep, setEp] = useState(() => (epocasO.includes(epAtual) ? epAtual : epocasO[0] || epAtual));
+  const epSel = epocasO.includes(ep) ? ep : epocasO[0] || ep;
+  const dadosEp = ((objetivos && objetivos.epocas) || {})[epSel] || { itens: [] };
+  const [editar, setEditar] = useState(null);
+  const [importado, setImportado] = useState(null);
+  const [aLer, setALer] = useState(false);
+  const [aGerar, setAGerar] = useState(false);
+  const [texto, setTexto] = useState("");
+  const [fEstado, setFEstado] = useState("todos");
+  const [fResp, setFResp] = useState("");
+
+  const acomp = useMemo(() => acompanhamento(epSel, dadosEp, contexto), [epSel, dadosEp, contexto]);
+  const { itens, calc } = acomp;
+  const guardarEpoca = (mud) => onGuardar({ ...(objetivos || {}), epocas: { ...((objetivos && objetivos.epocas) || {}), [epSel]: { ...dadosEp, ...mud } } });
+  const guardarItens = (novos) => guardarEpoca({ itens: novos });
+  const original = (id) => (dadosEp.itens || []).find((i) => i.id === id);
+  const mudaMes = (id, k, v) => guardarItens((dadosEp.itens || []).map((i) => (i.id === id ? { ...i, meses: (i.meses || Array(12).fill(null)).map((x, j) => (j === k ? v : x)) } : i)));
+  const guardarItem = (item) => {
+    const lista = dadosEp.itens || [];
+    const existe = lista.some((i) => i.id === item.id);
+    let nova;
+    if (existe) nova = lista.map((i) => (i.id === item.id ? item : i));
+    else {
+      // Fica junto das linhas da mesma intenção (ou no fim).
+      const ult = lista.map((i, k) => (i.intencao === item.intencao ? k : -1)).filter((k) => k >= 0).pop();
+      nova = ult === undefined ? [...lista, item] : [...lista.slice(0, ult + 1), item, ...lista.slice(ult + 1)];
+    }
+    guardarItens(nova);
+    setEditar(null);
+    notificar(existe ? "Indicador atualizado." : "Indicador acrescentado.");
+  };
+  const apagar = (id) => {
+    if (!window.confirm("Apagar esta linha do mapa de objetivos?")) return;
+    guardarItens((dadosEp.itens || []).filter((i) => i.id !== id));
+    setEditar(null);
+  };
+  const novo = (base = {}) =>
+    setEditar({ __novo: true, id: `obj-${Date.now().toString(36)}`, grupo: `g-${Date.now().toString(36)}`, intencao: "", objetivo: "", indicador: "", meta: "", metaFmt: "", processo: "", responsavel: "", meios: "", atividades: "", prazo: `Final da época ${epSel}`, monitorizacao: "Mensal", meses: Array(12).fill(null), totalModo: "soma", fonte: null, ...base });
+
+  // Sugestões de ligação aos dados da app (linhas sem fonte).
+  const sugestoes = (dadosEp.itens || []).map((i) => (!i.fonte && !i.semFonte ? { id: i.id, f: sugerirFonte(i, escolas) } : null)).filter((x) => x && x.f);
+  const aplicarSugestoes = () => {
+    const por = Object.fromEntries(sugestoes.map((s) => [s.id, s.f]));
+    guardarItens((dadosEp.itens || []).map((i) => (por[i.id] ? { ...i, fonte: por[i.id] } : i)));
+    notificar(`${sugestoes.length} indicadores ligados aos dados da app.`);
+  };
+
+  const importar = async (f) => {
+    if (!f) return;
+    setALer(true);
+    try {
+      const wb = await abrirLivroExcel(f);
+      const r = lerObjetivosDoExcel(wb);
+      const eps = Object.keys(r.epocas).sort();
+      if (!eps.length) throw new Error(r.avisos.join(" ") || "não encontrei folhas de época");
+      setImportado({ ...r, eps, sobrepoe: eps.filter((e) => ((objetivos && objetivos.epocas) || {})[e]) });
+    } catch (e) {
+      notificar(`Não consegui ler o ficheiro: ${e?.message || e}`, "erro");
+    } finally {
+      setALer(false);
+    }
+  };
+  const confirmar = (substituir) => {
+    const epocas = { ...((objetivos && objetivos.epocas) || {}) };
+    const ultima = importado.eps[importado.eps.length - 1];
+    importado.eps.forEach((e) => {
+      if (epocas[e] && !substituir) return;
+      const d = importado.epocas[e];
+      // Na época mais recente, os indicadores que a app conhece ficam logo ligados aos dados.
+      epocas[e] = e === ultima ? { ...d, itens: d.itens.map((i) => ({ ...i, fonte: i.fonte || sugerirFonte(i, escolas) })) } : d;
+    });
+    onGuardar({ ...(objetivos || {}), epocas });
+    setEp(ultima);
+    notificar(`Importadas ${importado.eps.length} épocas do mapa de objetivos.`);
+    setImportado(null);
+  };
+  const novaEpoca = () => {
+    const seg = epocaSeguinteObj(epocasO[0] || epSel);
+    if (((objetivos && objetivos.epocas) || {})[seg]) return setEp(seg);
+    const base = ((objetivos && objetivos.epocas) || {})[epocasO[0]] || { itens: [] };
+    const copia = copiarEpocaObjetivos(base, seg);
+    copia.itens = copia.itens.map((i) => ({ ...i, fonte: i.fonte || sugerirFonte(i, escolas) }));
+    onGuardar({ ...(objetivos || {}), epocas: { ...((objetivos && objetivos.epocas) || {}), [seg]: copia } });
+    setEp(seg);
+    notificar(`Época ${seg} criada a partir de ${epocasO[0] || "zero"} (${copia.itens.length} linhas, sem acompanhamento). Revê as metas e os responsáveis.`);
+  };
+  const descarregar = async (apenas) => {
+    setAGerar(true);
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const eps = apenas || epocasO;
+      const epocas = {};
+      const calculos = {};
+      eps.forEach((e) => {
+        const a = e === epSel ? acomp : acompanhamento(e, objetivos.epocas[e], contexto);
+        epocas[e] = { ...objetivos.epocas[e], itens: a.itens };
+        calculos[e] = a.calc;
+      });
+      const buf = await gerarExcelObjetivos(ExcelJS, { epocas, calculos });
+      const nome = nomeComVersao(documentos, "DFF.024", "MAPA DE OBJECTIVOS").replace(/\.xlsx$/, apenas && apenas.length === 1 ? ` ${folhaObjetivos(apenas[0])}.xlsx` : ".xlsx");
+      await descarregarXlsx(buf, nome);
+    } catch (e) {
+      notificar(`Não foi possível gerar o Excel: ${e?.message || e}`, "erro");
+    } finally {
+      setAGerar(false);
+    }
+  };
+
+  const comMeta = itens.filter((i) => calc[i.id] && calc[i.id].estado);
+  const n = (e) => comMeta.filter((i) => calc[i.id].estado === e).length;
+  const nAuto = itens.filter((i) => i.temAuto).length;
+  const responsaveis = [...new Set(itens.flatMap((i) => String(i.responsavel || "").split(/\n|,| - /).map((x) => x.trim())).filter((x) => x && x.length > 2))].sort((a, b) => a.localeCompare(b, "pt"));
+  const q = normChave(texto);
+  const visivel = (i) =>
+    (!q || normChave([i.intencao, i.objetivo, i.indicador, i.responsavel, i.processo].join(" ")).includes(q)) &&
+    (!fResp || String(i.responsavel || "").includes(fResp)) &&
+    (fEstado === "todos" || (fEstado === "sem" ? !calc[i.id].estado : fEstado === "auto" ? i.temAuto : calc[i.id].estado === fEstado));
+  const vis = itens.filter(visivel);
+  // Blocos: intenção → grupos (objetivo) → linhas.
+  const blocos = [];
+  vis.forEach((i) => {
+    let b = blocos[blocos.length - 1];
+    if (!b || b.intencao !== i.intencao) blocos.push((b = { intencao: i.intencao, grupos: [] }));
+    let g = b.grupos[b.grupos.length - 1];
+    if (!g || g.id !== i.grupo) b.grupos.push((g = { id: i.grupo, objetivo: i.objetivo, linhas: [] }));
+    g.linhas.push(i);
+  });
+  const selF = { ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 };
+  const th = { ...thStyle, whiteSpace: "nowrap", padding: "8px 6px", fontSize: 10.5 };
+  const metaMostrada = (i) => {
+    if (i.metaCalc === "ativos") {
+      const v = metaNumerica(i, itens);
+      return v === null ? "—" : fmtNum(v, 0);
+    }
+    return typeof i.meta === "number" ? mostrarValor(i.meta, i.metaFmt || "0") : i.meta || "—";
+  };
+  const anos = dadosEp.anos || [Number(epSel.slice(0, 4)), Number(epSel.slice(0, 4)) + 1];
+
+  const botoes = (
+    <>
+      <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
+        <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
+      </label>
+      {epocasO.length > 0 && (
+        <button className="press" disabled={aGerar} onClick={() => descarregar(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
+        </button>
+      )}
+    </>
+  );
+
+  return (
+    <div>
+      {importado && (
+        <JanelaSGQ
+          titulo="Importar o mapa de objetivos"
+          largura={560}
+          onFechar={() => setImportado(null)}
+          rodape={
+            <>
+              <span style={{ flex: 1 }} />
+              <button onClick={() => setImportado(null)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                Cancelar
+              </button>
+              {importado.sobrepoe.length > 0 && importado.sobrepoe.length < importado.eps.length && (
+                <button onClick={() => confirmar(false)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                  Só as épocas novas
+                </button>
+              )}
+              <button onClick={() => confirmar(true)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}>
+                {importado.sobrepoe.length ? "Importar e substituir" : "Importar"}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.6 }}>
+            <div>
+              {importado.eps.length} épocas, de {importado.eps[0]} a {importado.eps[importado.eps.length - 1]}.
+            </div>
+            <div>Na mais recente ({importado.eps[importado.eps.length - 1]}): {importado.epocas[importado.eps[importado.eps.length - 1]].itens.length} indicadores. Os que a app conhece (inscrições, desistências, reclamações, satisfação, retenção…) ficam ligados aos dados.</div>
+            {importado.avisos.map((a) => (
+              <div key={a} style={{ color: COLORS.warn }}>
+                {a}
+              </div>
+            ))}
+            {importado.sobrepoe.length > 0 && <div style={{ marginTop: 6, color: COLORS.ink }}>Já existem na app: {importado.sobrepoe.join(", ")}.</div>}
+          </div>
+        </JanelaSGQ>
+      )}
+      {editar && (
+        <EditorObjetivo
+          inicial={editar}
+          ep={epSel}
+          intencoes={[...new Set((dadosEp.itens || []).map((i) => i.intencao).filter(Boolean))]}
+          objetivosLista={[...new Set((dadosEp.itens || []).map((i) => i.objetivo).filter(Boolean))]}
+          escolas={escolas}
+          previa={contexto}
+          onGuardar={guardarItem}
+          onApagar={apagar}
+          onFechar={() => setEditar(null)}
+        />
+      )}
+
+      {epocasO.length === 0 ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          <Vazio icon={Target} titulo="Ainda sem mapa de objetivos" texto="Importa o Excel DFF.024 (todas as épocas de uma vez). Os indicadores que a app conhece passam a atualizar-se com os dados de cada semana." />
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            {botoes}
+            <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
+              Começar {epAtual} do zero
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+            <select value={epSel} onChange={(e) => setEp(e.target.value)} aria-label="Época" style={{ ...selF, fontWeight: 600 }}>
+              {epocasO.map((e) => (
+                <option key={e} value={e}>
+                  Época {e}
+                </option>
+              ))}
+            </select>
+            <span style={{ flex: 1 }} />
+            {botoes}
+            <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Copia a última época para a seguinte, sem o acompanhamento">
+              {((objetivos && objetivos.epocas) || {})[epocaSeguinteObj(epocasO[0])] ? "Ir para a época seguinte" : `Criar ${epocaSeguinteObj(epocasO[0])}`}
+            </button>
+            <button className="press" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Plus size={14} /> Novo indicador
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+            <StatCard label="Indicadores" value={itens.length} subtitle={`${comMeta.length} com meta e dados`} />
+            <StatCard label={acomp.fim ? "Atingidos" : "Na meta"} value={n("ok")} color={n("ok") ? COLORS.ok : undefined} />
+            <StatCard label={acomp.fim ? "Não atingidos" : "Ainda por atingir"} value={n("risco") + n("falha")} color={n("falha") ? COLORS.danger : n("risco") ? COLORS.warn : undefined} subtitle={n("falha") ? `${n("falha")} já sem margem` : undefined} />
+            <StatCard label="Com dados da app" value={nAuto} subtitle="atualizam-se sozinhos" />
+          </div>
+
+          {sugestoes.length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.navy, background: COLORS.navyWash, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <Sparkles size={16} color={COLORS.navy} />
+              <div style={{ flex: "1 1 300px", fontSize: 13 }}>
+                <strong>{sugestoes.length === 1 ? "1 indicador pode" : `${sugestoes.length} indicadores podem`} ser preenchidos com os dados da app</strong>
+                <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 2 }}>{[...new Set(sugestoes.map((s) => FONTES_OBJ[s.f.tipo].rotulo.split(" (")[0]))].join(" · ")}</div>
+              </div>
+              <button onClick={aplicarSugestoes} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13 }}>
+                Ligar
+              </button>
+            </div>
+          )}
+
+          <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: "12px 14px", borderBottom: `1px solid ${COLORS.ruleSoft}` }}>
+              <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 320 }}>
+                <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: COLORS.slate }} />
+                <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Pesquisar objetivo, indicador, escola" style={{ ...inputStyle, paddingLeft: 32, padding: "6px 10px 6px 32px", fontSize: 13 }} />
+              </div>
+              <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={selF} aria-label="Estado">
+                <option value="todos">Todos os estados</option>
+                <option value="ok">Na meta / atingidos</option>
+                <option value="risco">Ainda por atingir</option>
+                <option value="falha">Não atingidos</option>
+                <option value="sem">Sem meta ou sem dados</option>
+                <option value="auto">Com dados da app</option>
+              </select>
+              <select value={fResp} onChange={(e) => setFResp(e.target.value)} style={{ ...selF, maxWidth: 220 }} aria-label="Responsável">
+                <option value="">Todos os responsáveis</option>
+                {responsaveis.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: COLORS.slate, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span style={{ color: COLORS.navy, fontWeight: 600 }}>azul</span> = dados da app · carrega num mês para escrever
+              </span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1040 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...th, textAlign: "left", paddingLeft: 14 }} rowSpan={2}>
+                      Objetivo
+                    </th>
+                    <th style={{ ...th, textAlign: "left" }} rowSpan={2}>
+                      Indicador
+                    </th>
+                    <th style={{ ...th, textAlign: "left" }} rowSpan={2}>
+                      Meta
+                    </th>
+                    <th style={{ ...th, textAlign: "center", borderBottom: "none" }} colSpan={4}>
+                      {anos[0]}
+                    </th>
+                    <th style={{ ...th, textAlign: "center", borderBottom: "none" }} colSpan={8}>
+                      {anos[1]}
+                    </th>
+                    <th style={{ ...th, textAlign: "center" }} rowSpan={2}>
+                      Total
+                    </th>
+                    <th style={{ ...th, textAlign: "center" }} rowSpan={2}>
+                      Estado
+                    </th>
+                  </tr>
+                  <tr>
+                    {NOMES_MESES_OBJ.map((m) => (
+                      <th key={m} style={{ ...th, textAlign: "center", textTransform: "capitalize" }}>
+                        {m}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {blocos.map((b, bi) => (
+                    <React.Fragment key={`b${bi}`}>
+                      <tr>
+                        <td colSpan={17} style={{ padding: "12px 14px 6px", fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", background: COLORS.paperSunken, borderBottom: `1px solid ${COLORS.ruleSoft}` }}>
+                          {String(b.intencao || "Sem intenção").replace(/^[\s"“”]+|[\s"“”]+$/g, "")}
+                        </td>
+                      </tr>
+                      {b.grupos.map((g) =>
+                        g.linhas.map((i, li) => {
+                          const c = calc[i.id] || {};
+                          const fmtT = i.totalFmt || (i.totalModo === "porInscritos" || i.totalModo === "razao" ? "0.00%" : i.mesFmt);
+                          const ultimo = li === g.linhas.length - 1;
+                          const borda = ultimo ? `1px solid ${COLORS.rule}` : `1px solid ${COLORS.ruleSoft}`;
+                          return (
+                            <tr key={i.id} className="rowHover">
+                              {li === 0 && (
+                                <td rowSpan={g.linhas.length} style={{ padding: "8px 10px 8px 14px", fontSize: 12.5, fontWeight: 600, verticalAlign: "top", borderBottom: `1px solid ${COLORS.rule}`, maxWidth: 200, minWidth: 150 }}>
+                                  {g.objetivo || "—"}
+                                  <div style={{ fontSize: 11, fontWeight: 400, color: COLORS.slate, marginTop: 3, whiteSpace: "pre-line" }}>{String(i.responsavel || "").trim().split("\n").filter(Boolean).slice(0, 3).join(", ")}</div>
+                                </td>
+                              )}
+                              <td style={{ padding: "6px 8px", fontSize: 12.5, borderBottom: borda, minWidth: 140, maxWidth: 200 }}>
+                                <button onClick={() => setEditar(original(i.id))} style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: COLORS.ink, fontSize: 12.5, fontFamily: "inherit" }}>
+                                  {i.indicador || "—"}
+                                </button>
+                                {i.fonte && FONTES_OBJ[i.fonte.tipo] && (
+                                  <div style={{ fontSize: 10.5, color: i.temAuto ? COLORS.navy : COLORS.slate, marginTop: 2 }} title={FONTES_OBJ[i.fonte.tipo].rotulo}>
+                                    ● {FONTES_OBJ[i.fonte.tipo].rotulo.split(" (")[0]}
+                                    {i.fonte.escola ? ` · ${i.fonte.escola}` : ""}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ padding: "6px 8px", fontSize: 12, color: COLORS.ink2, borderBottom: borda, maxWidth: 120 }}>{metaMostrada(i)}</td>
+                              {(i.mesesEfetivos || []).map((v, k) => (
+                                <td key={k} style={{ padding: "2px 1px", borderBottom: borda, textAlign: "center" }}>
+                                  <CelulaMes valor={v} auto={i.autoK && i.autoK[k]} fmt={i.mesFmt} onGuardar={(nv) => mudaMes(i.id, k, nv)} desligada={i.totalModo === "diferenca"} />
+                                </td>
+                              ))}
+                              <td style={{ padding: "6px 8px", fontSize: 12.5, fontWeight: 700, textAlign: "center", borderBottom: borda, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                                {mostrarValor(c.total, fmtT) || "—"}
+                                {c.x !== null && c.x !== undefined && <div style={{ fontSize: 10.5, fontWeight: 500, color: COLORS.slate }}>{i.xModo === "taxa" ? "taxa " : ""}{mostrarValor(c.x, i.xFmt || "0.0%")}</div>}
+                              </td>
+                              <td style={{ padding: "6px 8px", textAlign: "center", borderBottom: borda }}>
+                                <EstadoObjetivo estado={c.estado} fim={acomp.fim} />
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+              {vis.length === 0 && <div style={{ padding: 18, fontSize: 13, color: COLORS.slate }}>Nenhum indicador com estes filtros.</div>}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------- Riscos e oportunidades (DFF.151.01) ----------
 // ======================================================================
 // A tabela do documento "Pensamento baseado no risco e oportunidades", por época,
@@ -21521,6 +22710,8 @@ function AppPrincipal({ onSair }) {
   const [espacos, setEspacos] = useState([]);
   const [eventos, setEventos] = useState([]);
   const [riscos, setRiscos] = useState({ epocas: {} });
+  const [objetivos, setObjetivos] = useState({ epocas: {} });
+  const [documentos, setDocumentos] = useState({ itens: [], colaboradores: [], locais: [] });
   const [ocorrencias, setOcorrencias] = useState([]);
   const [radar, setRadar] = useState(null);
   const [inqueritos, setInqueritos] = useState([]);
@@ -21663,10 +22854,44 @@ function AppPrincipal({ onSair }) {
   const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
   const persistRiscos = fazPersist(setRiscos, STORAGE_RISCOS_KEY, "os riscos e oportunidades");
+  const persistObjetivos = fazPersist(setObjetivos, STORAGE_OBJETIVOS_KEY, "o mapa de objetivos");
+  const persistDocumentos = fazPersist(setDocumentos, STORAGE_DOCUMENTOS_KEY, "o controlo documental");
   const persistOcorrencias = fazPersist(setOcorrencias, STORAGE_OCORRENCIAS_KEY, "as ocorrências");
   const guardarOcorrencia = (o) => persistOcorrencias(ocorrencias.some((x) => x.id === o.id) ? ocorrencias.map((x) => (x.id === o.id ? o : x)) : [...ocorrencias, o]);
   const apagarOcorrencia = (id) => persistOcorrencias(ocorrencias.filter((x) => x.id !== id));
   const riscosDaEpoca = (ep) => ((riscos.epocas || {})[ep] || {}).itens || [];
+  // Dados da app que alimentam o acompanhamento do mapa de objetivos.
+  const contextoObjetivos = useMemo(() => {
+    const niveisO = options.niveis || DEFAULT_NIVEIS;
+    const capacidadesO = options.capacidades || {};
+    return {
+      reclamacoes: entries,
+      registoAlunos,
+      eventos,
+      inqueritos,
+      ocorrencias,
+      audits,
+      participantesDe: (ev) => {
+        try {
+          const c = contasEvento(ev, registoAlunos || {}, niveisO);
+          return c ? c.lidos : null;
+        } catch (e) {
+          return null;
+        }
+      },
+      satisfacaoDe: (i) => satisfacaoDe(i.perguntas || []),
+      retencaoDe: (ep, escola) => {
+        const x = indicadoresDaEpoca(ep, registoAlunos || {}, niveisO, capacidadesO, escola || undefined);
+        return x && x.ret && x.ret.taxa !== null && x.ret.taxa !== undefined ? x.ret.taxa / 100 : null;
+      },
+      ativosDe: (ep, escola) => {
+        const reg = (registoAlunos || {})[ep];
+        if (!reg) return null;
+        const n = Object.values(reg.alunos || {}).filter((a) => a.estado === "ativo" && (!escola || a.escola === escola)).length;
+        return n || null;
+      },
+    };
+  }, [entries, registoAlunos, eventos, inqueritos, ocorrencias, audits, options.niveis, options.capacidades]);
   const persistSatisfacao = fazPersist(setSatisfacao, STORAGE_SATISFACAO_KEY, "a satisfação");
   const persistInqueritos = fazPersist(setInqueritos, STORAGE_INQUERITOS_KEY, "os inquéritos");
   const persistNotasRel = fazPersist(setNotasRelatorio, STORAGE_NOTAS_REL_KEY, "as notas do relatório");
@@ -21764,6 +22989,8 @@ function AppPrincipal({ onSair }) {
         [STORAGE_ESPACOS_KEY, setEspacos],
         [STORAGE_EVENTOS_KEY, setEventos],
         [STORAGE_RISCOS_KEY, setRiscos],
+        [STORAGE_OBJETIVOS_KEY, setObjetivos],
+        [STORAGE_DOCUMENTOS_KEY, setDocumentos],
         [STORAGE_OCORRENCIAS_KEY, setOcorrencias],
         [STORAGE_RADAR_KEY, setRadar],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
@@ -22502,6 +23729,10 @@ function AppPrincipal({ onSair }) {
       ? "Hoje"
       : page === "riscos"
       ? "Riscos e oportunidades"
+      : page === "objetivos"
+      ? "Mapa de objetivos"
+      : page === "documentos"
+      ? "Controlo documental"
       : page === "ocorrencias"
       ? "Ocorrências"
       : "Reclamações";
@@ -22630,6 +23861,8 @@ function AppPrincipal({ onSair }) {
     { id: "p-relatorio", grupo: "Ir para", titulo: "Relatórios (escola e geral)", icon: FileText, acao: () => setPage("relatorio") },
     { id: "p-inqueritos", grupo: "Ir para", titulo: "Inquéritos de satisfação", icon: MessageSquareText, acao: () => setPage("inqueritos") },
     { id: "p-riscos", grupo: "Ir para", titulo: "Riscos e oportunidades", icon: ShieldAlert, acao: () => setPage("riscos") },
+    { id: "p-objetivos", grupo: "Ir para", titulo: "Mapa de objetivos", icon: Target, acao: () => setPage("objetivos") },
+    { id: "p-documentos", grupo: "Ir para", titulo: "Controlo documental", icon: FileText, acao: () => setPage("documentos") },
     { id: "p-ocorrencias", grupo: "Ir para", titulo: "Ocorrências", icon: AlertTriangle, acao: () => setPage("ocorrencias") },
     {
       id: "a-nova",
@@ -22733,7 +23966,14 @@ function AppPrincipal({ onSair }) {
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
         { key: "ocorrencias", label: "Ocorrências", icon: AlertTriangle, contador: ocorrencias.filter((o) => (o.estado || "aberta") === "aberta").length || null },
+      ],
+    },
+    {
+      grupo: "Sistema de gestão",
+      itens: [
         { key: "riscos", label: "Riscos e oportunidades", icon: ShieldAlert, contador: avisosRiscos && avisosRiscos.n ? `${avisosRiscos.n} ⚠` : null },
+        { key: "objetivos", label: "Objetivos", icon: Target, contador: null },
+        { key: "documentos", label: "Controlo documental", icon: FileText, contador: (documentos.itens || []).length ? (documentos.itens || []).filter((d) => !d.obsoleto).length : null },
       ],
     },
     {
@@ -23106,7 +24346,7 @@ function AppPrincipal({ onSair }) {
           }}
         >
           <div style={{ fontSize: 13.5, color: COLORS.slate }}>
-            Gestão · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
+            {(secoes.find((sx) => sx.itens.some((x) => x.key === page)) || { grupo: "Gestão" }).grupo} · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
             {areaDaPagina && (
@@ -23254,6 +24494,10 @@ function AppPrincipal({ onSair }) {
           />
         ) : page === "riscos" ? (
           <RiscosPage riscos={riscos} onGuardar={persistRiscos} deteccoesDe={deteccoesDe} notificar={notificar} ocorrencias={ocorrencias} radar={radar} />
+        ) : page === "objetivos" ? (
+          <ObjetivosPage objetivos={objetivos} onGuardar={persistObjetivos} notificar={notificar} contexto={contextoObjetivos} escolas={options.schools || []} documentos={documentos} />
+        ) : page === "documentos" ? (
+          <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "ocorrencias" ? (
           <OcorrenciasPage
             ocorrencias={ocorrencias}
