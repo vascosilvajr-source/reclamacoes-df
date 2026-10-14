@@ -24696,7 +24696,7 @@ function AppPrincipal({ onSair }) {
         html, body { margin: 0; padding: 0; background: ${COLORS.paper}; height: 100%; overflow: hidden; overscroll-behavior: none; }
         .appConteudo { overscroll-behavior: contain; }
         .appConteudo > * { flex-shrink: 0; }
-        [style*="overflow-x: auto"], [style*="overflow: auto"] { overscroll-behavior: contain; }
+        [style*="overflow-x: auto"], [style*="overflow: auto"] { overscroll-behavior-x: contain; overscroll-behavior-y: auto; }
         .registoTabela th, .registoTabela td { padding: 9px 10px !important; }
         .registoTabela th { white-space: nowrap; }
         .registoTabela td:last-child > div { gap: 2px !important; }
