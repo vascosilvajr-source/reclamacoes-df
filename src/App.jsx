@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados } from "./sgq";
+import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target } from "lucide-react";
 import {
@@ -6726,9 +6727,457 @@ const horaFmt = (h) => {
   return m ? `${String(Number(m[1])).padStart(2, "0")}:${m[2] || "00"}` : String(h || "");
 };
 
-function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacidades, regras, onSave, onUpdate, onRemove, onGerirLista, onGuardarRegras }) {
+// ---------- Importar o plano semanal (PDF DFF.013) para os Espaços ----------
+// Lê o PDF, propõe a correspondência de cada turma/equipa do plano com as turmas da app
+// e deixa corrigir tudo antes de guardar. As correções ficam guardadas para a semana seguinte.
+// O mesmo nome pode ser uma equipa ou uma sessão extra (ex.: "SUB 7" nas equipas e na otimização): ficam separados.
+const chaveNomePlano = (t) => `${chavePlano(t.nome)}${SECAO_EXTRA.test(t.secao) ? " ·extra" : ""}`;
+function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normalizacao, onImportar, onGuardarNormalizacao, onFechar }) {
+  const [aLer, setALer] = useState(false);
+  const [erro, setErro] = useState("");
+  const [plano, setPlano] = useState(null);
+  const [escola, setEscola] = useState("");
+  const [recinto, setRecinto] = useState("");
+  const [nomes, setNomes] = useState({}); // chave do nome → { escola, turmas, incluir }
+  const [locais, setLocais] = useState({}); // texto do local → recinto
+  const [horasEd, setHorasEd] = useState({}); // índice do treino → hora corrigida
+  const [substituir, setSubstituir] = useState(true);
+  const [editarNome, setEditarNome] = useState(null);
+  const norm0 = normalizacao || {};
+
+  const turmasDe = (e) => [...new Set(turmas.filter((t) => t.escola === e).map((t) => t.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const alunosDe = (e, t) => turmas.filter((x) => x.escola === e && x.turma === t).reduce((n, x) => n + (x.m || 0) + (x.f || 0), 0);
+
+  const ler = async (f) => {
+    if (!f) return;
+    setErro("");
+    setALer(true);
+    try {
+      if (!/\.pdf$/i.test(f.name)) throw new Error("escolhe o PDF do plano semanal");
+      const linhas = await linhasDoPdf(new Uint8Array(await f.arrayBuffer()));
+      const r = lerPlanoSemanal(linhas);
+      if (!r.treinos.length) throw new Error("não encontrei turmas nem equipas no PDF");
+      const guardadoTit = (norm0.titulos || {})[chavePlano(r.titulo)] || {};
+      const esc = guardadoTit.escola || escolaDoTitulo(r.titulo, escolas) || "";
+      const rec = guardadoTit.recinto || String(r.titulo).replace(/^.*?-\s*/, "").replace(/^dragon force\s+/i, "").trim();
+      setPlano({ ...r, ficheiro: f.name });
+      setEscola(esc);
+      setRecinto(rec);
+      prepararNomes(r, esc, rec);
+      const ls = {};
+      // Local já conhecido → o recinto guardado; senão, se o local aponta para outro recinto que já existe (ex.: ISMAI → Maia), propõe-o.
+      [...new Set(r.treinos.map((t) => t.local).filter(Boolean))].forEach((l) => {
+        const g = (norm0.locais || {})[chavePlano(l)];
+        if (g !== undefined) return (ls[l] = g);
+        const suf = sufixoDoRecinto(l);
+        const outro = suf && suf !== sufixoDoRecinto(rec) ? recintosUsados.find((x) => sufixoDoRecinto(x) === suf) : "";
+        ls[l] = outro || "";
+      });
+      setLocais(ls);
+      setHorasEd({});
+    } catch (e) {
+      setErro(`Não consegui ler o plano: ${e?.message || e}`);
+    } finally {
+      setALer(false);
+    }
+  };
+  // Correspondência de cada nome do plano: a guardada, senão uma sugestão.
+  const prepararNomes = (r, esc, rec) => {
+    const out = {};
+    r.treinos.forEach((t) => {
+      const k = chaveNomePlano(t);
+      if (out[k]) return;
+      const g = (norm0.nomes || {})[`${chavePlano(esc)}|${chavePlano(rec)}|${k}`];
+      if (g) {
+        out[k] = { escola: g.escola, turmas: g.turmas || [], incluir: !g.ignorar, guardado: true };
+        return;
+      }
+      // Sugestão: primeiro na escola do plano, senão na escola onde o nome encaixa (ex.: turmas DF Porto no plano do Dragon Force FC).
+      let e = esc;
+      let ts = esc ? sugerirTurmasApp(t.nome, turmasDe(esc), rec) : [];
+      if (!ts.length) {
+        const tok = norm(rec).split(/\s+/)[0] || "§";
+        const suf = sufixoDoRecinto(rec);
+        const cands = escolas
+          .filter((o) => o !== esc)
+          .map((o) => ({ o, s: sugerirTurmasApp(t.nome, turmasDe(o), rec) }))
+          .filter((c) => c.s.length)
+          .map((c) => ({ ...c, pts: (norm(c.o).includes(tok) ? 2 : 0) + (suf && c.s.some((x) => norm(x).endsWith(`(${suf})`)) ? 3 : 0) }))
+          .sort((a, b) => b.pts - a.pts);
+        if (cands.length && (cands[0].pts > 0 || cands.length === 1)) {
+          e = cands[0].o;
+          ts = cands[0].s;
+        }
+      }
+      const extra = SECAO_EXTRA.test(t.secao) || /ros[aá]rio/i.test(t.nome) || /^TURMAS\b/i.test(t.nome);
+      out[k] = { escola: e, turmas: ts, incluir: !extra && unidadesDoNome(t.nome).length > 0, guardado: false };
+    });
+    setNomes(out);
+  };
+  const norm = (s) =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase();
+
+  const mudaNome = (k, campos) => setNomes((n) => ({ ...n, [k]: { ...n[k], ...campos } }));
+  const recintoDe = (t) => (t.local && locais[t.local]) || recinto;
+  const horaDe = (t, i) => horasEd[i] ?? t.hora;
+  const linhas = plano ? plano.treinos.map((t, i) => ({ ...t, i, k: chaveNomePlano(t), n: nomes[chaveNomePlano(t)] })) : [];
+  const incluidas = linhas.filter((l) => l.n && l.n.incluir && !(l.dia === "Sábado" && /competi|sele/i.test(l.secao)));
+  const semTurmas = [...new Set(incluidas.filter((l) => !l.n.turmas.length).map((l) => l.nome))];
+  const semHora = incluidas.filter((l) => !horaDe(l, l.i));
+  const incertas = linhas.filter((l) => l.n && l.n.incluir && l.horaIncerta);
+  const nomesUnicos = Object.keys(nomes).map((k) => ({ k, ...nomes[k], exemplo: linhas.find((l) => l.k === k), dias: [...new Set(linhas.filter((l) => l.k === k).map((l) => DIA_APP[l.dia].slice(0, 3)))] }));
+  const porSecao = {};
+  nomesUnicos.forEach((x) => (porSecao[x.exemplo.secao] = porSecao[x.exemplo.secao] || []).push(x));
+
+  // Horários que este plano substitui: os que vieram antes do mesmo plano (mesmo título).
+  const aSubstituir = plano ? espacos.filter((s) => s.origem === "plano" && s.plano && chavePlano(s.plano.titulo || "") === chavePlano(plano.titulo)) : [];
+  const idsSub = new Set(substituir ? aSubstituir.map((s) => s.id) : []);
+  // Treinos que já estão nos Espaços (vindos de outro plano, ex.: a mesma equipa no plano do Porto e no da Maia) não se repetem.
+  const chaveBloco = (b) => `${b.escola}|${b.recinto || ""}|${b.dia}|${horaFmt(b.hora)}|${[...b.turmas].sort().join("+")}`;
+  const jaExistem = new Set(espacos.filter((s) => !idsSub.has(s.id)).map((s) => chaveBloco({ ...s, turmas: turmasDoBloco(s) })));
+
+  const construir = () => {
+    const vistos = new Set(jaExistem);
+    return incluidas
+      .filter((l) => l.n.turmas.length && horaDe(l, l.i))
+      .map((l, j) => ({
+        id: `p_${Date.now().toString(36)}_${j}`,
+        escola: l.n.escola,
+        recinto: recintoDe(l),
+        dia: DIA_APP[l.dia],
+        hora: horaDe(l, l.i),
+        treinadores: Math.max(1, l.treinadores || 1),
+        turmas: l.n.turmas,
+        turma: l.n.turmas.join(" + "),
+        origem: "plano",
+        plano: { nome: l.nome, semana: plano.semana, ficheiro: plano.ficheiro, secao: l.secao, titulo: plano.titulo },
+      }))
+      .filter((b) => {
+        const k = chaveBloco(b);
+        if (vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+  };
+  const previstos = plano ? construir() : [];
+  const repetidos = incluidas.filter((l) => l.n.turmas.length && horaDe(l, l.i)).length - previstos.length;
+  const importar = () => {
+    const novos = construir();
+    // Guarda as correções para o próximo plano desta escola.
+    const nomesG = { ...(norm0.nomes || {}) };
+    Object.entries(nomes).forEach(([k, v]) => (nomesG[`${chavePlano(escola)}|${chavePlano(recinto)}|${k}`] = { escola: v.escola, turmas: v.turmas, ignorar: !v.incluir }));
+    const locaisG = { ...(norm0.locais || {}) };
+    Object.entries(locais).forEach(([l, r]) => r && (locaisG[chavePlano(l)] = r));
+    onGuardarNormalizacao({ ...norm0, nomes: nomesG, locais: locaisG, titulos: { ...(norm0.titulos || {}), [chavePlano(plano.titulo)]: { escola, recinto } } });
+    onImportar(novos, substituir ? aSubstituir.map((s) => s.id) : []);
+  };
+
+  const sel = { ...inputStyle, padding: "5px 8px", fontSize: 12.5 };
+  return (
+    <JanelaSGQ
+      titulo={plano ? `Plano semanal · ${plano.titulo.replace(/^.*?-\s*/, "")}` : "Importar plano semanal"}
+      largura={1080}
+      onFechar={onFechar}
+      rodape={
+        plano ? (
+          <>
+            <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: COLORS.ink2 }}>
+              <input type="checkbox" checked={substituir} onChange={(e) => setSubstituir(e.target.checked)} />
+              Substituir os {aSubstituir.length} horários importados antes deste plano
+            </label>
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: semTurmas.length ? COLORS.warn : COLORS.slate }}>{[semTurmas.length ? `${semTurmas.length} sem turma da app (ficam de fora)` : "", repetidos > 0 ? `${repetidos} já estão nos Espaços` : ""].filter(Boolean).join(" · ")}</span>
+            <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+              Cancelar
+            </button>
+            <button disabled={!escola} onClick={importar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px", opacity: escola ? 1 : 0.5 }}>
+              Importar {previstos.length} treinos
+            </button>
+          </>
+        ) : null
+      }
+    >
+      {!plano ? (
+        <div style={{ display: "grid", gap: 12, justifyItems: "start" }}>
+          <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.6, maxWidth: 640 }}>
+            Escolhe o PDF do plano semanal de atividades (DFF.013) de uma escola. A app lê os dias, as horas, as turmas e as equipas, propõe as turmas correspondentes e deixa-te corrigir antes de guardar. As correções ficam guardadas para os planos seguintes.
+          </div>
+          <label className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <FileText size={15} /> {aLer ? "A ler…" : "Escolher PDF"}
+            <input type="file" accept=".pdf" style={{ display: "none" }} onChange={(e) => ler(e.target.files && e.target.files[0])} />
+          </label>
+          {erro && <div style={{ color: COLORS.danger, fontSize: 13 }}>{erro}</div>}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 16 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Escola do plano</label>
+              <select
+                value={escola}
+                onChange={(e) => {
+                  setEscola(e.target.value);
+                  prepararNomes(plano, e.target.value, recinto);
+                }}
+                style={{ ...inputStyle, width: 220 }}
+              >
+                <option value="">Escolher…</option>
+                {escolas.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ ...labelStyle, marginTop: 0 }}>Recinto</label>
+              <input value={recinto} onChange={(e) => setRecinto(e.target.value)} list="recintos-plano" style={{ ...inputStyle, width: 200 }} />
+              <datalist id="recintos-plano">
+                {recintosUsados.map((r) => (
+                  <option key={r} value={r} />
+                ))}
+              </datalist>
+            </div>
+            <div style={{ fontSize: 12.5, color: COLORS.slate, paddingBottom: 8 }}>
+              Semana {plano.semana || "?"} · {plano.ano} · {plano.treinos.length} linhas lidas
+            </div>
+          </div>
+
+          {Object.keys(locais).length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 0, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Locais escritos no plano</div>
+              <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 8 }}>Treinos com outro local por baixo. Diz em que recinto contam (vazio = {recinto || "o recinto do plano"}).</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {Object.entries(locais).map(([l, r]) => (
+                  <div key={l} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+                    <span style={{ flex: "1 1 260px", minWidth: 0 }}>{l}</span>
+                    <input value={r} onChange={(e) => setLocais((x) => ({ ...x, [l]: e.target.value }))} list="recintos-plano" placeholder={recinto} style={{ ...sel, width: 200 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {incertas.length > 0 && (
+            <div style={{ ...panelStyle, marginBottom: 0, padding: 12, borderColor: COLORS.warn, background: COLORS.warnBg }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Horas a confirmar</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {incertas.map((l) => (
+                  <div key={l.i} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5, flexWrap: "wrap" }}>
+                    <span style={{ minWidth: 200 }}>
+                      {DIA_APP[l.dia]} · {l.nome}
+                    </span>
+                    <select value={horaDe(l, l.i) || ""} onChange={(e) => setHorasEd((h) => ({ ...h, [l.i]: e.target.value }))} style={{ ...sel, width: 100 }}>
+                      <option value="">—</option>
+                      {HORAS_TREINO.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                    <span style={{ color: COLORS.slate }}>o plano não indica a hora desta linha; a proposta é a do bloco</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {Object.entries(porSecao).map(([secao, lista]) => (
+            <div key={secao}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                {secao} {SECAO_EXTRA.test(secao) && <span style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>· sessões extra com alunos de outras turmas, desligadas por omissão</span>}
+              </div>
+              <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden" }}>
+                {lista.map((x, idx) => {
+                  const ts = turmasDe(x.escola);
+                  const total = x.turmas.reduce((t, n) => t + alunosDe(x.escola, n), 0);
+                  return (
+                    <div key={x.k} style={{ display: "grid", gridTemplateColumns: "28px minmax(150px, 1.1fr) 70px minmax(150px, 0.9fr) minmax(200px, 2fr)", gap: 10, alignItems: "center", padding: "7px 10px", borderTop: idx ? `1px solid ${COLORS.ruleSoft}` : "none", background: x.incluir ? "transparent" : COLORS.paperSunken, opacity: x.incluir ? 1 : 0.7, fontSize: 12.5 }}>
+                      <input type="checkbox" checked={x.incluir} onChange={(e) => mudaNome(x.k, { incluir: e.target.checked })} aria-label={`Incluir ${x.exemplo.nome}`} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600 }}>{x.exemplo.nome}</div>
+                        <div style={{ fontSize: 11, color: COLORS.slate }}>
+                          {x.dias.join(", ")}
+                          {x.guardado ? " · correspondência guardada" : ""}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{x.turmas.length ? `${total} alunos` : ""}</div>
+                      <select value={x.escola} onChange={(e) => mudaNome(x.k, { escola: e.target.value, turmas: sugerirTurmasApp(x.exemplo.nome, turmasDe(e.target.value), recinto) })} style={sel} aria-label="Escola das turmas">
+                        {escolas.map((e) => (
+                          <option key={e} value={e}>
+                            {e}
+                          </option>
+                        ))}
+                      </select>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                        {x.turmas.map((t) => (
+                          <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 3, border: `1px solid ${COLORS.rule}`, borderRadius: 6, padding: "1px 4px 1px 7px", background: COLORS.paperRaised }}>
+                            {t} <span style={{ color: COLORS.slate, fontSize: 11 }}>{alunosDe(x.escola, t)}</span>
+                            <button onClick={() => mudaNome(x.k, { turmas: x.turmas.filter((y) => y !== t) })} aria-label={`Tirar ${t}`} style={{ ...iconBtnStyle, padding: 1 }}>
+                              <X size={11} />
+                            </button>
+                          </span>
+                        ))}
+                        {editarNome === x.k ? (
+                          <select
+                            autoFocus
+                            value=""
+                            onBlur={() => setEditarNome(null)}
+                            onChange={(e) => {
+                              if (e.target.value) mudaNome(x.k, { turmas: [...x.turmas, e.target.value] });
+                              setEditarNome(null);
+                            }}
+                            style={{ ...sel, width: 170 }}
+                          >
+                            <option value="">Turma da app…</option>
+                            {ts
+                              .filter((t) => !x.turmas.includes(t))
+                              .map((t) => (
+                                <option key={t} value={t}>
+                                  {t} ({alunosDe(x.escola, t)})
+                                </option>
+                              ))}
+                          </select>
+                        ) : (
+                          <button onClick={() => setEditarNome(x.k)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                            {x.turmas.length ? "+ turma" : "Escolher turma"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: COLORS.slate, lineHeight: 1.5 }}>
+            Cada linha do plano passa a um horário nos Espaços (dia, hora, turmas que treinam juntas e nº de treinadores pelas siglas do plano). Os jogos de sábado não entram. O que corrigires aqui fica guardado para o próximo plano desta escola.
+          </div>
+        </div>
+      )}
+    </JanelaSGQ>
+  );
+}
+
+// Recintos usados nos Espaços: mudar o nome ou juntar dois (ex.: "Maia" e "ISMAI"), e ver/apagar
+// as correspondências guardadas dos planos semanais.
+function GerirRecintos({ espacos, recintos, normalizacao, onRenomear, onGuardarNormalizacao, onFechar }) {
+  const [novo, setNovo] = useState({});
+  const n0 = normalizacao || {};
+  const nomes = Object.entries(n0.nomes || {}).sort((a, b) => a[0].localeCompare(b[0], "pt"));
+  const [filtro, setFiltro] = useState("");
+  const tirarNome = (k) => {
+    const x = { ...(n0.nomes || {}) };
+    delete x[k];
+    onGuardarNormalizacao({ ...n0, nomes: x });
+  };
+  const tirarLocal = (k) => {
+    const x = { ...(n0.locais || {}) };
+    delete x[k];
+    onGuardarNormalizacao({ ...n0, locais: x });
+  };
+  const vis = nomes.filter(([k]) => !filtro || k.includes(filtro.toLowerCase()));
+  return (
+    <div className="pageIn" style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <div style={{ ...panelTitle, marginBottom: 0, flex: 1 }}>Recintos e correspondências</div>
+        <button onClick={onFechar} aria-label="Fechar" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+          <X size={16} />
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 8 }}>Para juntar dois recintos, muda o nome de um para o nome do outro.</div>
+      <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+        {recintos.map((r) => {
+          const n = espacos.filter((s) => s.recinto === r).length;
+          const esc = [...new Set(espacos.filter((s) => s.recinto === r).map((s) => s.escola))];
+          const alvo = (novo[r] || "").trim();
+          return (
+            <div key={r} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
+              <strong style={{ minWidth: 160 }}>{r}</strong>
+              <span style={{ color: COLORS.slate, flex: "1 1 200px", fontSize: 12 }}>
+                {n} horários · {esc.join(", ")}
+              </span>
+              <input value={novo[r] || ""} onChange={(e) => setNovo((x) => ({ ...x, [r]: e.target.value }))} list="recintos-renomear" placeholder="Novo nome" style={{ ...inputStyle, width: 180, padding: "5px 8px", fontSize: 12.5 }} />
+              <button
+                disabled={!alvo || alvo === r}
+                onClick={() => {
+                  onRenomear(r, alvo);
+                  setNovo((x) => ({ ...x, [r]: "" }));
+                }}
+                style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5, opacity: alvo && alvo !== r ? 1 : 0.5 }}
+              >
+                {recintos.includes(alvo) && alvo !== r ? "Juntar" : "Mudar nome"}
+              </button>
+            </div>
+          );
+        })}
+        <datalist id="recintos-renomear">
+          {recintos.map((r) => (
+            <option key={r} value={r} />
+          ))}
+        </datalist>
+      </div>
+      {nomes.length > 0 && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Correspondências dos planos ({nomes.length})</div>
+            <input value={filtro} onChange={(e) => setFiltro(e.target.value)} placeholder="Procurar" style={{ ...inputStyle, width: 180, padding: "5px 8px", fontSize: 12.5 }} />
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 6 }}>O nome no plano → as turmas da app. Ao importar o próximo plano usam-se estas; muda-as no ecrã de importação. Apagar uma faz a app voltar a sugerir.</div>
+          <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${COLORS.rule}`, borderRadius: 8 }}>
+            {vis.map(([k, v], i) => {
+              const partes = k.split("|");
+              const esc = partes[0];
+              const nome = `${partes.length > 2 ? `${partes[1]} · ` : ""}${partes[partes.length - 1].replace(" ·extra", " (sessão extra)")}`;
+              return (
+                <div key={k} style={{ display: "flex", gap: 10, alignItems: "center", padding: "5px 10px", borderTop: i ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 12.5 }}>
+                  <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+                    <span style={{ color: COLORS.slate }}>{esc} · </span>
+                    {nome.toUpperCase()}
+                  </span>
+                  <span style={{ flex: "2 1 260px", minWidth: 0, color: v.ignorar ? COLORS.slate : COLORS.ink }}>{v.ignorar ? "não importar" : `${v.escola}: ${(v.turmas || []).join(", ") || "—"}`}</span>
+                  <button onClick={() => tirarNome(k)} aria-label="Apagar correspondência" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {Object.keys(n0.locais || {}).length > 0 && (
+        <div style={{ marginTop: 12, fontSize: 12.5 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Locais escritos nos planos</div>
+          {Object.entries(n0.locais).map(([l, r]) => (
+            <div key={l} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ flex: 1 }}>{l}</span>
+              <span>→ {r}</span>
+              <button onClick={() => tirarLocal(l)} aria-label="Apagar" style={{ ...iconBtnStyle, color: COLORS.slate }}>
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacidades, regras, onSave, onUpdate, onRemove, onGerirLista, onGuardarRegras, normalizacao, onImportarPlano, onGuardarNormalizacao, onRenomearRecinto }) {
   const regrasT = regras && regras.length ? regras : DEFAULT_REGRAS_TREINADORES;
-  const [escola, setEscola] = useState(escolas[0] || "");
+  // "escola" pode ser uma escola ou um recinto ("rec:Porto"), que junta os treinos de várias escolas no mesmo campo.
+  const [escolaSel, setEscola] = useState(escolas[0] || "");
+  const modoRecinto = String(escolaSel).startsWith("rec:");
+  const recintoSel = modoRecinto ? escolaSel.slice(4) : "";
+  const escola = modoRecinto ? "" : escolaSel;
+  const [fRecinto, setFRecinto] = useState("");
+  const [importar, setImportar] = useState(false);
+  const [verRecintos, setVerRecintos] = useState(false);
+  const [recintoNovo, setRecintoNovo] = useState("");
+  const recintosUsados = [...new Set(espacos.map((s) => s.recinto).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
   const [hora, setHora] = useState("18:00");
   const [treinadores, setTreinadores] = useState(1);
@@ -6738,33 +7187,41 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const [aCriar, setACriar] = useState(false);
   const [verRegras, setVerRegras] = useState(false);
 
-  // Alunos e lotação de cada turma da escola (os registos vêm separados por ano de nascimento).
-  const porTurma = {};
-  turmas
-    .filter((t) => t.escola === escola)
-    .forEach((t) => {
-      const x = porTurma[t.turma] || { turma: t.turma, total: 0, cap: (capacidades || {})[`${escola}|${t.turma}`] || t.cap || capacidadeSugerida(t.turma, niveis) };
-      x.total += t.m + t.f;
-      porTurma[t.turma] = x;
-    });
+  // Alunos e lotação de cada turma de uma escola (os registos vêm separados por ano de nascimento).
+  const porTurmaDe = (esc) => {
+    const out = {};
+    turmas
+      .filter((t) => t.escola === esc)
+      .forEach((t) => {
+        const x = out[t.turma] || { turma: t.turma, total: 0, cap: (capacidades || {})[`${esc}|${t.turma}`] || t.cap || capacidadeSugerida(t.turma, niveis) };
+        x.total += t.m + t.f;
+        out[t.turma] = x;
+      });
+    return out;
+  };
+  const porTurma = porTurmaDe(escola);
+  const cachePorTurma = { [escola]: porTurma };
+  const turmasDaEscola = (esc) => cachePorTurma[esc] || (cachePorTurma[esc] = porTurmaDe(esc));
   const listaTurmas = Object.values(porTurma).sort((a, b) => a.turma.localeCompare(b.turma, "pt", { numeric: true }));
-  const doEscola = espacos.filter((s) => s.escola === escola);
+  const recintosDaEscola = [...new Set(espacos.filter((s) => s.escola === escola).map((s) => s.recinto).filter(Boolean))];
+  const doEscola = modoRecinto ? espacos.filter((s) => s.recinto === recintoSel) : espacos.filter((s) => s.escola === escola && (!fRecinto || (s.recinto || "") === fRecinto));
   // Linhas do mapa: as horas com treinos nesta escola.
   const horas = [...new Set(doEscola.map((s) => horaFmt(s.hora)))].sort();
 
   // Turmas que treinam juntas: a soma dos alunos não pode passar a lotação mais baixa entre elas,
   // mais a tolerância que os treinadores do horário permitem.
-  const grupo = (nomes, nTreinadores = 1) => {
-    const ts = nomes.map((n) => porTurma[n]).filter(Boolean);
+  const grupo = (nomes, nTreinadores = 1, escBloco) => {
+    const pt = escBloco ? turmasDaEscola(escBloco) : porTurma;
+    const ts = nomes.map((n) => pt[n]).filter(Boolean);
     const total = ts.reduce((t, x) => t + x.total, 0);
     const limite = ts.length ? Math.min(...ts.map((x) => x.cap)) : 0;
     const daTurma = ts.find((x) => x.cap === limite);
     const tol = toleranciaTreinadores(nTreinadores, regrasT);
     const estado = !limite ? "sem" : total <= limite ? "ok" : total <= limite + tol ? "tolerado" : "acima";
-    return { total, limite, tol, estado, nivel: daTurma ? escalaoDaTurma(daTurma.turma, niveis) : "", semRegisto: nomes.filter((n) => !porTurma[n]), pct: limite ? Math.round((total / limite) * 100) : 0 };
+    return { total, limite, tol, estado, nivel: daTurma ? escalaoDaTurma(daTurma.turma, niveis) : "", semRegisto: nomes.filter((n) => !pt[n]), pct: limite ? Math.round((total / limite) * 100) : 0 };
   };
   const atual = grupo(escolhidas, treinadores);
-  const estados = doEscola.map((b) => grupo(turmasDoBloco(b), b.treinadores || 1).estado);
+  const estados = doEscola.map((b) => grupo(turmasDoBloco(b), b.treinadores || 1, b.escola).estado);
   const nAcima = estados.filter((e) => e === "acima").length;
   const nTolerados = estados.filter((e) => e === "tolerado").length;
   const nOk = estados.filter((e) => e === "ok").length;
@@ -6788,7 +7245,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     }
     setErro("");
     setAcima(false);
-    onSave({ id: `s_${Date.now()}`, escola, dia, hora, treinadores: Number(treinadores) || 1, turmas: escolhidas, turma: escolhidas.join(" + ") });
+    onSave({ id: `s_${Date.now()}`, escola, dia, hora, treinadores: Number(treinadores) || 1, turmas: escolhidas, turma: escolhidas.join(" + "), ...(fRecinto || recintoNovo ? { recinto: fRecinto || recintoNovo } : {}) });
     setEscolhidas([]);
   };
 
@@ -6806,32 +7263,88 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <select
-          value={escola}
+          value={escolaSel}
           onChange={(e) => {
             setEscola(e.target.value);
+            setFRecinto("");
             setEscolhidas([]);
             setErro("");
+            setACriar(false);
           }}
-          aria-label="Escola"
+          aria-label="Escola ou recinto"
           style={{ ...inputStyle, width: "auto", minWidth: 200, padding: "6px 10px", fontSize: 13 }}
         >
-          {escolas.map((e) => (
-            <option key={e} value={e}>
-              {e}
-            </option>
-          ))}
+          <optgroup label="Escolas">
+            {escolas.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </optgroup>
+          {recintosUsados.length > 0 && (
+            <optgroup label="Recintos (todas as escolas)">
+              {recintosUsados.map((r) => (
+                <option key={r} value={`rec:${r}`}>
+                  {r}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
+        {!modoRecinto && recintosDaEscola.length > 1 && (
+          <select value={fRecinto} onChange={(e) => setFRecinto(e.target.value)} aria-label="Recinto" style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 }}>
+            <option value="">Todos os recintos</option>
+            {recintosDaEscola.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        )}
         <span style={{ fontSize: 12.5, color: COLORS.slate, marginRight: "auto" }}>{textoRegras || "Sem tolerância por treinadores"}</span>
         <button onClick={() => setVerRegras((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
           Regras dos treinadores
         </button>
-        {!aCriar && (
+        {recintosUsados.length > 0 && (
+          <button onClick={() => setVerRecintos((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
+            Recintos
+          </button>
+        )}
+        <button className="press" onClick={() => setImportar(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <FileText size={14} /> Importar plano semanal
+        </button>
+        {!aCriar && !modoRecinto && (
           <button className="press" onClick={() => setACriar(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Plus size={14} /> Novo horário
           </button>
         )}
       </div>
 
+      {importar && (
+        <ImportarPlanoSemanal
+          escolas={escolas}
+          turmas={turmas}
+          espacos={espacos}
+          recintosUsados={recintosUsados}
+          normalizacao={normalizacao}
+          onGuardarNormalizacao={onGuardarNormalizacao}
+          onImportar={(novos, remover) => {
+            onImportarPlano(novos, remover);
+            setImportar(false);
+          }}
+          onFechar={() => setImportar(false)}
+        />
+      )}
+      {verRecintos && (
+        <GerirRecintos
+          espacos={espacos}
+          recintos={recintosUsados}
+          normalizacao={normalizacao}
+          onRenomear={onRenomearRecinto}
+          onGuardarNormalizacao={onGuardarNormalizacao}
+          onFechar={() => setVerRecintos(false)}
+        />
+      )}
       {verRegras && (
         <RegrasTreinadores
           regras={regrasT}
@@ -6871,6 +7384,15 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Recinto (opcional)</label>
+            <input value={fRecinto || recintoNovo} disabled={!!fRecinto} onChange={(e) => setRecintoNovo(e.target.value)} list="recintos-espacos" placeholder="—" style={{ ...inputStyle, width: 170 }} />
+            <datalist id="recintos-espacos">
+              {recintosUsados.map((r) => (
+                <option key={r} value={r} />
+              ))}
+            </datalist>
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Treinadores</label>
@@ -6945,7 +7467,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
 
       <div style={panelStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <div style={panelTitle}>Mapa de treinos · {escola}</div>
+          <div style={panelTitle}>Mapa de treinos · {modoRecinto ? `recinto ${recintoSel}` : escola}{!modoRecinto && fRecinto ? ` · ${fRecinto}` : ""}</div>
           <div style={{ display: "flex", gap: 12, fontSize: 11.5, color: COLORS.slate }}>
             {[
               ["ok", "Dentro"],
@@ -6960,8 +7482,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         </div>
         {doEscola.length === 0 && (
           <div style={{ fontSize: 13, color: COLORS.slate, marginBottom: 12 }}>
-            Ainda sem horários nesta escola.{" "}
-            {!aCriar && (
+            Ainda sem horários {modoRecinto ? "neste recinto" : "nesta escola"}.{" "}
+            {!aCriar && !modoRecinto && (
               <button onClick={() => setACriar(true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 13 }}>
                 Adicionar o primeiro
               </button>
@@ -6994,7 +7516,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                           blocos.map((b) => {
                             const nomes = turmasDoBloco(b);
                             const nT = b.treinadores || 1;
-                            const g = grupo(nomes, nT);
+                            const g = grupo(nomes, nT, b.escola);
                             return (
                               <div
                                 key={b.id}
@@ -7008,7 +7530,10 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontSize: 11, color: COLORS.slate }}>{nomes.length > 1 ? "Treinam juntas" : ""}</span>
+                                  <span style={{ fontSize: 11, color: COLORS.slate }} title={b.plano ? `Do plano semanal ${b.plano.semana ? `(semana ${b.plano.semana})` : ""}: ${b.plano.nome}` : undefined}>
+                                    {[modoRecinto ? b.escola : null, !modoRecinto && recintosDaEscola.length > 1 && !fRecinto ? b.recinto : null, nomes.length > 1 ? "juntas" : null].filter(Boolean).join(" · ")}
+                                    {b.origem === "plano" && <span style={{ marginLeft: 4, color: COLORS.navy }}>●</span>}
+                                  </span>
                                   <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>
                                     <X size={11} />
                                   </button>
@@ -9208,6 +9733,9 @@ function InscritosPage({
   onSaveEspaco,
   onUpdateEspaco,
   onRemoveEspaco,
+  onImportarPlano,
+  onRenomearRecinto,
+  onGuardarNormalizacao,
   onGuardarRegrasTreinadores,
   onSaveEvento,
   onRemoveEvento,
@@ -9321,6 +9849,10 @@ function InscritosPage({
           onRemove={onRemoveEspaco}
           onGerirLista={onGerirLista}
           onGuardarRegras={onGuardarRegrasTreinadores}
+          normalizacao={options.planosNormalizacao || {}}
+          onImportarPlano={onImportarPlano}
+          onRenomearRecinto={onRenomearRecinto}
+          onGuardarNormalizacao={onGuardarNormalizacao}
         />
       ) : view === "eventos" ? (
         <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onMapaEscola={onMapaEscolaEvento} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
@@ -24494,6 +25026,19 @@ function AppPrincipal({ onSair }) {
             onSaveEspaco={saveEspaco}
             onUpdateEspaco={updateEspaco}
             onRemoveEspaco={removeEspaco}
+            onImportarPlano={(novos, remover) => {
+              persistEspacos([...espacos.filter((x) => !remover.includes(x.id)), ...novos]);
+              notificar(`${novos.length} treinos importados do plano semanal${remover.length ? ` (${remover.length} antigos substituídos)` : ""}.`);
+            }}
+            onRenomearRecinto={(de, para) => {
+              persistEspacos(espacos.map((x) => (x.recinto === de ? { ...x, recinto: para } : x)));
+              const n0 = options.planosNormalizacao || {};
+              const locais = Object.fromEntries(Object.entries(n0.locais || {}).map(([k, v]) => [k, v === de ? para : v]));
+              const titulos = Object.fromEntries(Object.entries(n0.titulos || {}).map(([k, v]) => [k, v.recinto === de ? { ...v, recinto: para } : v]));
+              persistOptions({ ...options, planosNormalizacao: { ...n0, locais, titulos } });
+              notificar(`"${de}" passa a "${para}".`);
+            }}
+            onGuardarNormalizacao={(n) => persistOptions({ ...options, planosNormalizacao: n })}
             onGuardarRegrasTreinadores={(r) => {
               persistOptions({ ...options, regrasTreinadores: r });
               notificar("Regras dos treinadores guardadas.");
