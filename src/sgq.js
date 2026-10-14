@@ -455,9 +455,11 @@ export function sugerirFonte(item, escolas = []) {
   const ind = norm(item.indicador);
   const obj = norm(item.objetivo);
   // Objetivo de uma escola: só com a escola reconhecida (senão contaria todas).
-  const global = /dragon force fc\b|dragon force futebol clube/.test(obj) && !/dffc\s*-/.test(obj);
-  const especifica = /inscricoes (na|no|em)\s/.test(obj) && !global;
-  const escola = especifica ? escolaDoTexto(item.objetivo, escolas) : "";
+  // "Dragon Force FC" é a escola Dragon Force FC (Porto + Maia), não a Dragon Force toda.
+  const dffc = /dragon force fc\b|dragon force futebol clube/.test(obj) && !/dffc\s*-/.test(obj);
+  const especifica = /inscricoes (na|no|em)\s/.test(obj);
+  const escolaDFFC = () => escolas.find((e) => /^(dragon force fc|dragon force futebol clube|dffc)$/.test(norm(e).trim())) || "";
+  const escola = especifica ? (dffc ? escolaDFFC() : escolaDoTexto(item.objetivo, escolas)) : "";
   if ((/n.? ?de inscric/.test(ind) || /desistenc/.test(ind)) && (/dffc/.test(obj) || (especifica && !escola))) return null;
   if (/n.? ?de inscric/.test(ind)) return { tipo: "inscricoes", escola };
   if (/desistenc/.test(ind)) return { tipo: "desistencias", escola };
