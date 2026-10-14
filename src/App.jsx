@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
-import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados } from "./sgq";
+import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target } from "lucide-react";
@@ -20729,7 +20729,7 @@ function EditorDocumento({ inicial, todos, colaboradores, locais, sugestoes, onG
       return n;
     });
   const nc = normalizarCodigo(d.codigo);
-  const repetidos = d.tipo === "-" || !nc.valido ? [] : todos.filter((x) => x.id !== d.id && (x.lista || "DF") === (d.lista || "DF") && normalizarCodigo(x.codigo).codigo === nc.codigo);
+  const repetidos = d.tipo === "-" || !nc.valido ? [] : todos.filter((x) => x.id !== d.id && normalizarCodigo(x.codigo).codigo === nc.codigo);
   const prefixoCerto = d.tipo === "-" || !nc.valido || nc.prefixo === (TIPOS_DOC[d.tipo] || {}).prefixo;
   const valido = String(d.identificacao || "").trim() && (d.tipo === "-" || nc.valido) && !repetidos.length;
   const alterna = (k, v) => setD((x) => ({ ...x, [k]: x[k].includes(v) ? x[k].filter((y) => y !== v) : [...x[k], v] }));
@@ -20785,10 +20785,11 @@ function EditorDocumento({ inicial, todos, colaboradores, locais, sugestoes, onG
           {segSGQ(
             [
               ["DF", "Lista DF"],
-              ["INT", "Lista INT"],
+              ["AMBAS", "DF e INT"],
+              ["INT", "Só INT"],
             ],
-            d.lista || "DF",
-            (v) => muda("lista", v)
+            (d.lista || "DF") === "INT" ? "INT" : d.int ? "AMBAS" : "DF",
+            (v) => setD((x) => ({ ...x, lista: v === "INT" ? "INT" : "DF", int: v === "AMBAS" }))
           )}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 200px) 1fr", gap: 12 }}>
@@ -20947,7 +20948,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
     guardarItens(itens.filter((x) => x.id !== id));
     setEditar(null);
   };
-  const novo = () => setEditar({ __novo: true, id: `doc-${Date.now().toString(36)}`, lista: fLista === "INT" ? "INT" : "DF", tipo: "F", codigo: proximoCodigo(itens, "F"), identificacao: "", registo: "Sim", armazenagem: "SGQ - Suporte Informático", protecao: "Backup semanal / cópia de segurança", retencao: "Enquanto em Vigor", elaborado: "GQ", aprovado: "DE", colaboradores: [], locais: [], obsoleto: false, versoes: [isoDe(new Date())] });
+  const novo = () => setEditar({ __novo: true, id: `doc-${Date.now().toString(36)}`, lista: "DF", int: fLista === "INT", tipo: "F", codigo: proximoCodigo(itens, "F"), identificacao: "", registo: "Sim", armazenagem: "SGQ - Suporte Informático", protecao: "Backup semanal / cópia de segurança", retencao: "Enquanto em Vigor", elaborado: "GQ", aprovado: "DE", colaboradores: [], locais: [], obsoleto: false, versoes: [isoDe(new Date())] });
   const novoCodigoPara = (d) => {
     const c = proximoCodigo(itens, d.tipo);
     guardarItens(itens.map((x) => (x.id === d.id ? { ...x, codigo: c } : x)));
@@ -20991,7 +20992,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
   const visiveis = itens
     .filter((d) => fTipo === "todos" || (d.tipo || "-") === fTipo)
     .filter((d) => (fEstado === "todos" ? true : fEstado === "obsoletos" ? d.obsoleto : !d.obsoleto))
-    .filter((d) => fLista === "todas" || (d.lista || "DF") === fLista)
+    .filter((d) => fLista === "todas" || (fLista === "INT" ? naListaInt(d) : (d.lista || "DF") === fLista))
     .filter((d) => !fLocal || (d.locais || []).includes(fLocal))
     .filter((d) => !fColab || (d.colaboradores || []).includes(fColab))
     .filter((d) => !q || normChave([d.codigo, codigoComVersao(d), d.identificacao, d.elaborado, d.aprovado, d.armazenagem].join(" ")).includes(q))
@@ -21108,9 +21109,8 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
               </div>
               <div style={{ display: "grid", gap: 6 }}>
                 {duplicados.map((x) => (
-                  <div key={`${x.lista}${x.codigo}`} style={{ fontSize: 12.5 }}>
-                    <strong>{x.codigo}</strong>
-                    {x.lista === "INT" ? " (lista INT)" : ""}:{" "}
+                  <div key={x.codigo} style={{ fontSize: 12.5 }}>
+                    <strong>{x.codigo}</strong>:{" "}
                     {x.itens.map((d, k) => (
                       <span key={d.id}>
                         {k > 0 && " · "}
@@ -21188,7 +21188,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
                       <tr key={d.id} className="rowHover" onClick={() => setEditar(d)} style={{ cursor: "pointer", background: d.obsoleto ? COLORS.warnBg : undefined }}>
                         <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", color: idsDup.has(d.id) ? COLORS.danger : COLORS.ink }}>
                           {d.tipo === "-" ? "—" : codigoComVersao(d)}
-                          {(d.lista || "DF") === "INT" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: COLORS.purple, border: `1px solid ${COLORS.purple}`, borderRadius: 4, padding: "0 4px" }}>INT</span>}
+                          {naListaInt(d) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: COLORS.purple, border: `1px solid ${COLORS.purple}`, borderRadius: 4, padding: "0 4px" }}>INT</span>}
                         </td>
                         <td style={{ ...tdStyle, minWidth: 260 }}>
                           {d.identificacao}

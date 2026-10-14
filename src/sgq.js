@@ -965,18 +965,44 @@ export function proximoCodigo(itens, tipo) {
   const max = Math.max(0, ...itens.map((d) => normalizarCodigo(d.codigo)).filter((n) => n.prefixo === p).map((n) => n.numero || 0));
   return `${p}.${String(max + 1).padStart(3, "0")}`;
 }
-// Códigos repetidos dentro da mesma lista (a lista INT repete de propósito documentos da DF).
+// Um documento da DF que também está na lista INT é o mesmo documento com a etiqueta INT (não uma cópia).
+export const naListaInt = (d) => (d.lista || "DF") === "INT" || !!d.int;
+// Junta as linhas da folha INT aos documentos da DF com o mesmo código e nome.
+export function juntarListasDoc(itens) {
+  const chave = (d) => {
+    const n = normalizarCodigo(d.codigo);
+    return n.valido ? `${n.codigo}|${norm(d.identificacao || "").replace(/[^a-z0-9]/g, "")}` : null;
+  };
+  const df = new Map();
+  itens.forEach((d) => {
+    const k = chave(d);
+    if ((d.lista || "DF") === "DF" && k && !df.has(k)) df.set(k, d);
+  });
+  const uniao = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+  const out = [];
+  let juntos = 0;
+  itens.forEach((d) => {
+    const alvo = (d.lista || "DF") === "INT" && chave(d) ? df.get(chave(d)) : null;
+    if (!alvo) return out.push(d);
+    alvo.int = true;
+    alvo.ordemInt = d.ordem;
+    alvo.colaboradores = uniao(alvo.colaboradores, d.colaboradores);
+    alvo.locais = uniao(alvo.locais, d.locais);
+    juntos++;
+  });
+  return { itens: out, juntos };
+}
+// Códigos repetidos: o mesmo código em dois documentos diferentes (em qualquer lista).
 export function codigosDuplicados(itens) {
   const por = {};
   itens.forEach((d) => {
     const n = normalizarCodigo(d.codigo);
     if (!n.valido) return;
-    const k = `${d.lista || "DF"}|${n.codigo}`;
-    (por[k] = por[k] || []).push(d);
+    (por[n.codigo] = por[n.codigo] || []).push(d);
   });
   return Object.entries(por)
     .filter(([, l]) => l.length > 1)
-    .map(([k, l]) => ({ codigo: k.split("|")[1], lista: k.split("|")[0], itens: l }));
+    .map(([codigo, l]) => ({ codigo, itens: l }));
 }
 const dataIso = (v) => {
   if (v instanceof Date) return isNaN(v.getTime()) ? null : new Date(v.getTime() + 12 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1079,6 +1105,8 @@ export function lerDocumentosDoExcel(wb) {
     }
     lidas.push(`${nome}: ${n}`);
   });
+  const junto = juntarListasDoc(itens);
+  itens.splice(0, itens.length, ...junto.itens);
   const corrigidos = itens.filter((d) => d.codigoOriginal).length;
   if (corrigidos) avisos.push(`${corrigidos} códigos estavam escritos de forma diferente (ex.: "DFF 164") e ficam no formato DFF.164.`);
   return { itens, colaboradores: colaboradores || [], locais: locais || [], rodape, avisos, lidas };
@@ -1206,7 +1234,10 @@ export async function gerarExcelDocumentos(ExcelJS, { itens, colaboradores, loca
   wb.created = new Date();
   const ordem = (a, b) => (a.ordem || 0) - (b.ordem || 0);
   Object.entries(LISTAS_DOC).forEach(([k, nome]) => {
-    const l = itens.filter((d) => (d.lista || "DF") === k).sort(ordem);
+    const l =
+      k === "INT"
+        ? itens.filter(naListaInt).sort((a, b) => (a.ordemInt ?? a.ordem ?? 0) - (b.ordemInt ?? b.ordem ?? 0))
+        : itens.filter((d) => (d.lista || "DF") === k).sort(ordem);
     if (k === "INT" && !l.length) return;
     folhaDocumentos(wb, nome, l, colaboradores, locais, rodape);
   });
