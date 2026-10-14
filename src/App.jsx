@@ -5095,8 +5095,16 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista, turmas, turmasPorEscola }) {
-  const [form, setForm] = useState({
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista, turmas, turmasPorEscola, inicial }) {
+  const [form, setForm] = useState(() => inicial ? {
+    ...inicial,
+    personName: inicial.personName || "",
+    atletas: inicial.atletas && inicial.atletas.length ? inicial.atletas : [""],
+    escalao: inicial.escalao || "",
+    school: inicial.school || "",
+    description: inicial.description || "",
+    relatedComplaintId: inicial.relatedComplaintId || "",
+  } : {
     personType: "familia",
     personName: "",
     atletas: [""],
@@ -5129,7 +5137,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
-          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Nova ocorrência</h2>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>{inicial ? "Editar ocorrência" : "Nova ocorrência"}</h2>
           <button onClick={onCancel} style={iconBtnStyle}>
             <X size={18} />
           </button>
@@ -5371,9 +5379,9 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
                 atletas: eAtleta ? nomesValidos : undefined,
                 nAtletas: eAtleta ? nomesValidos.length : undefined,
                 escalao: eAtleta ? form.escalao : undefined,
-                id: `s_${Date.now()}`,
-                stage: form.personType === "elemento_df" ? "ocorrencia" : null,
-                notes: [],
+                id: inicial ? inicial.id : `s_${Date.now()}`,
+                stage: form.personType === "elemento_df" ? (inicial && inicial.personType === "elemento_df" ? inicial.stage : "ocorrencia") : inicial ? inicial.stage ?? null : null,
+                notes: inicial ? inicial.notes || [] : [],
               });
             }}
             style={primaryBtnStyle}
@@ -5387,7 +5395,7 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
 }
 
 // ---------- Sanções: detalhe / progressão do processo ----------
-function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, complaints, sanctionTypes }) {
+function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, complaints, sanctionTypes, onEdit }) {
   const [note, setNote] = useState("");
   const [propostaText, setPropostaText] = useState(sanction.propostaSancao || "");
   const [sancaoFamiliaText, setSancaoFamiliaText] = useState(sanction.sanctionDescription || "");
@@ -5418,6 +5426,11 @@ function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemove, comp
             {fmt(new Date(sanction.date + "T00:00:00"))}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
+            {onEdit && (
+              <button title="Editar" onClick={() => onEdit(sanction)} style={iconBtnStyle}>
+                <Pencil size={16} />
+              </button>
+            )}
             <button title="Eliminar" onClick={() => onRemove(sanction.id)} style={iconBtnStyle}>
               <Trash2 size={16} color={COLORS.danger} />
             </button>
@@ -23296,6 +23309,7 @@ function AppPrincipal({ onSair }) {
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
   const [viewingSanction, setViewingSanction] = useState(null);
+  const [editingSanction, setEditingSanction] = useState(null);
   const [page, setPage] = useState("hoje");
   // A página nova abre sempre no topo (o conteúdo desliza dentro da sua coluna).
   const conteudoRef = useRef(null);
@@ -25656,6 +25670,26 @@ function AppPrincipal({ onSair }) {
           onRemove={removeSanction}
           complaints={entries}
           sanctionTypes={options.sanctionTypes}
+          onEdit={(s) => setEditingSanction(s)}
+        />
+      )}
+
+      {editingSanction && (
+        <SanctionForm
+          inicial={editingSanction}
+          onCancel={() => setEditingSanction(null)}
+          onSave={(s) => {
+            const { id, ...resto } = s;
+            updateSanction(editingSanction.id, resto);
+            setEditingSanction(null);
+            notificar("Ocorrência atualizada.");
+          }}
+          schoolOptions={options.schools}
+          complaints={entries}
+          sanctionTypes={options.sanctionTypes}
+          onGerirLista={setListaAberta}
+          turmas={options.turmas || DEFAULT_TURMAS}
+          turmasPorEscola={options.turmasPorEscola || {}}
         />
       )}
     </div>
