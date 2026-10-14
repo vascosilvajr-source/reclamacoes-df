@@ -20741,23 +20741,27 @@ const nomeFicheiroSeguro = (n) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9._-]+/g, "_")
     .slice(-120);
-const temAnexo = (d) => !!((d.ficheiro && d.ficheiro.path) || d.link);
-async function abrirDocumento(d, notificar) {
-  if (d.ficheiro && d.ficheiro.path) {
-    // A janela abre já (senão o browser bloqueia) e recebe o endereço temporário a seguir.
-    const w = window.open("", "_blank");
-    const { data, error } = await supabase.storage.from(BUCKET_DOCS).createSignedUrl(d.ficheiro.path, 300);
-    if (error || !data) {
-      if (w) w.close();
-      if (notificar) notificar(`Não consegui abrir o ficheiro: ${error?.message || "sem resposta"}`, "erro");
-      return;
-    }
-    if (w) w.location.href = data.signedUrl;
-    else window.location.href = data.signedUrl;
-  } else if (d.link) {
-    const url = /^https?:\/\//i.test(d.link) ? d.link : `https://${d.link}`;
-    window.open(url, "_blank", "noopener");
+// Um documento pode ter vários ficheiros (ex.: ficha de inscrição + dados médicos).
+const ficheirosDoc = (d) => (d && Array.isArray(d.ficheiros) ? d.ficheiros : d && d.ficheiro && d.ficheiro.path ? [d.ficheiro] : []).filter((f) => f && f.path);
+const temAnexo = (d) => !!(ficheirosDoc(d).length || d.link);
+const urlLink = (l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`);
+async function abrirFicheiroDoc(f, notificar) {
+  // A janela abre já (senão o browser bloqueia) e recebe o endereço temporário a seguir.
+  const w = window.open("", "_blank");
+  const { data, error } = await supabase.storage.from(BUCKET_DOCS).createSignedUrl(f.path, 300);
+  if (error || !data) {
+    if (w) w.close();
+    if (notificar) notificar(`Não consegui abrir o ficheiro: ${error?.message || "sem resposta"}`, "erro");
+    return;
   }
+  if (w) w.location.href = data.signedUrl;
+  else window.location.href = data.signedUrl;
+}
+// Só um anexo: abre logo. Vários: quem chama mostra a escolha.
+async function abrirDocumento(d, notificar) {
+  const fs = ficheirosDoc(d);
+  if (fs.length) return abrirFicheiroDoc(fs[0], notificar);
+  if (d.link) window.open(urlLink(d.link), "_blank", "noopener");
 }
 const apagarFicheiroDoc = async (path) => {
   if (!path) return;
@@ -20772,15 +20776,24 @@ const tamanhoLegivel = (b) => (!b ? "" : b < 1024 * 1024 ? `${Math.max(1, Math.r
 function AnexoDocumento({ d, setD, notificar }) {
   const [aEnviar, setAEnviar] = useState(false);
   const inputRef = useRef(null);
-  const enviar = async (f) => {
-    if (!f) return;
-    if (f.size > 50 * 1024 * 1024) return notificar && notificar("O ficheiro tem mais de 50 MB.", "erro");
+  const lista = ficheirosDoc(d);
+  const enviar = async (files) => {
+    const l = [...(files || [])];
+    if (!l.length) return;
+    const grandes = l.filter((f) => f.size > 50 * 1024 * 1024);
+    if (grandes.length && notificar) notificar(`${grandes.map((f) => f.name).join(", ")}: mais de 50 MB, ficou de fora.`, "erro");
     setAEnviar(true);
     try {
-      const path = `${d.id}/${Date.now()}-${nomeFicheiroSeguro(f.name)}`;
-      const { error } = await supabase.storage.from(BUCKET_DOCS).upload(path, f, { contentType: f.type || undefined, upsert: false });
-      if (error) throw error;
-      setD((x) => ({ ...x, ficheiro: { path, nome: f.name, tamanho: f.size, tipo: f.type || "", em: isoDe(new Date()) } }));
+      for (const f of l.filter((x) => x.size <= 50 * 1024 * 1024)) {
+        const path = `${d.id}/${Date.now()}-${nomeFicheiroSeguro(f.name)}`;
+        const { error } = await supabase.storage.from(BUCKET_DOCS).upload(path, f, { contentType: f.type || undefined, upsert: false });
+        if (error) throw error;
+        const novo = { path, nome: f.name, tamanho: f.size, tipo: f.type || "", em: isoDe(new Date()) };
+        setD((x) => {
+          const { ficheiro, ...resto } = x;
+          return { ...resto, ficheiros: [...ficheirosDoc(x), novo] };
+        });
+      }
     } catch (e) {
       if (notificar) notificar(`Não consegui enviar o ficheiro: ${e?.message || e}`, "erro");
     } finally {
@@ -20788,42 +20801,48 @@ function AnexoDocumento({ d, setD, notificar }) {
       if (inputRef.current) inputRef.current.value = "";
     }
   };
+  const tirar = (path) =>
+    setD((x) => {
+      const { ficheiro, ...resto } = x;
+      return { ...resto, ficheiros: ficheirosDoc(x).filter((f) => f.path !== path) };
+    });
   return (
     <div style={{ ...panelStyle, marginBottom: 0, padding: 14, background: COLORS.paperSunken }}>
-      <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 8 }}>Documento</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {d.ficheiro && d.ficheiro.path ? (
-          <>
-            <button type="button" onClick={() => abrirDocumento(d, notificar)} style={{ ...linkBtnStyle, marginTop: 0, display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <Paperclip size={14} /> {d.ficheiro.nome}
-            </button>
-            <span style={{ fontSize: 12, color: COLORS.slate }}>{tamanhoLegivel(d.ficheiro.tamanho)}</span>
-            <span style={{ flex: 1 }} />
-            <button type="button" disabled={aEnviar} onClick={() => inputRef.current && inputRef.current.click()} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5 }}>
-              {aEnviar ? "A enviar…" : "Substituir"}
-            </button>
-            <button type="button" onClick={() => setD((x) => ({ ...x, ficheiro: null }))} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.danger }}>
-              Tirar
-            </button>
-          </>
-        ) : (
-          <button type="button" disabled={aEnviar} onClick={() => inputRef.current && inputRef.current.click()} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
-            <Paperclip size={13} /> {aEnviar ? "A enviar…" : "Anexar ficheiro"}
-          </button>
-        )}
-        <input ref={inputRef} type="file" style={{ display: "none" }} onChange={(e) => enviar(e.target.files && e.target.files[0])} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: 13.5, flex: 1 }}>
+          Ficheiros {lista.length > 0 && <span style={{ color: COLORS.slate, fontWeight: 400 }}>· {lista.length}</span>}
+        </div>
+        <button type="button" disabled={aEnviar} onClick={() => inputRef.current && inputRef.current.click()} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <Paperclip size={13} /> {aEnviar ? "A enviar…" : lista.length ? "Juntar ficheiro" : "Anexar ficheiro"}
+        </button>
+        <input ref={inputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => enviar(e.target.files)} />
       </div>
-      <label style={{ ...labelStyle, marginTop: 10 }}>Ou link (SharePoint, OneDrive, Drive…)</label>
+      {lista.length > 0 && (
+        <div style={{ display: "grid", gap: 4 }}>
+          {lista.map((f) => (
+            <div key={f.path} style={{ display: "flex", alignItems: "center", gap: 8, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "6px 10px" }}>
+              <button type="button" onClick={() => abrirFicheiroDoc(f, notificar)} style={{ ...linkBtnStyle, marginTop: 0, display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <Paperclip size={13} /> {f.nome}
+              </button>
+              <span style={{ fontSize: 12, color: COLORS.slate, flex: "none" }}>{tamanhoLegivel(f.tamanho)}</span>
+              <button type="button" onClick={() => tirar(f.path)} aria-label={`Tirar ${f.nome}`} title="Tirar" style={{ ...iconBtnStyle, padding: 2, color: COLORS.slate }}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label style={{ ...labelStyle, marginTop: 10 }}>Link (SharePoint, OneDrive, Drive…)</label>
       <div style={{ display: "flex", gap: 8 }}>
         <input value={d.link || ""} onChange={(e) => setD((x) => ({ ...x, link: e.target.value.trim() }))} placeholder="https://…" style={{ ...inputStyle, flex: 1 }} />
         {d.link && (
-          <button type="button" title="Abrir link" onClick={() => abrirDocumento({ link: d.link }, notificar)} style={iconBtnStyle}>
+          <button type="button" title="Abrir link" onClick={() => window.open(urlLink(d.link), "_blank", "noopener")} style={iconBtnStyle}>
             <ExternalLink size={15} />
           </button>
         )}
       </div>
       <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6, lineHeight: 1.4 }}>
-        O ficheiro fica numa pasta privada e só é descarregado quando se abre. Se houver ficheiro e link, abre o ficheiro.
+        Os ficheiros ficam numa pasta privada e só são descarregados quando se abrem. Anexa os modelos em branco, não fichas preenchidas.
       </div>
     </div>
   );
@@ -20859,19 +20878,21 @@ function EditorDocumento({ inicial, todos, colaboradores, locais, sugestoes, onG
       )}
     </div>
   );
-  const pathIni = inicial.ficheiro && inicial.ficheiro.path;
-  const pathNovo = d.ficheiro && d.ficheiro.path;
+  const pathsIni = ficheirosDoc(inicial).map((f) => f.path);
+  const pathsNovos = ficheirosDoc(d).map((f) => f.path);
   const guardar = () => {
     const limpo = { ...d, codigo: d.tipo === "-" ? "-" : nc.valido ? nc.codigo : d.codigo, versoes: [...d.versoes].filter(Boolean).sort() };
     delete limpo.__novo;
     if (!limpo.link) delete limpo.link;
-    if (!limpo.ficheiro) delete limpo.ficheiro;
-    if (pathIni && pathIni !== pathNovo) apagarFicheiroDoc(pathIni);
+    delete limpo.ficheiro;
+    if (pathsNovos.length) limpo.ficheiros = ficheirosDoc(d);
+    else delete limpo.ficheiros;
+    pathsIni.filter((p) => !pathsNovos.includes(p)).forEach(apagarFicheiroDoc);
     onGuardar(limpo);
   };
   // Ficheiro enviado nesta janela e não guardado: não fica perdido na pasta.
   const fechar = () => {
-    if (pathNovo && pathNovo !== pathIni) apagarFicheiroDoc(pathNovo);
+    pathsNovos.filter((p) => !pathsIni.includes(p)).forEach(apagarFicheiroDoc);
     onFechar();
   };
   return (
@@ -21592,6 +21613,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
   const [importado, setImportado] = useState(null);
   const [aLer, setALer] = useState(false);
   const [aGerar, setAGerar] = useState(false);
+  const [menuAnexos, setMenuAnexos] = useState(null);
 
   const duplicados = codigosDuplicados(itens);
   const idsDup = new Set(duplicados.flatMap((x) => x.itens.map((i) => i.id)));
@@ -21609,7 +21631,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
     const d = itens.find((x) => x.id === id);
     if (!window.confirm(`Apagar ${d ? `${d.codigo} · ${d.identificacao}` : "este documento"}? Se só deixou de se usar, marca como obsoleto.`)) return;
     guardarItens(itens.filter((x) => x.id !== id));
-    if (d && d.ficheiro) apagarFicheiroDoc(d.ficheiro.path);
+    if (d) ficheirosDoc(d).forEach((f) => apagarFicheiroDoc(f.path));
     setEditar(null);
   };
   const novo = () => setEditar({ __novo: true, id: `doc-${Date.now().toString(36)}`, lista: "DF", int: fLista === "INT", tipo: "F", codigo: proximoCodigo(itens, "F"), identificacao: "", registo: "Sim", armazenagem: "SGQ - Suporte Informático", protecao: "Backup semanal / cópia de segurança", retencao: "Enquanto em Vigor", elaborado: "GQ", aprovado: "DE", colaboradores: [], locais: [], obsoleto: false, versoes: [isoDe(new Date())] });
@@ -21646,7 +21668,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
       const a = anexos.get(chaveDoc(x)) || (x.codigo !== "-" ? anexos.get(x.codigo) : null);
       if (!a || usados.has(a.id)) return x;
       usados.add(a.id);
-      return { ...x, ...(a.ficheiro ? { ficheiro: a.ficheiro } : {}), ...(a.link ? { link: a.link } : {}) };
+      return { ...x, ...(ficheirosDoc(a).length ? { ficheiros: ficheirosDoc(a) } : {}), ...(a.link ? { link: a.link } : {}) };
     });
     onGuardar({ itens: comAnexos, colaboradores: importado.colaboradores, locais: importado.locais, rodape: importado.rodape, importadoEm: isoDe(new Date()) });
     notificar(`Importados ${importado.itens.length} documentos.`);
@@ -21866,17 +21888,41 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
                       <tr key={d.id} className="rowHover" onClick={() => setEditar(d)} style={{ cursor: "pointer", background: d.obsoleto ? COLORS.warnBg : undefined }}>
                         <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", color: idsDup.has(d.id) ? COLORS.danger : COLORS.ink }}>
                           {temAnexo(d) ? (
-                            <button
-                              title={d.ficheiro && d.ficheiro.path ? `Abrir ${d.ficheiro.nome}` : "Abrir link"}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                abrirDocumento(d, notificar);
-                              }}
-                              style={{ ...linkBtnStyle, marginTop: 0, fontWeight: 600, fontSize: "inherit", display: "inline-flex", alignItems: "center", gap: 4, color: idsDup.has(d.id) ? COLORS.danger : COLORS.navy }}
-                            >
-                              {d.tipo === "-" ? "—" : codigoComVersao(d)}
-                              {d.ficheiro && d.ficheiro.path ? <Paperclip size={12} /> : <Link2 size={12} />}
-                            </button>
+                            <span style={{ position: "relative", display: "inline-block" }}>
+                              <button
+                                title={ficheirosDoc(d).length + (d.link ? 1 : 0) > 1 ? "Escolher o ficheiro" : ficheirosDoc(d).length ? `Abrir ${ficheirosDoc(d)[0].nome}` : "Abrir link"}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (ficheirosDoc(d).length + (d.link ? 1 : 0) > 1) {
+                                    const r = e.currentTarget.getBoundingClientRect();
+                                    setMenuAnexos(menuAnexos && menuAnexos.id === d.id ? null : { id: d.id, x: r.left, y: r.bottom + 4 });
+                                  }
+                                  else abrirDocumento(d, notificar);
+                                }}
+                                style={{ ...linkBtnStyle, marginTop: 0, fontWeight: 600, fontSize: "inherit", display: "inline-flex", alignItems: "center", gap: 4, color: idsDup.has(d.id) ? COLORS.danger : COLORS.navy }}
+                              >
+                                {d.tipo === "-" ? "—" : codigoComVersao(d)}
+                                {ficheirosDoc(d).length ? <Paperclip size={12} /> : <Link2 size={12} />}
+                                {ficheirosDoc(d).length + (d.link ? 1 : 0) > 1 && <span style={{ fontSize: 11 }}>{ficheirosDoc(d).length + (d.link ? 1 : 0)}</span>}
+                              </button>
+                              {menuAnexos && menuAnexos.id === d.id && (
+                                <>
+                                  <span onClick={(e) => { e.stopPropagation(); setMenuAnexos(null); }} onWheel={() => setMenuAnexos(null)} style={{ position: "fixed", inset: 0, zIndex: 20, cursor: "default" }} />
+                                  <span onClick={(e) => e.stopPropagation()} style={{ position: "fixed", top: Math.min(menuAnexos.y, window.innerHeight - 160), left: menuAnexos.x, zIndex: 21, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 10, boxShadow: "0 10px 30px -10px rgba(8,14,24,0.35)", padding: 4, display: "grid", minWidth: 240, cursor: "default" }}>
+                                    {ficheirosDoc(d).map((f) => (
+                                      <button key={f.path} onClick={() => { setMenuAnexos(null); abrirFicheiroDoc(f, notificar); }} className="rowHover" style={{ border: "none", background: "transparent", textAlign: "left", padding: "7px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500, color: COLORS.ink, display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                                        <Paperclip size={13} color={COLORS.slate} /> {f.nome}
+                                      </button>
+                                    ))}
+                                    {d.link && (
+                                      <button onClick={() => { setMenuAnexos(null); window.open(urlLink(d.link), "_blank", "noopener"); }} className="rowHover" style={{ border: "none", background: "transparent", textAlign: "left", padding: "7px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500, color: COLORS.ink, display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit" }}>
+                                        <Link2 size={13} color={COLORS.slate} /> Abrir link
+                                      </button>
+                                    )}
+                                  </span>
+                                </>
+                              )}
+                            </span>
                           ) : d.tipo === "-" ? (
                             "—"
                           ) : (
