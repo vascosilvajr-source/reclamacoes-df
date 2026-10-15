@@ -74,9 +74,20 @@ export function lerPlanoSemanal(L) {
   const ycab = Math.min(...cab.map((l) => l.y0));
   const trp = L.filter((l) => /^TRP/.test(l.t) && Math.abs(l.y0 - ycab) < 22).sort((a, b) => a.x0 - b.x0);
   const hcol = L.filter((l) => l.t === "H" && Math.abs(l.y0 - ycab) < 22);
-  if (trp.length < 5) throw new Error("não encontrei as colunas dos dias");
-  const inicios = trp.slice(0, 5).map((t) => t.x0 - 3);
-  inicios.push(hcol.length ? hcol[0].x0 - 3 : (trp[5] ? trp[5].x0 - 15 : inicios[4] + (inicios[4] - inicios[3])));
+  // Há dois modelos: colunas "TRP … H" ou "T | TA | EQUIPA / TURMA | BAL." (um "T" a abrir cada dia).
+  const tcol = L.filter((l) => l.t === "T" && Math.abs(l.y0 - ycab) < 22).sort((a, b) => a.x0 - b.x0);
+  let inicios;
+  if (trp.length >= 5) {
+    inicios = trp.slice(0, 5).map((t) => t.x0 - 3);
+    inicios.push(hcol.length ? hcol[0].x0 - 3 : trp[5] ? trp[5].x0 - 15 : inicios[4] + (inicios[4] - inicios[3]));
+  } else if (tcol.length >= 6) {
+    inicios = tcol.slice(0, 6).map((t) => t.x0 - 3);
+  } else {
+    // Último recurso: o início de cada dia a meio caminho entre os nomes dos dias.
+    const cabOrd = [...cab].sort((a, b) => a.x0 - b.x0);
+    if (cabOrd.length < 6) throw new Error("não encontrei as colunas dos dias");
+    inicios = cabOrd.slice(0, 6).map((c, i) => (i === 0 ? 0 : (cabOrd[i - 1].x1 + c.x0) / 2 - 20));
+  }
   const dom = L.find((l) => l.t === "Domingo");
   const fim = dom ? dom.x0 - 25 : Infinity;
   const dia = (x) => {
@@ -145,6 +156,12 @@ export function lerPlanoSemanal(L) {
         .join(" ");
       // Treinadores: as siglas (2 letras) à esquerda do nome, na mesma linha do plano.
       const siglas = new Set(corpo.filter((l) => /^[A-ZÇ]{2}$/.test(l.t) && dia(l.x0) === d && l.x1 <= e.x0 + 1 && l.y0 >= e.y0 - 6 && l.y0 < Math.min(proxima(e), e.y0 + 14)).map((l) => `${l.t}@${Math.round(l.x0)}`));
+      // Hora escrita no próprio nome ("SUB 11 (18H10)") manda sobre a do bloco.
+      const noNome = e.t.match(/\((\d{1,2}[Hh:]\d{2})\)/);
+      if (noNome) {
+        hora = noNome[1];
+        origem = "linha";
+      }
       treinos.push({ treinadores: siglas.size, dia: DIAS_PLANO[d], hora: normalizarHora(hora), horaIncerta: !hora || (origem === "bloco" && /^SUB/i.test(e.t) && !/^TURMAS$/i.test(sec)), secao: titulo1(sec), nome: e.t.replace(/\s+/g, " ").trim(), local });
     });
   // Repetidos (mesma turma, dia e hora) ficam uma vez só.
@@ -169,7 +186,7 @@ export function normalizarHora(h) {
 
 // Escola provável a partir do título ("Plano Semanal de Atividades - Dragon Force Valadares").
 export function escolaDoTitulo(titulo, escolas) {
-  const t = norm(titulo).replace(/^.*?atividades\s*-\s*/, "").replace(/^dragon force\s+/, "").replace(/^df\s+/, "");
+  const t = norm(titulo).replace(/^.*?atividades\s*-?\s*/, "").replace(/^dragon force\s+/, "").replace(/^df\s+/, "");
   if (!t) return "";
   const lista = escolas.map((e) => ({ e, k: norm(e).replace(/^dragon force\s+/, "").replace(/^df\s+/, "") }));
   return (lista.find((x) => x.k === t) || lista.find((x) => x.k.startsWith(t) || t.startsWith(x.k)) || {}).e || "";
@@ -191,9 +208,28 @@ export function unidadesDoNome(nome) {
         return { tipo: "turma", nome: `${niv} ${(p ? `${p[2]}.${p[1]}` : c).toUpperCase()}` };
       });
   }
-  m = n.match(/^sub\s?(\d+)\s*([ab])?\s*(fem)?\s*$/);
-  if (m) return [{ tipo: "equipa", nome: `Sub-${m[1]}${m[2] ? ` ${m[2].toUpperCase()}` : ""}${m[3] ? " F" : ""}` }];
-  return [];
+  // Equipas: "SUB 10 B", "SUB 13 / SUB 15 (18H10)", "SUB 12 / 13", "SUB 11 A & B", "SUB 11.1".
+  const s = n.replace(/\(\s*\d{1,2}[h:]\d{2}\s*\)/g, " ").replace(/\s+/g, " ").trim();
+  if (!/^sub\s?\d/.test(s)) return [];
+  const out = [];
+  let ult = null;
+  for (const p of s.replace(/^sub\s?/, "").split(/\s*[/&,]\s*(?:sub\s?)?/)) {
+    const q = p.trim();
+    let x = q.match(/^(\d+)(?:\.(\d))?\s*([ab])?\s*(fem)?$/);
+    if (x) {
+      ult = x[1];
+      out.push({ tipo: "equipa", nome: `Sub-${x[1]}${x[2] ? `.${x[2]}` : ""}${x[3] ? ` ${x[3].toUpperCase()}` : ""}${x[4] ? " F" : ""}` });
+      continue;
+    }
+    x = q.match(/^([ab])$/);
+    if (x && ult) {
+      out.push({ tipo: "equipa", nome: `Sub-${ult} ${x[1].toUpperCase()}` });
+      continue;
+    }
+    if (out.length) break; // o resto já não é nome de equipa (ex.: "A / C / 2" dos guarda-redes)
+    return [];
+  }
+  return out;
 }
 
 // Turmas da app que correspondem a um nome do plano (sugestão; o utilizador pode corrigir).
