@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
+import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, epocaAtualForm, mesesDaEpoca, FORMATOS_FORM, ESTADOS_FORM, MESES_CURTOS, MESES_LONGOS } from "./formacao";
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -103,6 +104,36 @@ const APP_NAME = "Auditoria e Gestão de Qualidade DF";
 // Logótipo Dragon Force em versão monocromática branca, para a barra escura.
 const LOGO_BRANCO = "data:image/png;base64,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";
 
+// Toda a gravação passa por aqui: guarda a última versão de cada chave para perceber
+// o que foi apagado (vai para "Apagados" durante 30 dias).
+const ultimoGuardado = {};
+let aoRemoverRegistos = null;
+const armazem = {
+  async get(key) {
+    const r = await dbStorage.get(key);
+    if (r && r.value) {
+      try {
+        ultimoGuardado[key] = JSON.parse(r.value);
+      } catch (e) {
+        // valor ilegível: fica sem comparação
+      }
+    }
+    return r;
+  },
+  async set(key, value) {
+    const next = JSON.parse(value);
+    if (LISTAS_COM_LIXO[key] && aoRemoverRegistos && ultimoGuardado[key] !== undefined) {
+      try {
+        const rem = registosRemovidos(ultimoGuardado[key], next);
+        if (aceitaRemocao(rem)) aoRemoverRegistos(key, rem);
+      } catch (e) {
+        console.error("Erro ao registar apagados:", e);
+      }
+    }
+    ultimoGuardado[key] = next;
+    return dbStorage.set(key, value);
+  },
+};
 const STORAGE_KEY = "reclamacoes:registo";
 const STORAGE_OPTIONS_KEY = "reclamacoes:opcoes";
 const STORAGE_AUDITS_KEY = "reclamacoes:auditorias";
@@ -1679,6 +1710,17 @@ function Notificacoes({ lista, onFechar }) {
               <Icone size={13} color={cor} />
             </div>
             <div style={{ flex: 1, fontSize: 13, lineHeight: 1.45 }}>{n.texto}</div>
+            {n.acao && (
+              <button
+                onClick={() => {
+                  n.acao.fn();
+                  onFechar(n.id);
+                }}
+                style={{ ...linkBtnStyle, marginTop: 0, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}
+              >
+                {n.acao.rotulo}
+              </button>
+            )}
             <button onClick={() => onFechar(n.id)} style={{ ...iconBtnStyle, padding: 0, marginTop: 2 }} aria-label="Fechar">
               <X size={13} />
             </button>
@@ -21667,6 +21709,52 @@ function FormacaoPage({ dados, onGuardar, notificar }) {
   );
 }
 
+// ======================= APAGADOS =======================
+function ApagadosPage({ lista, onRepor, onApagarDeVez }) {
+  const [fModulo, setFModulo] = useState("todos");
+  const ord = [...lista].sort((a, b) => String(b.em).localeCompare(String(a.em)));
+  const modulos = [...new Set(ord.map((a) => a.chave))];
+  const vis = ord.filter((a) => fModulo === "todos" || a.chave === fModulo);
+  const diasRestam = (em) => Math.max(0, DIAS_APAGADOS - Math.floor((Date.now() - new Date(em).getTime()) / 86400000));
+  const quando = (em) => {
+    const d = new Date(em);
+    return `${fmt(d)} às ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  if (!lista.length) return <Vazio icon={RotateCcw} titulo="Nada apagado" texto={`O que apagares nas listas da app (reclamações, riscos, documentos, auditorias, espaços…) fica aqui ${DIAS_APAGADOS} dias e pode ser reposto.`} />;
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+        {segSGQ([["todos", `Tudo · ${lista.length}`], ...modulos.map((m) => [m, `${LISTAS_COM_LIXO[m] || m} · ${lista.filter((a) => a.chave === m).length}`])], fModulo, setFModulo)}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: COLORS.slate }}>Cada registo fica {DIAS_APAGADOS} dias e depois sai sozinho.</span>
+      </div>
+      <div style={{ ...panelStyle, marginBottom: 0, padding: 0, overflow: "hidden" }}>
+        {vis.map((a, k) => (
+          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", borderTop: k ? `1px solid ${COLORS.ruleSoft}` : "none", flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.rotulo}</div>
+              <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2 }}>
+                {LISTAS_COM_LIXO[a.chave] || a.chave} · apagado a {quando(a.em)} · sai daqui a {diasRestam(a.em)} {diasRestam(a.em) === 1 ? "dia" : "dias"}
+              </div>
+            </div>
+            <button className="press" onClick={() => onRepor([a])} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <RotateCcw size={13} /> Repor
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`Apagar de vez "${a.rotulo}"? Deixa de poder ser reposto.`)) onApagarDeVez(a.id);
+              }}
+              style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.danger }}
+            >
+              Apagar de vez
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DocumentosPage({ dados, onGuardar, notificar }) {
   const itens = (dados && dados.itens) || [];
   const colaboradores = (dados && dados.colaboradores) || [];
@@ -21700,7 +21788,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
     const d = itens.find((x) => x.id === id);
     if (!window.confirm(`Apagar ${d ? `${d.codigo} · ${d.identificacao}` : "este documento"}? Se só deixou de se usar, marca como obsoleto.`)) return;
     guardarItens(itens.filter((x) => x.id !== id));
-    if (d) ficheirosDoc(d).forEach((f) => apagarFicheiroDoc(f.path));
+    // Os ficheiros ficam na pasta: o documento pode ser reposto em "Apagados".
     setEditar(null);
   };
   const novo = () => setEditar({ __novo: true, id: `doc-${Date.now().toString(36)}`, lista: "DF", int: fLista === "INT", tipo: "F", codigo: proximoCodigo(itens, "F"), identificacao: "", registo: "Sim", armazenagem: "SGQ - Suporte Informático", protecao: "Backup semanal / cópia de segurança", retencao: "Enquanto em Vigor", elaborado: "GQ", aprovado: "DE", colaboradores: [], locais: [], obsoleto: false, versoes: [isoDe(new Date())] });
@@ -23033,8 +23121,10 @@ function MatrizRiscos({ itens, filtro, onFiltro }) {
 // Radar de oportunidades: o que acontece lá fora (IA, tecnologia desportiva, normas,
 // financiamento, contexto escolar) e pode ser oportunidade para a Dragon Force.
 // A lista vem de pesquisa periódica (com fontes) e fica em reclamacoes:radar.
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar }) {
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidos = {}, onPedirExplicacao }) {
   const itens = (radar && radar.itens) || [];
+  const [aPedir, setAPedir] = useState(null);
+  const [pergunta, setPergunta] = useState("");
   const [fCat, setFCat] = useState("todas");
   const [verTodas, setVerTodas] = useState(false);
   const [aberto, setAberto] = useState(true);
@@ -23103,6 +23193,45 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                         {r.acao}
                       </div>
                     )}
+                    {r.explicacao && (
+                      <div style={{ fontSize: 12.5, lineHeight: 1.55, background: COLORS.navyWash, borderRadius: 8, padding: "8px 10px" }}>
+                        <strong style={{ fontWeight: 600 }}>Explicado de novo{r.explicadoEm ? ` (${fmt(new Date(r.explicadoEm + "T00:00:00"))})` : ""}: </strong>
+                        {r.explicacao}
+                      </div>
+                    )}
+                    {(() => {
+                      const p = pedidos[r.id];
+                      const pendente = p && (!r.explicadoEm || r.explicadoEm < String(p.em).slice(0, 10));
+                      if (pendente)
+                        return (
+                          <div style={{ fontSize: 12, color: COLORS.warn }}>
+                            Pediste uma nova explicação a {fmt(new Date(p.em))}
+                            {p.pergunta ? ` ("${p.pergunta}")` : ""}. Aparece aqui na próxima manhã.
+                          </div>
+                        );
+                      if (aPedir === r.id)
+                        return (
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <textarea value={pergunta} onChange={(e) => setPergunta(e.target.value)} rows={2} autoFocus placeholder="O que queres perceber melhor? (opcional) Ex.: o que temos de fazer em concreto e até quando" style={{ ...inputStyle, fontSize: 12.5, resize: "vertical", fontFamily: "inherit" }} />
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                onClick={() => {
+                                  onPedirExplicacao(r.id, pergunta.trim());
+                                  setAPedir(null);
+                                  setPergunta("");
+                                }}
+                                style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5 }}
+                              >
+                                Pedir
+                              </button>
+                              <button onClick={() => setAPedir(null)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      return null;
+                    })()}
                     <div style={{ fontSize: 11.5, color: COLORS.slate, lineHeight: 1.5 }}>
                       {(r.fontes || []).map((f, i) => (
                         <div key={i}>
@@ -23123,6 +23252,11 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                       {e === "nova" && (
                         <button onClick={() => onIgnorar(r.id, true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
                           Não interessa
+                        </button>
+                      )}
+                      {onPedirExplicacao && aPedir !== r.id && !(pedidos[r.id] && (!r.explicadoEm || r.explicadoEm < String(pedidos[r.id].em).slice(0, 10))) && (
+                        <button onClick={() => setAPedir(r.id)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, marginLeft: "auto" }}>
+                          Explicar melhor
                         </button>
                       )}
                       {e === "ignorada" && (
@@ -23277,6 +23411,11 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       jaNaLista={radarNaLista}
       ignorados={radarIgnorados}
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
+      pedidos={riscos.radarPedidos || {}}
+      onPedirExplicacao={(id, pergunta) => {
+        onGuardar({ ...riscos, radarPedidos: { ...(riscos.radarPedidos || {}), [id]: { em: new Date().toISOString(), pergunta } } });
+        notificar("Pedido feito. A nova explicação aparece neste cartão na próxima manhã.");
+      }}
       onAdicionar={(r) =>
         novo({
           tipo: "O",
@@ -24089,6 +24228,8 @@ function AppPrincipal({ onSair }) {
   const [objetivos, setObjetivos] = useState({ epocas: {} });
   const [documentos, setDocumentos] = useState({ itens: [], colaboradores: [], locais: [] });
   const [formacao, setFormacao] = useState({ itens: [] });
+  const [apagados, setApagados] = useState([]);
+  const apagadosRef = useRef([]);
   const [ocorrencias, setOcorrencias] = useState([]);
   const [radar, setRadar] = useState(null);
   const [inqueritos, setInqueritos] = useState([]);
@@ -24121,9 +24262,9 @@ function AppPrincipal({ onSair }) {
   // único menu com todas as listas da app.
   const [listaAberta, setListaAberta] = useState(null);
   const [notificacoes, setNotificacoes] = useState([]);
-  const notificar = useCallback((texto, tipo = "ok", duracao = 4200) => {
+  const notificar = useCallback((texto, tipo = "ok", duracao = 4200, acao = null) => {
     const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    setNotificacoes((l) => [...l, { id, texto, tipo }]);
+    setNotificacoes((l) => [...l, { id, texto, tipo, acao }]);
     if (duracao) setTimeout(() => setNotificacoes((l) => l.filter((n) => n.id !== id)), duracao);
   }, []);
   const fecharNotificacao = (id) => setNotificacoes((l) => l.filter((n) => n.id !== id));
@@ -24176,7 +24317,7 @@ function AppPrincipal({ onSair }) {
   const persist = useCallback(async (next) => {
     setEntries(next);
     try {
-      await dbStorage.set(STORAGE_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar reclamações:", e);
       notificar(`Não foi possível guardar as reclamações: ${e?.message || e}`, "erro", 0);
@@ -24186,7 +24327,7 @@ function AppPrincipal({ onSair }) {
   const persistOptions = useCallback(async (next) => {
     setOptions(next);
     try {
-      await dbStorage.set(STORAGE_OPTIONS_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_OPTIONS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar listas:", e);
       notificar(`Não foi possível guardar as listas: ${e?.message || e}`, "erro", 0);
@@ -24196,7 +24337,7 @@ function AppPrincipal({ onSair }) {
   const persistAudits = useCallback(async (next) => {
     setAudits(next);
     try {
-      await dbStorage.set(STORAGE_AUDITS_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_AUDITS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar auditorias:", e);
       notificar(`Não foi possível guardar as auditorias: ${e?.message || e}`, "erro", 0);
@@ -24206,7 +24347,7 @@ function AppPrincipal({ onSair }) {
   const persistSanctions = useCallback(async (next) => {
     setSanctions(next);
     try {
-      await dbStorage.set(STORAGE_SANCOES_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_SANCOES_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar sanções:", e);
       notificar(`Não foi possível guardar as sanções: ${e?.message || e}`, "erro", 0);
@@ -24218,7 +24359,7 @@ function AppPrincipal({ onSair }) {
   const fazPersist = (setter, chave, nome) => async (next) => {
     setter(next);
     try {
-      await dbStorage.set(chave, JSON.stringify(next));
+      await armazem.set(chave, JSON.stringify(next));
     } catch (e) {
       console.error(`Erro ao guardar ${nome}:`, e);
       notificar(`Não foi possível guardar ${nome}: ${e?.message || e}`, "erro", 0);
@@ -24277,10 +24418,61 @@ function AppPrincipal({ onSair }) {
   const persistPlanoInq = fazPersist(setPlanoInq, STORAGE_PLANO_INQ_KEY, "o cronograma de inquéritos");
   const persistRespostas = fazPersist(setRespostasTipo, STORAGE_RESPOSTAS_KEY, "as respostas-tipo");
 
+  // ---------- Apagados: 30 dias para repor ----------
+  apagadosRef.current = apagados;
+  const guardarApagados = (lista) => {
+    apagadosRef.current = lista;
+    setApagados(lista);
+    armazem.set(STORAGE_APAGADOS_KEY, JSON.stringify(lista)).catch((e) => notificar(`Não foi possível guardar os apagados: ${e?.message || e}`, "erro", 0));
+  };
+  const persistDe = {
+    [STORAGE_KEY]: persist,
+    [STORAGE_AUDITS_KEY]: persistAudits,
+    [STORAGE_SANCOES_KEY]: persistSanctions,
+    [STORAGE_OCORRENCIAS_KEY]: persistOcorrencias,
+    [STORAGE_RISCOS_KEY]: persistRiscos,
+    [STORAGE_OBJETIVOS_KEY]: persistObjetivos,
+    [STORAGE_DOCUMENTOS_KEY]: persistDocumentos,
+    [STORAGE_FORMACAO_KEY]: persistFormacao,
+    [STORAGE_ESPACOS_KEY]: persistEspacos,
+    [STORAGE_EVENTOS_KEY]: persistEventos,
+    [STORAGE_DESISTENCIAS_KEY]: persistDesistencias,
+    [STORAGE_EXPERIENCIAS_KEY]: persistExperiencias,
+    [STORAGE_DESVINC_KEY]: persistDesvinc,
+    [STORAGE_PLANO_INQ_KEY]: persistPlanoInq,
+    [STORAGE_INQUERITOS_KEY]: persistInqueritos,
+    [STORAGE_RESPOSTAS_KEY]: persistRespostas,
+  };
+  const reporApagados = (entradas) => {
+    const porChave = {};
+    entradas.forEach((a) => (porChave[a.chave] = porChave[a.chave] || []).push(a));
+    const repostos = [];
+    Object.entries(porChave).forEach(([chave, l]) => {
+      const gravar = persistDe[chave];
+      if (!gravar) return;
+      let valor = ultimoGuardado[chave];
+      [...l].sort((a, b) => (a.posicao || 0) - (b.posicao || 0)).forEach((a) => {
+        const v = reporEm(valor, a.caminho || [], a.item, a.posicao);
+        if (v) valor = v;
+        repostos.push(a.id);
+      });
+      gravar(valor);
+    });
+    guardarApagados(apagadosRef.current.filter((a) => !repostos.includes(a.id)));
+    notificar(repostos.length === 1 ? "Reposto." : `${repostos.length} registos repostos.`);
+  };
+  aoRemoverRegistos = (chave, rem) => {
+    const em = new Date().toISOString();
+    const novos = rem.map((r, k) => ({ id: `ap_${Date.now().toString(36)}_${k}_${Math.random().toString(36).slice(2, 6)}`, chave, caminho: r.caminho, posicao: r.posicao, item: r.item, rotulo: rotuloApagado(chave, r.item, r.caminho), em }));
+    guardarApagados(limparAntigos([...novos, ...apagadosRef.current]));
+    const txt = novos.length === 1 ? `Apagado: ${novos[0].rotulo}` : `${novos.length} registos apagados (${LISTAS_COM_LIXO[chave]}).`;
+    notificar(txt, "ok", 9000, { rotulo: "Desfazer", fn: () => reporApagados(novos) });
+  };
+
   const persistInscritos = useCallback(async (next) => {
     setInscritos(next);
     try {
-      await dbStorage.set(STORAGE_INSCRITOS_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_INSCRITOS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar inscritos:", e);
       notificar(`Não foi possível guardar os inscritos: ${e?.message || e}`, "erro", 0);
@@ -24290,7 +24482,7 @@ function AppPrincipal({ onSair }) {
   const persistTurmas = useCallback(async (next) => {
     setTurmasAlunos(next);
     try {
-      await dbStorage.set(STORAGE_TURMAS_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_TURMAS_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar turmas:", e);
       notificar(`Não foi possível guardar as turmas: ${e?.message || e}`, "erro", 0);
@@ -24300,7 +24492,7 @@ function AppPrincipal({ onSair }) {
   const persistEpocaAnterior = useCallback(async (next) => {
     setEpocaAnterior(next);
     try {
-      await dbStorage.set(STORAGE_EPOCA_ANT_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_EPOCA_ANT_KEY, JSON.stringify(next));
     } catch (e) {
       console.error("Erro ao guardar época anterior:", e);
       notificar(`Não foi possível guardar a época anterior: ${e?.message || e}`, "erro", 0);
@@ -24310,7 +24502,7 @@ function AppPrincipal({ onSair }) {
   const persistLearned = useCallback(async (next) => {
     setLearned(next);
     try {
-      await dbStorage.set(STORAGE_TRIAGEM_KEY, JSON.stringify(next));
+      await armazem.set(STORAGE_TRIAGEM_KEY, JSON.stringify(next));
     } catch (e) {
       // falha silenciosa — não é crítico, a triagem só fica sem aprender desta vez
     }
@@ -24319,43 +24511,43 @@ function AppPrincipal({ onSair }) {
   useEffect(() => {
     (async () => {
       try {
-        const res = await dbStorage.get(STORAGE_KEY);
+        const res = await armazem.get(STORAGE_KEY);
         if (res && res.value) setEntries(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_OPTIONS_KEY);
+        const res = await armazem.get(STORAGE_OPTIONS_KEY);
         if (res && res.value) setOptions({ schools: [], categories: [], auditCategories: [], complaintCategories: DEFAULT_CATEGORIAS, sanctionTypes: DEFAULT_TIPOS_SANCAO, auditAreas: DEFAULT_AREAS_AUDITORIA, turmas: DEFAULT_TURMAS, niveis: DEFAULT_NIVEIS, turmasPorEscola: {}, motivosDesistencia: DEFAULT_MOTIVOS_DESISTENCIA, categoriasSatisfacao: DEFAULT_CATEGORIAS_SATISFACAO, espacosLista: DEFAULT_ESPACOS, mapaEscaloes: {}, tiposEvento: DEFAULT_TIPOS_EVENTO, dimensoesInquerito: DEFAULT_DIMENSOES_INQ, tipologiasInq: DEFAULT_TIPOLOGIAS_INQ, causasRaiz: DEFAULT_CAUSAS_RAIZ, categoriasOcorrencia: DEFAULT_CATEGORIAS_OCORRENCIA, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_AUDITS_KEY);
+        const res = await armazem.get(STORAGE_AUDITS_KEY);
         if (res && res.value) setAudits(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_SANCOES_KEY);
+        const res = await armazem.get(STORAGE_SANCOES_KEY);
         if (res && res.value) setSanctions(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_INSCRITOS_KEY);
+        const res = await armazem.get(STORAGE_INSCRITOS_KEY);
         if (res && res.value) setInscritos(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_TURMAS_KEY);
+        const res = await armazem.get(STORAGE_TURMAS_KEY);
         if (res && res.value) setTurmasAlunos(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
       }
       try {
-        const res = await dbStorage.get(STORAGE_EPOCA_ANT_KEY);
+        const res = await armazem.get(STORAGE_EPOCA_ANT_KEY);
         if (res && res.value) setEpocaAnterior(JSON.parse(res.value));
       } catch (e) {
         // chave ainda não existe — arranque limpo
@@ -24371,6 +24563,7 @@ function AppPrincipal({ onSair }) {
         [STORAGE_OBJETIVOS_KEY, setObjetivos],
         [STORAGE_DOCUMENTOS_KEY, setDocumentos],
         [STORAGE_FORMACAO_KEY, setFormacao],
+        [STORAGE_APAGADOS_KEY, (v) => setApagados(limparAntigos(v))],
         [STORAGE_OCORRENCIAS_KEY, setOcorrencias],
         [STORAGE_RADAR_KEY, setRadar],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
@@ -24380,14 +24573,14 @@ function AppPrincipal({ onSair }) {
         [STORAGE_RESPOSTAS_KEY, (v) => setRespostasTipo(juntarRespostasPadrao(v))],
       ]) {
         try {
-          const r = await dbStorage.get(chave);
+          const r = await armazem.get(chave);
           if (r && r.value) setter(JSON.parse(r.value));
         } catch (e) {
           // chave ainda não existe — arranque limpo
         }
       }
       try {
-        const res = await dbStorage.get(STORAGE_TRIAGEM_KEY);
+        const res = await armazem.get(STORAGE_TRIAGEM_KEY);
         if (res && res.value) setLearned({ canal: {}, categoria: {}, tema: {}, gravidade: {}, ...JSON.parse(res.value) });
       } catch (e) {
         // chave ainda não existe — arranque limpo, aprende a partir de agora
@@ -25115,6 +25308,8 @@ function AppPrincipal({ onSair }) {
       ? "Controlo documental"
       : page === "formacao"
       ? "Plano de formação"
+      : page === "apagados"
+      ? "Apagados"
       : page === "ocorrencias"
       ? "Ocorrências"
       : "Reclamações";
@@ -25674,6 +25869,30 @@ function AppPrincipal({ onSair }) {
           <ShieldAlert size={15} />
           <span>Todas as listas</span>
         </button>
+        <button
+          className="navItem press"
+          onClick={() => setPage("apagados")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            width: "calc(100% - 16px)",
+            margin: "1px 8px",
+            padding: "8px 9px",
+            borderRadius: 7,
+            border: "none",
+            background: page === "apagados" ? COLORS.navyWash : "transparent",
+            color: page === "apagados" ? COLORS.navy : COLORS.ink2,
+            fontWeight: page === "apagados" ? 600 : 450,
+            fontSize: 13.5,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <RotateCcw size={15} />
+          <span style={{ flex: 1 }}>Apagados</span>
+          {apagados.length > 0 && <span style={{ fontSize: 11.5, color: COLORS.slate }}>{apagados.length}</span>}
+        </button>
 
         {/* alternador de tema */}
         <div style={{ marginTop: "auto", padding: "12px 16px 0", borderTop: `1px solid ${COLORS.rule}` }}>
@@ -25733,7 +25952,7 @@ function AppPrincipal({ onSair }) {
           }}
         >
           <div style={{ fontSize: 13.5, color: COLORS.slate }}>
-            {(secoes.find((sx) => sx.itens.some((x) => x.key === page)) || { grupo: "Gestão" }).grupo} · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
+            {page === "apagados" ? "Configuração" : (secoes.find((sx) => sx.itens.some((x) => x.key === page)) || { grupo: "Gestão" }).grupo} · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
             {areaDaPagina && (
@@ -25900,6 +26119,8 @@ function AppPrincipal({ onSair }) {
           <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "formacao" ? (
           <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} />
+        ) : page === "apagados" ? (
+          <ApagadosPage lista={apagados} onRepor={reporApagados} onApagarDeVez={(id) => guardarApagados(apagadosRef.current.filter((a) => a.id !== id))} />
         ) : page === "ocorrencias" ? (
           <OcorrenciasPage
             ocorrencias={ocorrencias}
