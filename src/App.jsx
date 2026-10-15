@@ -7235,6 +7235,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const [verRecintos, setVerRecintos] = useState(false);
   const [recintoNovo, setRecintoNovo] = useState("");
   const [editRec, setEditRec] = useState(null);
+  const [semAlunosTodas, setSemAlunosTodas] = useState(false);
+  const [verVistosSA, setVerVistosSA] = useState(false);
   const recintosUsados = [...new Set(espacos.map((s) => s.recinto).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
   const [hora, setHora] = useState("18:00");
@@ -7282,6 +7284,35 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     return { total, limite, tol, estado, nivel: daTurma ? escalaoDaTurma(daTurma.turma, niveis) : "", semRegisto: nomes.filter((n) => !pt[n]), pct: limite ? Math.round((total / limite) * 100) : 0 };
   };
   const atual = grupo(escolhidas, treinadores);
+
+  // Turmas/equipas que estão nos horários (planos semanais) mas sem alunos na app:
+  // pista para alunos inscritos na turma errada. Confirmar com cada escola.
+  const vistosSemAlunos = (normalizacao && normalizacao.semAlunosVistos) || {};
+  const escolasSemAlunos = semAlunosTodas ? [...new Set(espacos.map((s) => s.escola))] : modoRecinto ? [...new Set(doEscola.map((s) => s.escola))] : [escola];
+  const semAlunos = (() => {
+    const out = {};
+    espacos
+      .filter((s) => escolasSemAlunos.includes(s.escola) && (!modoRecinto || semAlunosTodas || s.recinto === recintoSel))
+      .forEach((s) => {
+        const pt = turmasDaEscola(s.escola);
+        turmasDoBloco(s).forEach((t) => {
+          if (pt[t] && pt[t].total > 0) return;
+          const k = `${s.escola}|${t}`;
+          const x = (out[k] = out[k] || { k, escola: s.escola, turma: t, horarios: [] });
+          x.horarios.push(`${String(s.dia).slice(0, 3)} ${horaFmt(s.hora)}${s.recinto ? ` (${s.recinto})` : ""}`);
+        });
+      });
+    return Object.values(out)
+      .map((x) => ({ ...x, visto: vistosSemAlunos[x.k] }))
+      .sort((a, b) => a.escola.localeCompare(b.escola, "pt") || a.turma.localeCompare(b.turma, "pt", { numeric: true }));
+  })();
+  const semAlunosPorVer = semAlunos.filter((x) => !x.visto);
+  const marcarVisto = (k, sim) => {
+    const v = { ...vistosSemAlunos };
+    if (sim) v[k] = new Date().toISOString().slice(0, 10);
+    else delete v[k];
+    onGuardarNormalizacao({ ...(normalizacao || {}), semAlunosVistos: v });
+  };
   const estados = doEscola.map((b) => grupo(turmasDoBloco(b), b.treinadores || 1, b.escola).estado);
   const nAcima = estados.filter((e) => e === "acima").length;
   const nTolerados = estados.filter((e) => e === "tolerado").length;
@@ -7537,6 +7568,55 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           <StatCard label="Dentro da lotação" value={nOk} color={COLORS.ok} />
           <StatCard label="Aceitáveis pelos treinadores" value={nTolerados} color={nTolerados ? COLORS.warn : undefined} subtitle="acima da lotação, dentro da tolerância" />
           <StatCard label="Acima do limite" value={nAcima} color={nAcima ? COLORS.danger : undefined} subtitle="mesmo com os treinadores" />
+        </div>
+      )}
+
+      {semAlunos.length > 0 && (
+        <div style={{ ...panelStyle, borderColor: semAlunosPorVer.length ? COLORS.warn : COLORS.rule, background: semAlunosPorVer.length ? COLORS.warnBg : COLORS.paperRaised }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <AlertTriangle size={16} color={semAlunosPorVer.length ? COLORS.warn : COLORS.slate} />
+            <div style={{ fontWeight: 600, fontSize: 14, flex: 1, minWidth: 220 }}>
+              {semAlunosPorVer.length
+                ? `${semAlunosPorVer.length} ${semAlunosPorVer.length === 1 ? "turma/equipa do horário sem alunos" : "turmas/equipas do horário sem alunos"}`
+                : "Turmas/equipas sem alunos: tudo visto"}
+            </div>
+            {segSGQ(
+              [
+                ["esta", modoRecinto ? "Este recinto" : "Esta escola"],
+                ["todas", "Todas as escolas"],
+              ],
+              semAlunosTodas ? "todas" : "esta",
+              (v) => setSemAlunosTodas(v === "todas")
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px" }}>
+            Estão nos horários (planos semanais) mas a app não tem alunos inscritos nelas. Pode haver alunos inscritos na turma ou equipa errada: confirmar com a escola e marcar como visto.
+          </div>
+          <div style={{ display: "grid", gap: 4 }}>
+            {semAlunos
+              .filter((x) => verVistosSA || !x.visto)
+              .map((x) => (
+                <div key={x.k} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "6px 10px", opacity: x.visto ? 0.65 : 1, flexWrap: "wrap" }}>
+                  <strong style={{ minWidth: 110 }}>{x.turma}</strong>
+                  {(semAlunosTodas || modoRecinto) && <span style={{ color: COLORS.ink2 }}>{x.escola}</span>}
+                  <span style={{ color: COLORS.slate, flex: 1, minWidth: 160 }}>{x.horarios.join(" · ")}</span>
+                  {x.visto ? (
+                    <button onClick={() => marcarVisto(x.k, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                      visto a {x.visto.split("-").reverse().join("/")} · voltar a avisar
+                    </button>
+                  ) : (
+                    <button onClick={() => marcarVisto(x.k, true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "3px 10px", fontSize: 12 }}>
+                      Visto
+                    </button>
+                  )}
+                </div>
+              ))}
+          </div>
+          {semAlunos.some((x) => x.visto) && (
+            <button onClick={() => setVerVistosSA((v) => !v)} style={{ ...linkBtnStyle, fontSize: 12 }}>
+              {verVistosSA ? "Esconder os vistos" : `Mostrar os vistos (${semAlunos.filter((x) => x.visto).length})`}
+            </button>
+          )}
         </div>
       )}
 
@@ -23121,10 +23201,11 @@ function MatrizRiscos({ itens, filtro, onFiltro }) {
 // Radar de oportunidades: o que acontece lá fora (IA, tecnologia desportiva, normas,
 // financiamento, contexto escolar) e pode ser oportunidade para a Dragon Force.
 // A lista vem de pesquisa periódica (com fontes) e fica em reclamacoes:radar.
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidos = {}, onPedirExplicacao }) {
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa }) {
   const itens = (radar && radar.itens) || [];
-  const [aPedir, setAPedir] = useState(null);
-  const [pergunta, setPergunta] = useState("");
+  // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
+  const ultimaPesquisa = (radar && (radar.pesquisadoEm || (radar.atualizadoEm ? `${radar.atualizadoEm}T00:00:00` : ""))) || "";
+  const aPesquisar = !!(pedidoPesquisa && pedidoPesquisa.em && String(pedidoPesquisa.em) > ultimaPesquisa);
   const [fCat, setFCat] = useState("todas");
   const [verTodas, setVerTodas] = useState(false);
   const [aberto, setAberto] = useState(true);
@@ -23154,6 +23235,14 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
         </button>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 11.5, color: COLORS.slate }}>Pesquisa atualizada a {radar.atualizadoEm ? fmt(new Date(radar.atualizadoEm + "T00:00:00")) : "—"}</span>
+        {onPedirPesquisa &&
+          (aPesquisar ? (
+            <span style={{ fontSize: 12, color: COLORS.warn, fontWeight: 600 }}>A procurar mais sugestões…</span>
+          ) : (
+            <button onClick={onPedirPesquisa} className="press" style={{ ...(novas.length ? secondaryBtnStyle : primaryBtnStyle), width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Search size={13} /> Procurar mais sugestões
+            </button>
+          ))}
       </div>
       {aberto && (
         <>
@@ -23167,7 +23256,10 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
             </label>
           </div>
           {visiveis.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}. A pesquisa traz mais todos os meses.</div>
+            <div style={{ fontSize: 12.5, color: COLORS.slate }}>
+              Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}.{" "}
+              {aPesquisar ? "A pesquisa pedida está a correr; as novas aparecem aqui dentro de umas horas." : "Carrega em «Procurar mais sugestões» para uma pesquisa nova, ou espera pela de segunda-feira."}
+            </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
               {visiveis.map((r) => {
@@ -23195,43 +23287,10 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                     )}
                     {r.explicacao && (
                       <div style={{ fontSize: 12.5, lineHeight: 1.55, background: COLORS.navyWash, borderRadius: 8, padding: "8px 10px" }}>
-                        <strong style={{ fontWeight: 600 }}>Explicado de novo{r.explicadoEm ? ` (${fmt(new Date(r.explicadoEm + "T00:00:00"))})` : ""}: </strong>
+                        <strong style={{ fontWeight: 600 }}>Mais detalhe: </strong>
                         {r.explicacao}
                       </div>
                     )}
-                    {(() => {
-                      const p = pedidos[r.id];
-                      const pendente = p && (!r.explicadoEm || r.explicadoEm < String(p.em).slice(0, 10));
-                      if (pendente)
-                        return (
-                          <div style={{ fontSize: 12, color: COLORS.warn }}>
-                            Pediste uma nova explicação a {fmt(new Date(p.em))}
-                            {p.pergunta ? ` ("${p.pergunta}")` : ""}. Aparece aqui na próxima manhã.
-                          </div>
-                        );
-                      if (aPedir === r.id)
-                        return (
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <textarea value={pergunta} onChange={(e) => setPergunta(e.target.value)} rows={2} autoFocus placeholder="O que queres perceber melhor? (opcional) Ex.: o que temos de fazer em concreto e até quando" style={{ ...inputStyle, fontSize: 12.5, resize: "vertical", fontFamily: "inherit" }} />
-                            <div style={{ display: "flex", gap: 8 }}>
-                              <button
-                                onClick={() => {
-                                  onPedirExplicacao(r.id, pergunta.trim());
-                                  setAPedir(null);
-                                  setPergunta("");
-                                }}
-                                style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5 }}
-                              >
-                                Pedir
-                              </button>
-                              <button onClick={() => setAPedir(null)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
-                                Cancelar
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      return null;
-                    })()}
                     <div style={{ fontSize: 11.5, color: COLORS.slate, lineHeight: 1.5 }}>
                       {(r.fontes || []).map((f, i) => (
                         <div key={i}>
@@ -23254,11 +23313,7 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                           Não interessa
                         </button>
                       )}
-                      {onPedirExplicacao && aPedir !== r.id && !(pedidos[r.id] && (!r.explicadoEm || r.explicadoEm < String(pedidos[r.id].em).slice(0, 10))) && (
-                        <button onClick={() => setAPedir(r.id)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, marginLeft: "auto" }}>
-                          Explicar melhor
-                        </button>
-                      )}
+
                       {e === "ignorada" && (
                         <button onClick={() => onIgnorar(r.id, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
                           Voltar a mostrar
@@ -23411,10 +23466,10 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       jaNaLista={radarNaLista}
       ignorados={radarIgnorados}
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
-      pedidos={riscos.radarPedidos || {}}
-      onPedirExplicacao={(id, pergunta) => {
-        onGuardar({ ...riscos, radarPedidos: { ...(riscos.radarPedidos || {}), [id]: { em: new Date().toISOString(), pergunta } } });
-        notificar("Pedido feito. A nova explicação aparece neste cartão na próxima manhã.");
+      pedidoPesquisa={riscos.radarPedidoPesquisa || null}
+      onPedirPesquisa={() => {
+        onGuardar({ ...riscos, radarPedidoPesquisa: { em: new Date().toISOString() } });
+        notificar("Pedido feito. A pesquisa corre nas próximas 2 horas (dias úteis, 9h–19h) e as sugestões novas aparecem aqui.", "ok", 7000);
       }}
       onAdicionar={(r) =>
         novo({
