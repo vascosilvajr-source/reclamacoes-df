@@ -23266,7 +23266,7 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
           {visiveis.length === 0 ? (
             <div style={{ fontSize: 12.5, color: COLORS.slate }}>
               Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}.{" "}
-              {!onPedirPesquisa ? "" : aPesquisar ? "A pesquisa pedida está a correr; as novas aparecem aqui dentro de umas horas." : "Carrega em «Procurar mais sugestões» para uma pesquisa nova."}
+              {!onPedirPesquisa ? "" : aPesquisar ? "A pesquisa pedida corre na próxima hora; as novas aparecem aqui." : "Carrega em «Procurar mais sugestões» para uma pesquisa nova."}
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
@@ -23475,8 +23475,11 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       ignorados={radarIgnorados}
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
-      // Pesquisa automática desligada (não gastar uso do Claude). Para voltar a ter o botão,
-      // passar onPedirPesquisa quando houver um agente (ex.: Gemini) a tratar dos pedidos.
+      // O agente Gemini (Google Apps Script) vê os pedidos de hora a hora e grava as sugestões no radar.
+      onPedirPesquisa={() => {
+        onGuardar({ ...riscos, radarPedidoPesquisa: { em: new Date().toISOString() } });
+        notificar("Pedido feito. O agente pesquisa na próxima hora e as sugestões novas aparecem aqui.", "ok", 7000);
+      }}
       onAdicionar={(r) =>
         novo({
           tipo: "O",
