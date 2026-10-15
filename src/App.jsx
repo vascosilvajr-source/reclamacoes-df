@@ -23209,7 +23209,82 @@ function MatrizRiscos({ itens, filtro, onFiltro }) {
 // Radar de oportunidades: o que acontece lá fora (IA, tecnologia desportiva, normas,
 // financiamento, contexto escolar) e pode ser oportunidade para a Dragon Force.
 // A lista vem de pesquisa periódica (com fontes) e fica em reclamacoes:radar.
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa }) {
+// Fontes que o agente usa: as base (oficiais), as que aprendeu com o que aceitas/rejeitas e as que está a testar.
+const FONTE_ROTULO = { base: "Oficial", aprendida: "Aprendida", fixa: "Fixada por ti", experiencia: "Em teste", vista: "Vista", evitar: "A evitar", descartada: "Descartada", removida: "Removida por ti" };
+const FONTE_GRUPOS = [
+  { titulo: "Em uso", estados: ["fixa", "aprendida", "base"] },
+  { titulo: "Em teste", estados: ["experiencia"] },
+  { titulo: "Fora das pesquisas", estados: ["removida", "evitar", "descartada"] },
+];
+function FontesDoAgente({ fontes = {}, escolhas = {}, onDefinir }) {
+  const [novo, setNovo] = useState("");
+  const [verVistas, setVerVistas] = useState(false);
+  const lista = [
+    ...Object.entries(fontes).map(([d, f]) => ({ dominio: d, ...f })),
+    ...Object.keys(escolhas).filter((d) => !fontes[d]).map((d) => ({ dominio: d, categorias: [], estado: "vista" })),
+  ].map((f) => ({ ...f, efetivo: escolhas[f.dominio] || f.estado || "vista" }));
+  const ordem = (a, b) => (b.aceites || 0) - (a.aceites || 0) || a.dominio.localeCompare(b.dominio);
+  const adicionar = () => {
+    const d = novo.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) return;
+    onDefinir(d, "fixa");
+    setNovo("");
+  };
+  const linha = (f) => {
+    const contas = [f.aceites ? `${f.aceites} aceite${f.aceites === 1 ? "" : "s"}` : "", f.rejeitadas ? `${f.rejeitadas} rejeitada${f.rejeitadas === 1 ? "" : "s"}` : "", f.testes ? `testada ${f.testes}× · ${f.bons || 0} com sugestões` : ""].filter(Boolean).join(" · ");
+    return (
+      <div key={f.dominio} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "5px 0", borderBottom: `1px solid ${COLORS.rule}` }}>
+        <a href={`https://${f.dominio}`} target="_blank" rel="noreferrer" style={{ color: COLORS.navySoft, fontSize: 12.5, fontWeight: 600 }}>{f.dominio}</a>
+        <span style={{ fontSize: 10.5, fontWeight: 600, color: f.efetivo === "fixa" || f.efetivo === "aprendida" ? COLORS.ok : f.efetivo === "experiencia" ? COLORS.warn : COLORS.slate }}>{FONTE_ROTULO[f.efetivo] || f.efetivo}</span>
+        {(f.categorias || []).length > 0 && <span style={{ fontSize: 11, color: COLORS.slate }}>{f.categorias.join(", ")}</span>}
+        {contas && <span style={{ fontSize: 11, color: COLORS.slate }}>· {contas}</span>}
+        {f.porque && f.efetivo === "experiencia" && <span style={{ fontSize: 11, color: COLORS.ink2, flexBasis: "100%" }}>{f.porque}</span>}
+        <span style={{ flex: 1 }} />
+        {escolhas[f.dominio] ? (
+          <button onClick={() => onDefinir(f.dominio, null)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>Deixar o agente decidir</button>
+        ) : (
+          <>
+            {f.efetivo !== "base" && <button onClick={() => onDefinir(f.dominio, "fixa")} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>Fixar</button>}
+            <button onClick={() => onDefinir(f.dominio, "removida")} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>Remover</button>
+          </>
+        )}
+      </div>
+    );
+  };
+  const vistas = lista.filter((f) => f.efetivo === "vista").sort(ordem);
+  return (
+    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: COLORS.ink2, lineHeight: 1.5 }}>
+        O agente pesquisa nas fontes oficiais e aprende com o que fazes: um site cujas sugestões adicionas passa a ser usado; um site rejeitado duas vezes sai das pesquisas. Em cada pesquisa testa até 2 sites novos — se em 3 testes não der nada, é descartado. Fixar ou remover aqui manda mais que o agente.
+      </div>
+      {FONTE_GRUPOS.map((g) => {
+        const fs = lista.filter((f) => g.estados.includes(f.efetivo)).sort((a, b) => g.estados.indexOf(a.efetivo) - g.estados.indexOf(b.efetivo) || ordem(a, b));
+        if (!fs.length) return null;
+        return (
+          <div key={g.titulo}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: COLORS.slate, marginBottom: 2 }}>{g.titulo} · {fs.length}</div>
+            {fs.map(linha)}
+          </div>
+        );
+      })}
+      {vistas.length > 0 && (
+        <div>
+          <button onClick={() => setVerVistas((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+            {verVistas ? "Esconder" : "Ver"} {vistas.length} {vistas.length === 1 ? "site visto" : "sites vistos"} só uma vez
+          </button>
+          {verVistas && vistas.map(linha)}
+        </div>
+      )}
+      {!lista.length && <div style={{ fontSize: 12.5, color: COLORS.slate }}>A lista aparece depois da próxima pesquisa do agente.</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input value={novo} onChange={(e) => setNovo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && adicionar()} placeholder="Juntar um site (ex.: sportengland.org)" style={{ ...inputStyle, flex: "1 1 220px", padding: "6px 10px", fontSize: 13 }} />
+        <button onClick={adicionar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>Fixar site</button>
+      </div>
+    </div>
+  );
+}
+
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte }) {
   const itens = (radar && radar.itens) || [];
   // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
   const ultimaPesquisa = (radar && (radar.pesquisadoEm || (radar.atualizadoEm ? `${radar.atualizadoEm}T00:00:00` : ""))) || "";
@@ -23217,7 +23292,9 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
   const [fCat, setFCat] = useState("todas");
   const [verTodas, setVerTodas] = useState(false);
   const [aberto, setAberto] = useState(true);
+  const [verFontes, setVerFontes] = useState(false);
   if (!itens.length) return null;
+  const nFontes = Object.keys((radar && radar.fontes) || {}).length;
   const estado = (r) => (jaNaLista.has(r.id) ? "lista" : ignorados.includes(r.id) ? "ignorada" : "nova");
   const novas = itens.filter((r) => estado(r) === "nova");
   const cats = [...new Set(itens.map((r) => r.categoria).filter(Boolean))];
@@ -23262,7 +23339,17 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
             <label style={{ fontSize: 12, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
               <input type="checkbox" checked={verTodas} onChange={(e) => setVerTodas(e.target.checked)} /> Mostrar também as já tratadas
             </label>
+            {onDefinirFonte && (
+              <button onClick={() => setVerFontes((v) => !v)} aria-expanded={verFontes} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                {verFontes ? "Esconder fontes" : `Fontes do agente${nFontes ? ` (${nFontes})` : ""}`}
+              </button>
+            )}
           </div>
+          {verFontes && onDefinirFonte && (
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "10px 14px", marginBottom: 12, background: COLORS.paperSunken }}>
+              <FontesDoAgente fontes={(radar && radar.fontes) || {}} escolhas={fontesEscolhas} onDefinir={onDefinirFonte} />
+            </div>
+          )}
           {visiveis.length === 0 ? (
             <div style={{ fontSize: 12.5, color: COLORS.slate }}>
               Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}.{" "}
@@ -23475,6 +23562,13 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       ignorados={radarIgnorados}
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
+      fontesEscolhas={riscos.radarFontesUtilizador || {}}
+      onDefinirFonte={(dominio, estado) => {
+        const atual = { ...(riscos.radarFontesUtilizador || {}) };
+        if (estado) atual[dominio] = estado;
+        else delete atual[dominio];
+        onGuardar({ ...riscos, radarFontesUtilizador: atual });
+      }}
       // O agente Gemini (Google Apps Script) vê os pedidos de hora a hora e grava as sugestões no radar.
       onPedirPesquisa={() => {
         onGuardar({ ...riscos, radarPedidoPesquisa: { em: new Date().toISOString() } });
