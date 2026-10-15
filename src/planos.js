@@ -13,7 +13,7 @@ const norm = (s) =>
 
 export const DIAS_PLANO = ["2ª feira", "3ª feira", "4ª feira", "5ª feira", "6ª feira", "Sábado"];
 export const DIA_APP = { "2ª feira": "Segunda", "3ª feira": "Terça", "4ª feira": "Quarta", "5ª feira": "Quinta", "6ª feira": "Sexta", Sábado: "Sábado" };
-const TURMA = /^(RA[IÍ]Z|INICIA|INCIA|B[ÁA]SICO|INTERM|AVAN|EXPERT|SUB\s?\d|TURMAS|WALKING|FOOTBALL|YOUTH)/i;
+const TURMA = /^(RA[IÍ]Z|INICIA|INCIA|B[ÁA]SICO|INTERM|AVAN|EXPERT|SUB\s?\/?\s?\d|TURMAS|WALKING|FOOTBALL|YOUTH)/i;
 const SEC = /(TREINO OPTIMIZA|TREINO DE OPTIMIZA|TREINO DE OTIMIZA|GUARDA|CAPACIDADES|SELE[ÇC][ÕO]ES|EQUIPAS DE COMPETI|OUTRAS ATIVIDADES)/i;
 const HORA = /^(\d{1,2})[Hh:](\d{2})(\s*-\s*\d{1,2}[Hh:]\d{2})?$/;
 // Sessões extra (os mesmos alunos de outras turmas) ficam desligadas por omissão.
@@ -109,7 +109,9 @@ export function lerPlanoSemanal(L) {
     const sy = secs.filter((x) => x.y0 > e.y0 + 3).map((x) => x.y0);
     return Math.min(...ys, ...sy, e.y0 + 45);
   };
-  const grande = (h) => h.h >= 5.5;
+  // Horas grandes = cabeçalhos de bloco. O tamanho varia entre modelos: compara com a maior hora do plano.
+  const hMax = Math.max(0, ...horas.map((h) => h.h));
+  const grande = (h) => h.h >= Math.max(5.5, hMax * 0.8);
   const debaixo = (h) => !grande(h) && ents.some((x) => h.y0 - x.y0 >= 2 && h.y0 < proxima(x) && dia(x.x0) === dia(h.x0) && h.x0 < x.x0 + 5);
   const cabecalhos = horas.filter((h) => grande(h) || !debaixo(h));
   const pequenas = horas.filter((h) => !cabecalhos.includes(h));
