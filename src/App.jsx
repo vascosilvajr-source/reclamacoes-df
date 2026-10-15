@@ -7196,6 +7196,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const recintosUsados = [...new Set(espacos.map((s) => s.recinto).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
   const [hora, setHora] = useState("18:00");
+  const [outraHora, setOutraHora] = useState(false);
   const [treinadores, setTreinadores] = useState(1);
   const [escolhidas, setEscolhidas] = useState([]);
   const [erro, setErro] = useState("");
@@ -7223,6 +7224,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const doEscola = modoRecinto ? espacos.filter((s) => s.recinto === recintoSel) : espacos.filter((s) => s.escola === escola && (!fRecinto || (s.recinto || "") === fRecinto));
   // Linhas do mapa: as horas com treinos nesta escola.
   const horas = [...new Set(doEscola.map((s) => horaFmt(s.hora)))].sort();
+  // Lista curta: das 15:00 às 21:00 de 15 em 15 minutos, mais as horas que esta escola já usa (ex.: 18:50, sábados de manhã).
+  const horasLista = [...new Set([...HORAS_TREINO.filter((h) => h >= "15:00" && h <= "21:00"), ...horas, hora].filter(Boolean))].sort();
 
   // Turmas que treinam juntas: a soma dos alunos não pode passar a lotação mais baixa entre elas,
   // mais a tolerância que os treinadores do horário permitem.
@@ -7393,13 +7396,27 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Hora</label>
-            <select value={hora} onChange={(e) => setHora(e.target.value)} style={{ ...inputStyle, width: 100, fontVariantNumeric: "tabular-nums" }}>
-              {HORAS_TREINO.map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
+            {outraHora ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="time" step="300" value={hora} onChange={(e) => e.target.value && setHora(e.target.value)} autoFocus style={{ ...inputStyle, width: 110, fontVariantNumeric: "tabular-nums" }} />
+                <button onClick={() => setOutraHora(false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                  lista
+                </button>
+              </div>
+            ) : (
+              <select
+                value={hora}
+                onChange={(e) => (e.target.value === "__outra" ? setOutraHora(true) : setHora(e.target.value))}
+                style={{ ...inputStyle, width: 110, fontVariantNumeric: "tabular-nums" }}
+              >
+                {horasLista.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+                <option value="__outra">Outra hora…</option>
+              </select>
+            )}
           </div>
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Recinto (opcional)</label>
