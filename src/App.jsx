@@ -25352,6 +25352,9 @@ function AppPrincipal({ onSair }) {
 
         /* Entrada na app depois do login e saída ao terminar sessão. */
         .appEcra { transition: opacity 260ms ease, transform 260ms var(--ease); }
+        /* Textos escritos com parágrafos (notas, contexto, respostas) mostram as mudanças de linha. */
+        .appEcra { white-space: pre-line; }
+        .appEcra svg, .appEcra input, .appEcra select { white-space: normal; }
         html.aSair .appEcra { opacity: 0; transform: scale(0.985); }
 
         /* Troca de tema claro/escuro: as cores mudam em 320 ms em vez de saltarem. */
