@@ -7192,6 +7192,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const [importar, setImportar] = useState(false);
   const [verRecintos, setVerRecintos] = useState(false);
   const [recintoNovo, setRecintoNovo] = useState("");
+  const [editRec, setEditRec] = useState(null);
   const recintosUsados = [...new Set(espacos.map((s) => s.recinto).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const [dia, setDia] = useState(DIAS_SEMANA[0]);
   const [hora, setHora] = useState("18:00");
@@ -7546,7 +7547,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
                                   <span style={{ fontSize: 11, color: COLORS.slate }} title={b.plano ? `Do plano semanal ${b.plano.semana ? `(semana ${b.plano.semana})` : ""}: ${b.plano.nome}` : undefined}>
-                                    {[modoRecinto ? b.escola : null, !modoRecinto && recintosDaEscola.length > 1 && !fRecinto ? b.recinto : null, nomes.length > 1 ? "juntas" : null].filter(Boolean).join(" · ")}
+                                    {[modoRecinto ? b.escola : null, nomes.length > 1 ? "juntas" : null].filter(Boolean).join(" · ")}
                                     {b.origem === "plano" && <span style={{ marginLeft: 4, color: COLORS.navy }}>●</span>}
                                   </span>
                                   <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>
@@ -7554,6 +7555,52 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                   </button>
                                 </div>
                                 <div style={{ fontSize: 12.5, fontWeight: 600, margin: "2px 0" }}>{nomes.join(" + ")}</div>
+                                {!modoRecinto &&
+                                  (editRec === b.id ? (
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center", margin: "2px 0 4px" }}>
+                                      <input
+                                        autoFocus
+                                        defaultValue={b.recinto || ""}
+                                        list="recintos-blocos"
+                                        placeholder="Recinto"
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            const v = e.currentTarget.value.trim();
+                                            onUpdate(b.id, { recinto: v || undefined });
+                                            setEditRec(null);
+                                          }
+                                          if (e.key === "Escape") setEditRec(null);
+                                        }}
+                                        onBlur={(e) => {
+                                          const v = e.currentTarget.value.trim();
+                                          if (v !== (b.recinto || "")) onUpdate(b.id, { recinto: v || undefined });
+                                          setEditRec(null);
+                                        }}
+                                        style={{ ...inputStyle, padding: "2px 6px", fontSize: 11.5, width: 120 }}
+                                      />
+                                      {b.recinto && (
+                                        <button
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() => {
+                                            onUpdate(b.id, { recinto: undefined });
+                                            setEditRec(null);
+                                          }}
+                                          title="Tirar o recinto"
+                                          style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11, color: COLORS.danger }}
+                                        >
+                                          tirar
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : b.recinto ? (
+                                    <button onClick={() => setEditRec(b.id)} title="Mudar ou tirar o recinto" style={{ border: `1px solid ${COLORS.rule}`, background: COLORS.paperRaised, borderRadius: 999, padding: "0 7px", fontSize: 10.5, color: COLORS.ink2, cursor: "pointer", margin: "1px 0 4px", fontFamily: "inherit" }}>
+                                      {b.recinto}
+                                    </button>
+                                  ) : (
+                                    <button onClick={() => setEditRec(b.id)} title="Pôr recinto" style={{ ...linkBtnStyle, marginTop: 0, fontSize: 10.5, color: COLORS.slate, display: "block", marginBottom: 3 }}>
+                                      + recinto
+                                    </button>
+                                  ))}
                                 {g.limite ? (
                                   <>
                                     <div style={{ fontSize: 11, color: g.estado === "acima" ? COLORS.danger : g.estado === "tolerado" ? COLORS.warn : COLORS.slate, marginBottom: 3, fontWeight: g.estado === "ok" ? 400 : 600 }}>
@@ -7587,7 +7634,12 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
             </tbody>
           </table>
         </div>
-        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10 }}>Os alunos de cada turma vêm dos ficheiros de inscritos da época atual. Ajusta os treinadores de cada horário com − e +.</div>
+        <datalist id="recintos-blocos">
+          {recintosUsados.map((r) => (
+            <option key={r} value={r} />
+          ))}
+        </datalist>
+        <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 10 }}>Os alunos de cada turma vêm dos ficheiros de inscritos da época atual. Ajusta os treinadores de cada horário com − e +. Clica no recinto de um horário para o mudar ou tirar.</div>
       </div>
     </div>
   );
