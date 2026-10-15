@@ -6816,7 +6816,10 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
       if (!r.treinos.length) throw new Error("não encontrei turmas nem equipas no PDF");
       const guardadoTit = (norm0.titulos || {})[chavePlano(r.titulo)] || {};
       const esc = guardadoTit.escola || escolaDoTitulo(r.titulo, escolas) || "";
-      const rec = guardadoTit.recinto || String(r.titulo).replace(/^.*?-\s*/, "").replace(/^dragon force\s+/i, "").trim();
+      // Escolas com dois planos com o mesmo título (ex.: Dragon Force FC NB e UM): o recinto que aparece no nome do ficheiro.
+      const nomeF = ` ${norm(f.name).replace(/[^a-z0-9]+/g, " ")} `;
+      const recDoFicheiro = (guardadoTit.recintos || []).find((x) => x && nomeF.includes(` ${norm(x).replace(/[^a-z0-9]+/g, " ").trim()} `));
+      const rec = recDoFicheiro || guardadoTit.recinto || String(r.titulo).replace(/^.*?-\s*/, "").replace(/^dragon force\s+/i, "").trim();
       setPlano({ ...r, ficheiro: f.name });
       setEscola(esc);
       setRecinto(rec);
@@ -6889,8 +6892,11 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
   const porSecao = {};
   nomesUnicos.forEach((x) => (porSecao[x.exemplo.secao] = porSecao[x.exemplo.secao] || []).push(x));
 
-  // Horários que este plano substitui: os que vieram antes do mesmo plano (mesmo título).
-  const aSubstituir = plano ? espacos.filter((s) => s.origem === "plano" && s.plano && chavePlano(s.plano.titulo || "") === chavePlano(plano.titulo)) : [];
+  // Horários que este plano substitui: os que vieram antes do mesmo plano (mesmo título), da mesma escola e do mesmo recinto.
+  // Assim uma escola com dois planos (ex.: Dragon Force FC NB e UM) importa os dois sem um apagar o outro.
+  const doMesmoPlano = plano ? espacos.filter((s) => s.origem === "plano" && s.plano && chavePlano(s.plano.titulo || "") === chavePlano(plano.titulo) && (!escola || (s.plano.escola || s.escola) === escola)) : [];
+  const aSubstituir = doMesmoPlano.filter((s) => s.plano.recinto === undefined || chavePlano(s.plano.recinto) === chavePlano(recinto));
+  const outrosRecintos = [...new Set(doMesmoPlano.filter((s) => !aSubstituir.includes(s)).map((s) => s.plano.recinto || "sem recinto"))];
   const idsSub = new Set(substituir ? aSubstituir.map((s) => s.id) : []);
   // Treinos que já estão nos Espaços (vindos de outro plano, ex.: a mesma equipa no plano do Porto e no da Maia) não se repetem.
   const chaveBloco = (b) => `${b.escola}|${b.recinto || ""}|${b.dia}|${horaFmt(b.hora)}|${[...b.turmas].sort().join("+")}`;
@@ -6917,7 +6923,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
         turma: turmasDaLinha(l).join(" + "),
         ...(l.n.turmas.length ? {} : { semTurmaApp: true }),
         origem: "plano",
-        plano: { nome: l.nome, semana: plano.semana, ficheiro: plano.ficheiro, secao: l.secao, titulo: plano.titulo },
+        plano: { nome: l.nome, semana: plano.semana, ficheiro: plano.ficheiro, secao: l.secao, titulo: plano.titulo, escola, recinto },
       }))
       .filter((b) => {
         const k = chaveBloco(b);
@@ -6935,7 +6941,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
     Object.entries(nomes).forEach(([k, v]) => (nomesG[`${chavePlano(escola)}|${chavePlano(recinto)}|${k}`] = { escola: v.escola, turmas: v.turmas, ignorar: !v.incluir }));
     const locaisG = { ...(norm0.locais || {}) };
     Object.entries(locais).forEach(([l, r]) => r && (locaisG[chavePlano(l)] = r));
-    onGuardarNormalizacao({ ...norm0, nomes: nomesG, locais: locaisG, titulos: { ...(norm0.titulos || {}), [chavePlano(plano.titulo)]: { escola, recinto } } });
+    onGuardarNormalizacao({ ...norm0, nomes: nomesG, locais: locaisG, titulos: { ...(norm0.titulos || {}), [chavePlano(plano.titulo)]: { escola, recinto, recintos: [...new Set([...(((norm0.titulos || {})[chavePlano(plano.titulo)] || {}).recintos || []), recinto].filter(Boolean))] } } });
     onImportar(novos, substituir ? aSubstituir.map((s) => s.id) : []);
   };
 
@@ -6950,7 +6956,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
           <>
             <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: COLORS.ink2 }}>
               <input type="checkbox" checked={substituir} onChange={(e) => setSubstituir(e.target.checked)} />
-              Substituir os {aSubstituir.length} horários importados antes deste plano
+              Substituir os {aSubstituir.length} horários importados antes deste plano{recinto ? ` em ${recinto}` : ""}
             </label>
             <span style={{ flex: 1 }} />
             <span style={{ fontSize: 12, color: semTurmas.length ? COLORS.warn : COLORS.slate }}>{[semTurmas.length ? `${semTurmas.length} sem turma na app (entram com o nome do plano e ficam no aviso de turmas sem alunos)` : "", repetidos > 0 ? `${repetidos} já estão nos Espaços` : ""].filter(Boolean).join(" · ")}</span>
@@ -7009,6 +7015,11 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
               Semana {plano.semana || "?"} · {plano.ano} · {plano.treinos.length} linhas lidas
             </div>
           </div>
+          {outrosRecintos.length > 0 && (
+            <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginTop: -6 }}>
+              Esta escola já tem um plano com este título em <strong>{outrosRecintos.join(", ")}</strong>. Esses horários ficam: este plano só substitui os de <strong>{recinto || "sem recinto"}</strong>. Se for o mesmo recinto, escreve-o igual.
+            </div>
+          )}
 
           {Object.keys(locais).length > 0 && (
             <div style={{ ...panelStyle, marginBottom: 0, padding: 12 }}>
