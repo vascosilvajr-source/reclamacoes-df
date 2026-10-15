@@ -6896,19 +6896,26 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
   const chaveBloco = (b) => `${b.escola}|${b.recinto || ""}|${b.dia}|${horaFmt(b.hora)}|${[...b.turmas].sort().join("+")}`;
   const jaExistem = new Set(espacos.filter((s) => !idsSub.has(s.id)).map((s) => chaveBloco({ ...s, turmas: turmasDoBloco(s) })));
 
+  // Sem turma correspondente na app: entra com o nome do plano (fica no aviso de turmas sem alunos).
+  const turmasDaLinha = (l) => {
+    if (l.n.turmas.length) return l.n.turmas;
+    const us = unidadesDoNome(l.nome).map((u) => u.nome);
+    return us.length ? us : [String(l.nome).replace(/\(\s*\d{1,2}[hH:]\d{2}\s*\)/g, "").replace(/\s+/g, " ").trim()];
+  };
   const construir = () => {
     const vistos = new Set(jaExistem);
     return incluidas
-      .filter((l) => l.n.turmas.length && horaDe(l, l.i))
+      .filter((l) => horaDe(l, l.i) && (l.n.escola || escola))
       .map((l, j) => ({
         id: `p_${Date.now().toString(36)}_${j}`,
-        escola: l.n.escola,
+        escola: l.n.escola || escola,
         recinto: recintoDe(l),
         dia: DIA_APP[l.dia],
         hora: horaDe(l, l.i),
         treinadores: Math.max(1, l.treinadores || 1),
-        turmas: l.n.turmas,
-        turma: l.n.turmas.join(" + "),
+        turmas: turmasDaLinha(l),
+        turma: turmasDaLinha(l).join(" + "),
+        ...(l.n.turmas.length ? {} : { semTurmaApp: true }),
         origem: "plano",
         plano: { nome: l.nome, semana: plano.semana, ficheiro: plano.ficheiro, secao: l.secao, titulo: plano.titulo },
       }))
@@ -6920,7 +6927,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
       });
   };
   const previstos = plano ? construir() : [];
-  const repetidos = incluidas.filter((l) => l.n.turmas.length && horaDe(l, l.i)).length - previstos.length;
+  const repetidos = incluidas.filter((l) => horaDe(l, l.i) && (l.n.escola || escola)).length - previstos.length;
   const importar = () => {
     const novos = construir();
     // Guarda as correções para o próximo plano desta escola.
@@ -6946,7 +6953,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
               Substituir os {aSubstituir.length} horários importados antes deste plano
             </label>
             <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 12, color: semTurmas.length ? COLORS.warn : COLORS.slate }}>{[semTurmas.length ? `${semTurmas.length} sem turma da app (ficam de fora)` : "", repetidos > 0 ? `${repetidos} já estão nos Espaços` : ""].filter(Boolean).join(" · ")}</span>
+            <span style={{ fontSize: 12, color: semTurmas.length ? COLORS.warn : COLORS.slate }}>{[semTurmas.length ? `${semTurmas.length} sem turma na app (entram com o nome do plano e ficam no aviso de turmas sem alunos)` : "", repetidos > 0 ? `${repetidos} já estão nos Espaços` : ""].filter(Boolean).join(" · ")}</span>
             <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
               Cancelar
             </button>
@@ -7298,7 +7305,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         turmasDoBloco(s).forEach((t) => {
           if (pt[t] && pt[t].total > 0) return;
           const k = `${s.escola}|${t}`;
-          const x = (out[k] = out[k] || { k, escola: s.escola, turma: t, horarios: [] });
+          const x = (out[k] = out[k] || { k, escola: s.escola, turma: t, horarios: [], naoExiste: !pt[t] });
           x.horarios.push(`${String(s.dia).slice(0, 3)} ${horaFmt(s.hora)}${s.recinto ? ` (${s.recinto})` : ""}`);
         });
       });
@@ -7598,6 +7605,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
               .map((x) => (
                 <div key={x.k} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "6px 10px", opacity: x.visto ? 0.65 : 1, flexWrap: "wrap" }}>
                   <strong style={{ minWidth: 110 }}>{x.turma}</strong>
+                  <span style={{ fontSize: 11, color: COLORS.slate }}>{x.naoExiste ? "não existe na app" : "0 alunos"}</span>
                   {(semAlunosTodas || modoRecinto) && <span style={{ color: COLORS.ink2 }}>{x.escola}</span>}
                   <span style={{ color: COLORS.slate, flex: 1, minWidth: 160 }}>{x.horarios.join(" · ")}</span>
                   {x.visto ? (
@@ -23258,7 +23266,7 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
           {visiveis.length === 0 ? (
             <div style={{ fontSize: 12.5, color: COLORS.slate }}>
               Sem sugestões novas{fCat !== "todas" ? " nesta categoria" : ""}.{" "}
-              {aPesquisar ? "A pesquisa pedida está a correr; as novas aparecem aqui dentro de umas horas." : "Carrega em «Procurar mais sugestões» para uma pesquisa nova, ou espera pela de segunda-feira."}
+              {!onPedirPesquisa ? "" : aPesquisar ? "A pesquisa pedida está a correr; as novas aparecem aqui dentro de umas horas." : "Carrega em «Procurar mais sugestões» para uma pesquisa nova."}
             </div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
@@ -23467,10 +23475,8 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       ignorados={radarIgnorados}
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
-      onPedirPesquisa={() => {
-        onGuardar({ ...riscos, radarPedidoPesquisa: { em: new Date().toISOString() } });
-        notificar("Pedido feito. A pesquisa corre nas próximas 2 horas (dias úteis, 9h–19h) e as sugestões novas aparecem aqui.", "ok", 7000);
-      }}
+      // Pesquisa automática desligada (não gastar uso do Claude). Para voltar a ter o botão,
+      // passar onPedirPesquisa quando houver um agente (ex.: Gemini) a tratar dos pedidos.
       onAdicionar={(r) =>
         novo({
           tipo: "O",
