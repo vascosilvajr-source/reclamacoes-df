@@ -4,8 +4,9 @@ import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao
 import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, epocaAtualForm, mesesDaEpoca, FORMATOS_FORM, ESTADOS_FORM, MESES_CURTOS, MESES_LONGOS } from "./formacao";
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
+import { tirarFoto } from "./foto";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw } from "lucide-react";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -7371,8 +7372,9 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     .map((r) => `${r.treinadores}+ treinadores: até +${r.tolerancia}`)
     .join(" · ");
 
+  const fotoRef = useRef(null);
   return (
-    <div>
+    <div ref={fotoRef}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <select
           value={escolaSel}
@@ -7414,7 +7416,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           </select>
         )}
         <span style={{ fontSize: 12.5, color: COLORS.slate, marginRight: "auto" }}>{textoRegras || "Sem tolerância por treinadores"}</span>
-        <button onClick={() => setVerRegras((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
+        <BotaoFoto alvo={fotoRef} titulo={`Espaços · ${modoRecinto ? escolaSel.slice(4) : escolaSel}${fRecinto ? ` · ${fRecinto}` : ""}`} subtitulo="Mapa semanal de ocupação" nome={`Espacos ${modoRecinto ? escolaSel.slice(4) : escolaSel} ${isoDe(new Date())}`} />
+        <button className="semFoto" onClick={() => setVerRegras((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
           Regras dos treinadores
         </button>
         {recintosUsados.length > 0 && (
@@ -10997,6 +11000,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const regAnt = (registoAlunos || {})[epAnt];
   const [importar, setImportar] = useState(null);
   const [aba, setAba] = useState("escolas");
+  const fotoRef = useRef(null);
   const [escolaSel, setEscolaSel] = useState("");
   const [escolaAberta, setEscolaAberta] = useState(null);
   const [ordem, setOrdem] = useState("inscritos");
@@ -11114,7 +11118,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const variacaoHomologa = homologo && homologo.ativos ? Math.round(((atualSem.ativos - homologo.ativos) / homologo.ativos) * 1000) / 10 : null;
 
   return (
-    <div>
+    <div ref={fotoRef}>
       {/* ---- cabeçalho ---- */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -11137,7 +11141,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           )}
           <span style={{ fontSize: 12, color: COLORS.slate }}>{ultima ? `Atualizado a ${fmt(new Date(ultima.data + "T00:00:00"))}` : ""}</span>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="semFoto" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {reg && <BotaoFoto alvo={fotoRef} titulo={`Balanço de inscritos · ${escolaSel || "Todas as escolas"}`} subtitulo={`Época ${epoca}`} nome={`Balanço inscritos ${escolaSel || "geral"} ${isoDe(new Date())}`} />}
           {gestaoDados && (
             <>
               <button className="press" onClick={() => setGerir("nomes")} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -22377,6 +22382,30 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
   );
 }
 
+// Botão "Foto": imagem do balanço que está à vista (o elemento de alvo), com cabeçalho e data.
+function BotaoFoto({ alvo, titulo, subtitulo, nome }) {
+  const [aTirar, setATirar] = useState(false);
+  return (
+    <button
+      type="button"
+      className="press semFoto"
+      disabled={aTirar}
+      title="Descarregar uma imagem deste balanço"
+      onClick={async () => {
+        setATirar(true);
+        try {
+          await tirarFoto(alvo.current, { titulo, subtitulo, nome: nome || titulo, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+        } finally {
+          setATirar(false);
+        }
+      }}
+      style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
+    >
+      <Camera size={14} /> {aTirar ? "A preparar…" : "Foto do balanço"}
+    </button>
+  );
+}
+
 // ======================= MAPA DE OBJETIVOS =======================
 const ESTADO_OBJ = {
   ok: { rotulo: "Atingido", cor: () => COLORS.ok, bg: () => COLORS.okBg },
@@ -22644,6 +22673,7 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
   const [importado, setImportado] = useState(null);
   const [aLer, setALer] = useState(false);
   const [aGerar, setAGerar] = useState(false);
+  const fotoRef = useRef(null);
   const [texto, setTexto] = useState("");
   const [fEstado, setFEstado] = useState("todos");
   const [fResp, setFResp] = useState("");
@@ -22796,7 +22826,8 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
   const anos = dadosEp.anos || [Number(epSel.slice(0, 4)), Number(epSel.slice(0, 4)) + 1];
 
   const botoes = (
-    <>
+    <span className="semFoto" style={{ display: "contents" }}>
+      {(((objetivos && objetivos.epocas) || {})[epSel]?.itens || []).length > 0 && <BotaoFoto alvo={fotoRef} titulo={`Mapa de objetivos · Época ${epSel}`} subtitulo="Balanço face às metas" nome={`Objetivos ${String(epSel).replace("/", "-")} ${isoDe(new Date())}`} />}
       <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
         <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
         <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
@@ -22806,11 +22837,11 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
           <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
         </button>
       )}
-    </>
+    </span>
   );
 
   return (
-    <div>
+    <div ref={fotoRef}>
       {importado && (
         <JanelaSGQ
           titulo="Importar o mapa de objetivos"
@@ -22883,10 +22914,10 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
             </select>
             <span style={{ flex: 1 }} />
             {botoes}
-            {((((objetivos && objetivos.epocas) || {})[epocasO[0]] || {}).itens || []).length > 0 && <button onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Cria a época seguinte, vazia">
+            {((((objetivos && objetivos.epocas) || {})[epocasO[0]] || {}).itens || []).length > 0 && <button className="semFoto" onClick={novaEpoca} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }} title="Cria a época seguinte, vazia">
               {((objetivos && objetivos.epocas) || {})[epocaSeguinteObj(epocasO[0])] ? "Ir para a época seguinte" : `Criar ${epocaSeguinteObj(epocasO[0])}`}
             </button>}
-            <button className="press" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <button className="press semFoto" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Plus size={14} /> Novo indicador
             </button>
           </div>
@@ -22913,7 +22944,7 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
           </div>
 
           {sugestoes.length > 0 && (
-            <div style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.navy, background: COLORS.navyWash, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div className="semFoto" style={{ ...panelStyle, marginBottom: 14, borderColor: COLORS.navy, background: COLORS.navyWash, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <Sparkles size={16} color={COLORS.navy} />
               <div style={{ flex: "1 1 300px", fontSize: 13 }}>
                 <strong>{sugestoes.length === 1 ? "1 indicador pode" : `${sugestoes.length} indicadores podem`} ser preenchidos com os dados da app</strong>
@@ -25959,6 +25990,7 @@ function AppPrincipal({ onSair }) {
         .appEcra { transition: opacity 260ms ease, transform 260ms var(--ease); }
         /* Textos escritos com parágrafos (notas, contexto, respostas) mostram as mudanças de linha. */
         .appEcra { white-space: pre-line; }
+        .modoFoto [style*="overflow"] { overflow: visible !important; max-height: none !important; }
         .appEcra svg, .appEcra input, .appEcra select { white-space: normal; }
         html.aSair .appEcra { opacity: 0; transform: scale(0.985); }
 
