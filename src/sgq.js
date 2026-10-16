@@ -418,7 +418,7 @@ export function metaNumerica(item, itens) {
   return numOuNull(item.meta);
 }
 
-// Estado face à meta: "ok", "risco" (ainda não atingiu, a época decorre), "falha", ou null.
+// Estado face à meta: "ok", "quase" (perto da meta), "risco" (ainda não atingiu, a época decorre), "falha", ou null.
 export function estadoMeta(item, total, x, itens, fimEpoca) {
   if (total === null || total === undefined) return null;
   const desist = /desist/i.test(item.indicador || "");
@@ -430,8 +430,13 @@ export function estadoMeta(item, total, x, itens, fimEpoca) {
   else if (meta.pct && !/%/.test(item.totalFmt || "") && x !== null && x !== undefined && /%/.test(item.xFmt || "")) valor = x;
   const cumpre = { "<": valor < meta.v, "<=": valor <= meta.v, ">": valor > meta.v, ">=": valor >= meta.v }[meta.op];
   if (cumpre) return "ok";
+  // Perto da meta: em percentagens até 3 pontos de distância; nos outros valores até 10%.
+  const alto = meta.op === ">=" || meta.op === ">";
+  const falta = alto ? meta.v - valor : valor - meta.v;
+  const perto = isFinite(falta) && meta.v !== 0 && (meta.pct || /%/.test(item.totalFmt || "") ? falta <= 0.03 : falta <= Math.abs(meta.v) * 0.1);
+  if (perto) return "quase";
   // Metas "ao alto" ainda podem ser atingidas enquanto a época decorre.
-  if ((meta.op === ">=" || meta.op === ">") && !fimEpoca) return "risco";
+  if (alto && !fimEpoca) return "risco";
   return "falha";
 }
 

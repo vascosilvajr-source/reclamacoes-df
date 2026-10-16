@@ -50,8 +50,8 @@ const TEMA_CLARO = {
   okBg: "#E6F4EE",
   warn: "#9A6A00",
   warnBg: "#FBF2DE",
-  danger: "#C0303F",
-  dangerBg: "#FCEAEC",
+  danger: "#C2570C",
+  dangerBg: "#FDEEE3",
   done: "#8A93A5",
   doneBg: "#F0F1F4",
   progress: "#0A52C7",
@@ -82,8 +82,8 @@ const TEMA_ESCURO = {
   okBg: "#10281F",
   warn: "#E0A63A",
   warnBg: "#2A2113",
-  danger: "#F2697C",
-  dangerBg: "#2E1720",
+  danger: "#F08A4B",
+  dangerBg: "#2E1F15",
   done: "#6F7C8E",
   doneBg: "#1B232D",
   progress: "#528CFF",
@@ -479,6 +479,8 @@ function escalaoDaTurma(t, niveis) {
   const n = (niveis || DEFAULT_NIVEIS).find((x) => String(t).toLowerCase().startsWith(x.toLowerCase()));
   return n || "Competição (outras)";
 }
+// Só os níveis das turmas (Raíz … Expert): um "Sub-…" na lista de níveis não é um nível.
+const niveisTurmas = (niveis) => (niveis || DEFAULT_NIVEIS).filter((n) => !/^sub/i.test(String(n)));
 function ehEscolinha(t, niveis) {
   return (niveis || DEFAULT_NIVEIS).includes(escalaoDaTurma(t, niveis));
 }
@@ -514,7 +516,7 @@ const TAG_PALETTE = [
   { color: COLORS.navySoft, bg: COLORS.rule },
 ];
 // Cores bem distintas para séries empilhadas (até 10 sem repetir).
-const SERIES_DISTINTAS = ["#2F5FD0", "#D94F4F", "#E0A030", "#7A5AC8", "#2E9E6A", "#14A3B8", "#E26FA8", "#8A6D3B", "#6B7A8C", "#9DB83A"];
+const SERIES_DISTINTAS = ["#2F5FD0", "#C2570C", "#E0A030", "#7A5AC8", "#2E9E6A", "#14A3B8", "#E26FA8", "#8A6D3B", "#6B7A8C", "#9DB83A"];
 function colorForLabel(label) {
   if (!label) return { color: COLORS.slate, bg: COLORS.doneBg };
   let hash = 0;
@@ -10254,6 +10256,7 @@ const COLUNAS_FICHA_ALUNOS = {
   saida: ["data de desistencia", "data desistencia", "data da desistencia", "data de saida", "data saida"],
   semana: ["semana", "semana da epoca", "n semana"],
   mes: ["mes", "mês", "mes - inscricao", "mes inscricao", "mes de inscricao", "mes - entrada", "mes de entrada"],
+  estado: ["estado da experiencia", "estado experiencia", "situacao da experiencia", "situacao", "estado", "status"],
   mesSaida: ["mes desistencia", "mes de desistencia", "mes da desistencia", "mes - desistencia", "mes saida", "mes de saida", "mes - saida"],
 };
 
@@ -10319,6 +10322,7 @@ function lerFichaAlunos(linhas) {
       motivo: v(l, "motivo"),
       saida: mapa.saida !== undefined ? dataDeCelula(v(l, "saida")) || null : null,
       semana: Number(v(l, "semana")) || null,
+      estado: v(l, "estado"),
       mes: mesDeCelula(v(l, "mes")).mes,
       mesAno: mesDeCelula(v(l, "mes")).ano,
       mesSaida: mesDeCelula(v(l, "mesSaida")).mes,
@@ -10548,16 +10552,19 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     // mais antigas que não passaram para a época contam como não convertidas. Em épocas
     // passadas não há pendentes.
     const ultimaSemana = Math.max(0, ...[...aF, ...eF].filter((r) => r.data).map((r) => semanaDaEpoca(r.data, s1)), ...dF.filter((r) => saidaDe(r) && saidaDe(r) <= fimEpoca).map((r) => semanaDaEpoca(saidaDe(r), s1)));
-    const limitePendente = emCurso ? (ultimaSemana || semHoje) - 2 : Infinity;
+    // Uma data no ficheiro depois de hoje (erro ou inscrição futura) não pode empurrar as experiências recentes para "não converteu".
+    const limitePendente = emCurso ? Math.min(ultimaSemana || semHoje, semHoje) - 2 : Infinity;
+    // Estado escrito no ficheiro: "em curso", "a decorrer", "pendente"… fica por decidir, seja de que semana for.
+    const emCursoNoFicheiro = (r) => /curso|decorrer|pendente|aguard|por decidir|a fazer/.test(normChave(r.estado || ""));
     const experiencias = { ...anterior.experiencias };
     eF.forEach((r) => {
-      experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || (emCurso ? hoje : null), semana: r.data || emCurso ? semanaDaEpoca(r.data || hoje, s1) : null };
+      experiencias[r.id] = { id: r.id, escola: escolaDe(r.escola), ano: r.ano, genero: r.genero, data: r.data || (emCurso ? hoje : null), semana: r.data || emCurso ? semanaDaEpoca(r.data || hoje, s1) : null, ...(emCurso && emCursoNoFicheiro(r) ? { emCurso: true } : {}) };
     });
     Object.values(alunos).forEach((a) => {
       if (a.rubrica === "extra" && !experiencias[a.id]) experiencias[a.id] = { id: a.id, escola: a.escola, ano: a.ano, genero: a.genero, data: a.entrada, semana: a.semEntrada, origem: "extrainscricao" };
     });
     Object.values(experiencias).forEach((x) => {
-      x.resultado = alunos[x.id] ? "sucesso" : (x.semana || 0) >= limitePendente ? "pendente" : "insucesso";
+      x.resultado = alunos[x.id] ? "sucesso" : x.emCurso || (x.semana || 0) >= limitePendente ? "pendente" : "insucesso";
     });
     const convertidas = Object.values(experiencias).filter((x) => x.resultado === "sucesso").length;
     const novos = aF.filter((r) => !anterior.alunos[r.id]).length;
@@ -12188,10 +12195,21 @@ function indicadoresDaEpoca(ep, registoAlunos, niveis, capacidades, escola) {
     });
     ret = { base: base.length, voltaram, mudaram, taxa: pctDe(voltaram, base.length), porEscalao, porEscola };
     // Os que estavam no último escalão de turmas e podiam passar para competição.
-    const ultimo = (niveis || DEFAULT_NIVEIS).slice(-1)[0];
+    const ultimo = niveisTurmas(niveis).slice(-1)[0];
     const doUltimo = base.filter((a) => escalaoDaTurma(a.turma, niveis) === ultimo);
     const passaram = doUltimo.filter((a) => todosAgora[a.id] && tipo(todosAgora[a.id].turma) === "competicao").length;
-    trans = { t, perdaEscalao, ultimo, doUltimo: doUltimo.length, passaram, perdidos: doUltimo.filter((a) => !todosAgora[a.id]).length };
+    // Todos os que estavam em turmas (qualquer nível) e agora estão numa equipa de competição.
+    const deTurmas = t.turma.turma + t.turma.competicao + t.turma.saiu;
+    const porNivel = {};
+    base
+      .filter((a) => tipo(a.turma) === "turma")
+      .forEach((a) => {
+        const k = escalaoDaTurma(a.turma, niveis);
+        const x = (porNivel[k] = porNivel[k] || { base: 0, passaram: 0 });
+        x.base++;
+        if (todosAgora[a.id] && tipo(todosAgora[a.id].turma) === "competicao") x.passaram++;
+      });
+    trans = { t, perdaEscalao, ultimo, doUltimo: doUltimo.length, passaram, perdidos: doUltimo.filter((a) => !todosAgora[a.id]).length, deTurmas, paraCompeticao: t.turma.competicao, porNivel };
   }
 
   // 2. Momento da desistência.
@@ -12220,7 +12238,7 @@ function indicadoresDaEpoca(ep, registoAlunos, niveis, capacidades, escola) {
 
   // 4. Ocupação face à capacidade (turmas com alunos ativos).
   const porTurma = {};
-  ativos.forEach((a) => {
+  ativos.filter((a) => tipo(a.turma) === "turma").forEach((a) => {
     const kk = `${a.escola}|${a.turma}`;
     const x = (porTurma[kk] = porTurma[kk] || { escola: a.escola, turma: a.turma, n: 0, cap: (capacidades || {})[kk] || capacidadeSugerida(a.turma, niveis) || 0 });
     x.n++;
@@ -12398,8 +12416,8 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
     { k: "ocup", titulo: "Ocupação", v: (x) => nOuNull(pctDe(x.ocupados, x.lugares)), un: "%", melhor: "alto", sub: (x) => `${fmtNum(Math.max(0, x.lugares - x.ocupados))} lugares livres` },
     { k: "exp", titulo: "Conversão das experiências", v: (x) => nOuNull(pctDe(x.conv, x.exps)), un: "%", melhor: "alto", sub: (x) => (x.mediana !== null ? `mediana de ${x.mediana} dias até à inscrição` : `${fmtNum(x.exps)} experiências`) },
     { k: "fem", titulo: "Feminino", v: (x) => nOuNull(x.fem), un: "%", melhor: "alto", sub: () => "dos alunos ativos com género" },
-    { k: "trans", titulo: "Passam para competição", v: (x) => nOuNull(x.trans && x.trans.doUltimo ? pctDe(x.trans.passaram, x.trans.doUltimo) : null), un: "%", melhor: "alto", sub: (x) => (x.trans && x.trans.doUltimo ? `do último nível (${x.trans.ultimo}) · ${fmtNum(x.trans.perdidos)} perderam-se` : "sem a época anterior importada") },
-    { k: "conc", titulo: "Turmas abaixo de 50%", v: (x) => x.baixas.length, un: "", melhor: "baixo", sub: () => "há 4 ou mais semanas seguidas" },
+    { k: "trans", titulo: "Passam para competição", v: (x) => nOuNull(x.trans ? x.trans.paraCompeticao : null), un: "", melhor: "alto", sub: (x) => (x.trans ? `alunos das turmas de ${epAntDe(x.ep)} agora em equipas de competição · ${P(pctDe(x.trans.paraCompeticao, x.trans.deTurmas), 1)} das turmas` : "sem a época anterior importada") },
+    { k: "conc", titulo: "Turmas abaixo de 50%", v: (x) => x.baixas.length, un: "", melhor: "baixo", sub: () => "só turmas (sem equipas de competição) · há 4 ou mais semanas seguidas" },
   ];
   const fmtC = (c, v) => (v === null || v === undefined ? "—" : c.un === "%" ? `${fmtNum(v, 0)}%` : fmtNum(v));
   const cartoes = (
@@ -12487,7 +12505,7 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
               cedo: { label: "Saem nas 4 primeiras semanas", melhor: "baixo", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].semanas.ate4, porEscola[e].desist)), fmt: (v) => P(v, 0) },
               exp: { label: "Conversão das experiências", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e] && pctDe(porEscola[e].conv, porEscola[e].exps)), fmt: (v) => P(v, 0) },
               fem: { label: "Feminino", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.fem), fmt: (v) => P(v, 0) },
-              trans: { label: "Passam para competição", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.trans?.doUltimo ? pctDe(porEscola[e].trans.passaram, porEscola[e].trans.doUltimo) : null), fmt: (v) => P(v, 0) },
+              trans: { label: "Passam para competição (% das turmas)", melhor: "alto", pct: true, v: (e) => nOuNull(porEscola[e]?.trans?.deTurmas ? pctDe(porEscola[e].trans.paraCompeticao, porEscola[e].trans.deTurmas) : null), fmt: (v) => P(v, 1) },
             }}
           />
         </Bloco>
@@ -12548,7 +12566,7 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
         ])}
       </Bloco>
 
-      <Bloco k="ocup" titulo="4. Ocupação face à capacidade" nota="Alunos ativos face aos lugares das turmas com alunos (capacidade de cada turma no Painel, ou a sugerida pelo nível). Nas épocas passadas usa a capacidade atual.">
+      <Bloco k="ocup" titulo="4. Ocupação face à capacidade" nota="Só turmas (as equipas de competição ficam de fora). Alunos ativos face aos lugares das turmas com alunos (capacidade de cada turma no Painel, ou a sugerida pelo nível). Nas épocas passadas usa a capacidade atual.">
         {tabela("Lugares", [
           linha("Ocupação", (x) => `${P(pctDe(x.ocupados, x.lugares), 0)} · ${N(x.ocupados)} de ${N(x.lugares)}`),
           linha("Lugares livres", (x) => N(Math.max(0, x.lugares - x.ocupados))),
@@ -12615,12 +12633,19 @@ function IndicadoresInscritos({ registoAlunos, niveis, capacidades, epocas, sel,
           linha("Competição → competição", (x) => (x.trans ? N(x.trans.t.competicao.competicao) : "—")),
           linha("Competição → turma", (x) => (x.trans ? N(x.trans.t.competicao.turma) : "—")),
           linha("Competição → não voltou", (x) => (x.trans ? `${N(x.trans.t.competicao.saiu)} · ${P(pctDe(x.trans.t.competicao.saiu, x.trans.t.competicao.turma + x.trans.t.competicao.competicao + x.trans.t.competicao.saiu), 0)}` : "—")),
+          linha("Turmas → competição (% dos alunos de turmas)", (x) => (x.trans ? `${N(x.trans.paraCompeticao)} · ${P(pctDe(x.trans.paraCompeticao, x.trans.deTurmas), 1)}` : "—")),
+          ...niveisTurmas(niveis).map((nv) =>
+            linha(`${nv} → competição`, (x) => {
+              const z = x.trans && x.trans.porNivel[nv];
+              return z && z.base ? `${N(z.passaram)} de ${N(z.base)} · ${P(pctDe(z.passaram, z.base), 0)}` : "—";
+            }, `tn-${nv}`)
+          ),
           linha("Último nível de turmas: passaram para competição", (x) => (x.trans && x.trans.doUltimo ? `${x.trans.passaram} de ${x.trans.doUltimo} (${x.trans.ultimo})` : "—")),
           linha("Último nível de turmas: perderam-se", (x) => (x.trans && x.trans.doUltimo ? `${x.trans.perdidos} · ${P(pctDe(x.trans.perdidos, x.trans.doUltimo), 0)}` : "—")),
         ])}
       </Bloco>
 
-      <Bloco k="conc" titulo="8. Concentração e turmas com pouca gente" nota="Peso das 3 maiores turmas de cada escola, e turmas abaixo de 50% da capacidade há 4 ou mais semanas seguidas (nas últimas 8 semanas; numa época passada, as últimas 8 da época).">
+      <Bloco k="conc" titulo="8. Concentração e turmas com pouca gente" nota="Só turmas (as equipas de competição ficam de fora). Peso das 3 maiores turmas de cada escola, e turmas abaixo de 50% da capacidade há 4 ou mais semanas seguidas (nas últimas 8 semanas; numa época passada, as últimas 8 da época).">
         {tabela("Peso das 3 maiores turmas", [
           ...[...new Set(cols.flatMap((ep) => (I[ep] ? I[ep].concentracao.map((c) => c.escola) : [])))]
             .sort((a, b) => a.localeCompare(b, "pt"))
@@ -16111,10 +16136,26 @@ const PERIODOS_FIXOS = [
   ["tudo", "Todo o histórico"],
 ];
 
+// Período à escolha: "intervalo:aaaa-mm-dd:aaaa-mm-dd" (ex.: um trimestre).
+const intervaloDe = (periodo) => {
+  const [, ini, fim] = String(periodo).split(":");
+  return { ini, fim };
+};
+const umAnoAntesISO = (iso) => {
+  const x = new Date(String(iso).slice(0, 10) + "T00:00:00");
+  x.setFullYear(x.getFullYear() - 1);
+  return isoDe(x);
+};
+const dataCurtaISO = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+
 function dentroPeriodo(periodo, data) {
   if (!data) return false;
   const d = String(data).slice(0, 10);
   if (periodo === "tudo") return true;
+  if (periodo.startsWith("intervalo:")) {
+    const { ini, fim } = intervaloDe(periodo);
+    return d >= ini && d <= fim;
+  }
   if (periodo.startsWith("epoca:")) return epocaDe(d) === periodo.slice(6);
   if (periodo.startsWith("dias:")) {
     const lim = new Date();
@@ -16139,6 +16180,10 @@ function noPeriodoHomologo(periodo, data) {
     // Época em curso: só até à mesma data do ano passado.
     return epocaDe(isoDe(new Date())) === periodo.slice(6) ? umAnoDepois(d) <= new Date() : true;
   }
+  if (periodo.startsWith("intervalo:")) {
+    const { ini, fim } = intervaloDe(periodo);
+    return d >= umAnoAntesISO(ini) && d <= umAnoAntesISO(fim);
+  }
   if (periodo.startsWith("dias:")) {
     const fim = new Date();
     fim.setFullYear(fim.getFullYear() - 1);
@@ -16156,11 +16201,19 @@ function nomeHomologo(periodo) {
     return `${ano - 1}/${String(ano).slice(2)}`;
   }
   if (periodo.startsWith("dias:")) return "há um ano";
+  if (periodo.startsWith("intervalo:")) {
+    const { ini, fim } = intervaloDe(periodo);
+    return `${dataCurtaISO(umAnoAntesISO(ini))} a ${dataCurtaISO(umAnoAntesISO(fim))}`;
+  }
   return null;
 }
 
 function nomePeriodo(periodo) {
   if (periodo.startsWith("epoca:")) return `Época ${periodo.slice(6)}`;
+  if (periodo.startsWith("intervalo:")) {
+    const { ini, fim } = intervaloDe(periodo);
+    return `${dataCurtaISO(ini)} a ${dataCurtaISO(fim)}`;
+  }
   const f = PERIODOS_FIXOS.find(([k]) => k === periodo);
   return f ? f[1] : periodo;
 }
@@ -16176,7 +16229,43 @@ const fmtNum = (v, dec = 0) => {
 const ordinal = (n) => `${n}.º`;
 
 // Época a que um período se refere: a escolhida, ou a atual para "últimos dias" e "tudo".
-const epocaDoPeriodo = (periodo) => (periodo.startsWith("epoca:") ? periodo.slice(6) : epocaDe(isoDe(new Date())));
+const epocaDoPeriodo = (periodo) => (periodo.startsWith("epoca:") ? periodo.slice(6) : epocaDe(dataRefPeriodo(periodo)));
+// Data a que se contam os alunos do período: o fim da época (passada), o fim do intervalo, ou hoje.
+function dataRefPeriodo(periodo) {
+  const hoje = isoDe(new Date());
+  if (periodo.startsWith("epoca:")) {
+    const fim = fimEpocaISO(periodo.slice(6));
+    return fim < hoje ? fim : hoje;
+  }
+  if (periodo.startsWith("intervalo:")) {
+    const { fim } = intervaloDe(periodo);
+    return fim && fim < hoje ? fim : hoje;
+  }
+  return hoje;
+}
+
+// Alunos no fim do período e no mesmo dia da época passada (mesmo período).
+// Se nesse dia a época passada tinha menos de metade dos alunos com que acabou (listas carregadas
+// mais tarde), essa base não é fiável: compara com o fim da época passada e diz isso.
+function alunosComparados(e, periodo, d) {
+  const ref = dataRefPeriodo(periodo);
+  const ep = epocaDe(ref);
+  const epAnt = epAntDe(ep);
+  const reg = (d.registoAlunos || {})[ep];
+  const regAnt = (d.registoAlunos || {})[epAnt];
+  const daEscola = (a) => !e || a.escola === e;
+  const atual = reg && Object.keys(reg.alunos || {}).length ? alunosNaData(reg, ref).filter(daEscola).length : null;
+  const refAnt = umAnoAntesISO(ref);
+  if (!regAnt || !Object.keys(regAnt.alunos || {}).length) {
+    const ant = e ? alunosEpocaAnterior(e, periodo, d) : null;
+    return { atual, ant, base: ant ? "fim" : null, refAnt, epAnt };
+  }
+  const fimAnt = Object.values(regAnt.alunos).filter((a) => daEscola(a) && a.estado === "ativo").length;
+  const homo = alunosNaData(regAnt, refAnt).filter(daEscola).length;
+  if (fimAnt && homo < fimAnt * 0.5 && refAnt < fimEpocaISO(epAnt)) return { atual, ant: fimAnt, base: "fim", refAnt, epAnt };
+  return { atual, ant: homo || null, base: homo ? "homologo" : null, refAnt, epAnt };
+}
+const textoBaseAnt = (c) => (!c || !c.ant ? null : c.base === "homologo" ? `${fmtNum(c.ant)} a ${dataCurtaISO(c.refAnt)} (${c.epAnt})` : `${fmtNum(c.ant)} no fim de ${c.epAnt} (sem dados completos do mesmo período)`);
 
 // Turmas de uma escola na época do período, no formato das turmas da app
 // ({ turma, m, f, cap, renov, novos, extra }). Vêm do registo de alunos dessa época;
@@ -16215,6 +16304,11 @@ function alunosEpocaAnterior(e, periodo, d) {
 
 // Uma constatação estava em aberto no fim do período (época) ou está em aberto hoje.
 function abertaNoFim(f, a, periodo) {
+  if (periodo.startsWith("intervalo:")) {
+    const { fim } = intervaloDe(periodo);
+    if (a.date && a.date > fim) return false;
+    return !f.resolvida || (f.resolvidaEm && String(f.resolvidaEm).slice(0, 10) > fim);
+  }
   if (periodo.startsWith("epoca:")) {
     const ep = periodo.slice(6);
     if (epocaAud(a) > ep) return false;
@@ -16230,8 +16324,11 @@ function metricasEscola(e, periodo, d) {
   const turmas = tp.turmas;
   const alunosTurmas = turmas.reduce((n, t) => n + t.m + t.f, 0);
   const serie = [...(d.inscritos[e] || [])].filter((x) => epocaDaSemanaISO(x.semana) === tp.ep).sort((a, b) => a.semana.localeCompare(b.semana));
-  const alunos = alunosTurmas || (serie.length ? serie[serie.length - 1].total : tp.fonte === "sem" ? null : 0);
-  const ant = alunosEpocaAnterior(e, periodo, d);
+  const cmp = alunosComparados(e, periodo, d);
+  // Num intervalo que já acabou, os alunos são os desse dia.
+  const alunos = periodo.startsWith("intervalo:") && cmp.atual !== null ? cmp.atual : alunosTurmas || (serie.length ? serie[serie.length - 1].total : tp.fonte === "sem" ? null : 0);
+  const ant = cmp.ant;
+  const alunosRef = cmp.atual !== null ? cmp.atual : alunos;
 
   const recl = d.reclamacoes.filter((r) => r.school === e && dentroPeriodo(periodo, r.receivedDate));
   const resolvidas = recl.filter((r) => r.status === "concluido" && r.resolvedDate);
@@ -16278,7 +16375,9 @@ function metricasEscola(e, periodo, d) {
     fonteAlunos: tp.fonte,
     renovPct: comRubrica ? Math.round((turmas.reduce((n, t) => n + (t.renov || 0), 0) / comRubrica) * 100) : null,
     novos: comRubrica ? turmas.reduce((n, t) => n + (t.novos || 0), 0) : null,
-    crescimento: ant && alunos ? Math.round(((alunos - ant) / ant) * 1000) / 10 : null,
+    crescimento: ant && alunosRef ? Math.round(((alunosRef - ant) / ant) * 1000) / 10 : null,
+    cmp,
+    desist,
     reclamacoes: recl.length,
     reclPor100: por100(recl.length, alunos),
     prazo: pct(noPrazo, resolvidas.length),
@@ -16291,7 +16390,7 @@ function metricasEscola(e, periodo, d) {
 
 // Que métricas entram na comparação e em que sentido é melhor.
 const METRICAS_COMP = [
-  { key: "crescimento", label: "Crescimento face à época passada", unidade: "%", melhor: "alto", limiar: 3 },
+  { key: "crescimento", label: "Crescimento face ao mesmo período da época passada", unidade: "%", melhor: "alto", limiar: 3 },
   { key: "reclPor100", label: "Reclamações por 100 alunos", unidade: "", melhor: "baixo", limiar: 0.5, dec: 1 },
   { key: "prazo", label: "Reclamações resolvidas no prazo", unidade: "%", melhor: "alto", limiar: 8 },
   { key: "ncAbertas", label: "Não conformidades em aberto", unidade: "", melhor: "baixo", limiar: 1 },
@@ -16310,7 +16409,8 @@ const REL_TEXTO = "'Manrope', 'Inter', system-ui, sans-serif";
 const REL_VERDE = "#1E7A4C";
 // Azul institucional no papel claro; no tema escuro usa o azul da app, que se lê melhor.
 const azulRel = () => (COLORS.paper === TEMA_ESCURO.paper ? COLORS.navy : REL_AZUL2);
-const REL_VERMELHO = "#B3261E";
+// Sem vermelho na app: o "mau" é laranja.
+const REL_VERMELHO = "#C2570C";
 
 // Logótipo DF na cor que se quiser (o ficheiro é branco; usa-se como máscara).
 function LogoRel({ altura = 44, cor = REL_AZUL }) {
@@ -16719,10 +16819,17 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   const inqPeriodo = inqueritos.filter((i) => dentroPeriodo(periodo, i.data));
   const satPeriodo = inqPeriodo.length ? satisfacaoDe(inqPeriodo.flatMap((i) => i.perguntas || [])).pct : null;
   const npsPeriodo = inqPeriodo.length ? npsDe(inqPeriodo) : null;
-  const alunosTotal = escolas.reduce((n, e) => n + (metricasEscola(e, periodo, dados).alunos || 0), 0);
-  const antTotal = escolas.reduce((n, e) => n + (alunosEpocaAnterior(e, periodo, dados) || 0), 0);
-  const crescRede = antTotal && alunosTotal ? Math.round(((alunosTotal - antTotal) / antTotal) * 1000) / 10 : null;
   const porEscola = escolas.map((e) => ({ e, m: metricasEscola(e, periodo, dados), constat: constat.filter((f) => f.escola === e).length, abertas: abertas.filter((f) => f.escola === e).length }));
+  const alunosTotal = porEscola.reduce((n, x) => n + (x.m.alunos || 0), 0);
+  // Face ao mesmo período da época passada (escola a escola; as que não têm base fiável no mesmo dia usam o fim da época).
+  const comBase = porEscola.filter((x) => x.m.cmp && x.m.cmp.ant);
+  const antTotal = comBase.reduce((n, x) => n + x.m.cmp.ant, 0);
+  const atualComBase = comBase.reduce((n, x) => n + (x.m.cmp.atual !== null ? x.m.cmp.atual : x.m.alunos || 0), 0);
+  const crescRede = antTotal && atualComBase ? Math.round(((atualComBase - antTotal) / antTotal) * 1000) / 10 : null;
+  const escolasBaseFim = comBase.filter((x) => x.m.cmp.base === "fim").length;
+  const homologoP = nomeHomologo(periodo);
+  const desistPeriodo = desistencias.filter((x) => dentroPeriodo(periodo, x.data)).reduce((n, x) => n + x.n, 0);
+  const desistHom = homologoP ? desistencias.filter((x) => noPeriodoHomologo(periodo, x.data)).reduce((n, x) => n + x.n, 0) : null;
 
   // ---- Momentos: série mensal por época ----
   const serieMensal = (lista, dataDe) =>
@@ -16853,7 +16960,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   });
   porEscola
     .filter((x) => x.m.crescimento !== null && x.m.crescimento < 0)
-    .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.e}: ${fmtNum(x.m.crescimento, 1)}% de alunos face à época passada` }));
+    .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.e}: ${fmtNum(x.m.crescimento, 1)}% de alunos face ao mesmo período da época passada` }));
   porEscola
     .filter((x) => x.m.satisfacao !== null && x.m.satisfacao < 75)
     .forEach((x) => acompanhar.push({ nivel: "medio", t: `${x.e}: satisfação de ${x.m.satisfacao}%` }));
@@ -16911,9 +17018,10 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                     Relatório da rede de escolas · emitido a {geradoEm}
                     {epocas.length > 1 ? ` · compara as épocas ${epocas.join(", ")}` : ""}
                   </div>
-                  <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
+                  <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
                     {[
-                      ["Alunos", fmtNum(alunosTotal), crescRede === null ? null : `${crescRede > 0 ? "+" : ""}${fmtNum(crescRede, 1)}% face à época passada`],
+                      ["Alunos", fmtNum(alunosTotal), crescRede === null ? null : `${crescRede > 0 ? "+" : ""}${fmtNum(crescRede, 1)}% face ao mesmo período de ${epAntDe(epocaDoPeriodo(periodo))}${escolasBaseFim ? ` · ${escolasBaseFim} ${escolasBaseFim === 1 ? "escola" : "escolas"} com o fim da época (sem dados do mesmo período)` : ""}`],
+                      ["Desistências", fmtNum(desistPeriodo), [alunosTotal ? `${fmtNum((desistPeriodo / alunosTotal) * 100, 1)}% dos alunos` : "", desistHom !== null ? `${fmtNum(desistHom)} em ${homologoP}` : ""].filter(Boolean).join(" · ") || null],
                       ["Reclamações", fmtNum(recl.length), alunosTotal ? `${fmtNum(por100(recl.length, alunosTotal), 1)} por 100 alunos` : null],
                       ["Visitas de auditoria", fmtNum(visitas.length), `${constat.length} constatações`],
                       ["Por fechar", fmtNum(abertas.length), "constatações em aberto"],
@@ -16921,7 +17029,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                     ].map(([l, v, sub], i) => (
                       <div key={l} style={{ padding: "16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
                         <div className="relRotulo">{l}</div>
-                        <div style={{ fontFamily: REL_SERIFA, fontSize: 30, fontWeight: 600, color: COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                        <div style={{ fontFamily: REL_SERIFA, fontSize: 26, fontWeight: 600, color: COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
                         {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
                       </div>
                     ))}
@@ -17029,7 +17137,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
                 )}
 
                 {ver("escolas") && (
-                  <SeccaoRel titulo="Escolas lado a lado" nota={`${nomePeriodo(periodo)} · a verde o melhor valor, a vermelho o pior`}>
+                  <SeccaoRel titulo="Escolas lado a lado" nota={`${nomePeriodo(periodo)} · a verde o melhor valor, a laranja o pior`}>
                     <div style={{ overflowX: "auto" }}>
                       <table className="relQuadro" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                         <thead>
@@ -17330,6 +17438,29 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
 
   const [escola, setEscola] = useState(escolas[0] || "");
   const [periodo, setPeriodo] = useState(`epoca:${epocaAtual}`);
+  // Período à escolha (ex.: um trimestre): por omissão os últimos 3 meses.
+  const [intIni, setIntIni] = useState(() => {
+    const x = new Date();
+    x.setMonth(x.getMonth() - 3);
+    return isoDe(x);
+  });
+  const [intFim, setIntFim] = useState(() => isoDe(new Date()));
+  const mudaIntervalo = (ini, fim) => {
+    setIntIni(ini);
+    setIntFim(fim);
+    if (ini && fim && ini <= fim) setPeriodo(`intervalo:${ini}:${fim}`);
+  };
+  // Trimestres da época (agosto a julho) para escolher depressa.
+  const trimestres = (() => {
+    const ano = Number(epocaAtual.slice(0, 4));
+    const ts = [
+      [`${ano}-08-01`, `${ano}-10-31`, "Ago–Out"],
+      [`${ano}-11-01`, `${ano + 1}-01-31`, "Nov–Jan"],
+      [`${ano + 1}-02-01`, `${ano + 1}-04-30`, "Fev–Abr"],
+      [`${ano + 1}-05-01`, `${ano + 1}-07-31`, "Mai–Jul"],
+    ];
+    return ts.filter(([ini]) => ini <= isoDe(new Date()));
+  })();
   const [seccoes, setSeccoes] = useState(() => {
     try {
       const g = JSON.parse(window.localStorage.getItem(LS_RELATORIO) || "null");
@@ -17462,13 +17593,16 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
   )
     .map((x) => ({ ...x, pct: x.cap ? Math.round((x.n / x.cap) * 100) : null }))
     .sort((a, b) => b.pct - a.pct);
-  const cheias = lotacao.filter((t) => t.pct >= 95);
-  const vazias = lotacao.filter((t) => t.pct < 50);
+  // Só turmas (as equipas de competição não contam para lotação baixa nem sobrelotação).
+  const cheias = lotacao.filter((t) => ehEscolinha(t.turma, niveis) && t.pct >= 95);
+  const sobrelotadas = lotacao.filter((t) => ehEscolinha(t.turma, niveis) && t.cap && t.n > t.cap);
+  const vazias = lotacao.filter((t) => ehEscolinha(t.turma, niveis) && t.pct !== null && t.pct < 50);
   const cls = m.crescimento !== null ? classificarCrescimento(m.crescimento) : null;
 
   // ---- Movimentos ----
   const desist = desistencias.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
   const nDesist = desist.reduce((n, x) => n + x.n, 0);
+  const nDesistHom = homologo ? desistencias.filter((x) => x.escola === escola && noPeriodoHomologo(periodo, x.data)).reduce((n, x) => n + x.n, 0) : null;
   const xps = experiencias.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
   const somaXp = (r) => xps.filter((x) => (r ? x.resultado === r : true)).reduce((n, x) => n + x.n, 0);
   const desv = desvinculacoes.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
@@ -17528,7 +17662,12 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
             <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rel-periodo">
               Período
             </label>
-            <select id="rel-periodo" value={periodo} onChange={(e) => setPeriodo(e.target.value)} style={selectStyle}>
+            <select
+              id="rel-periodo"
+              value={periodo.startsWith("intervalo:") ? "__intervalo" : periodo}
+              onChange={(e) => (e.target.value === "__intervalo" ? mudaIntervalo(intIni, intFim) : setPeriodo(e.target.value))}
+              style={selectStyle}
+            >
               {epocasComDados.map((ep) => (
                 <option key={ep} value={`epoca:${ep}`}>
                   Época {ep}
@@ -17539,8 +17678,35 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
                   {l}
                 </option>
               ))}
+              <option value="__intervalo">Escolher datas (ex.: trimestre)…</option>
             </select>
           </div>
+          {periodo.startsWith("intervalo:") && (
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div>
+                <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rel-ini">
+                  De
+                </label>
+                <input id="rel-ini" type="date" value={intIni} max={intFim} onChange={(e) => mudaIntervalo(e.target.value, intFim)} style={{ ...inputStyle, width: "auto", padding: "7px 9px" }} />
+              </div>
+              <div>
+                <label style={{ ...labelStyle, marginTop: 0 }} htmlFor="rel-fim">
+                  Até
+                </label>
+                <input id="rel-fim" type="date" value={intFim} min={intIni} onChange={(e) => mudaIntervalo(intIni, e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 9px" }} />
+              </div>
+              <div style={{ display: "flex", gap: 4, paddingBottom: 6, flexWrap: "wrap" }}>
+                {trimestres.map(([ini, fim, l]) => {
+                  const on = intIni === ini && intFim === fim;
+                  return (
+                    <button key={l} type="button" onClick={() => mudaIntervalo(ini, fim)} title={`${dataCurtaISO(ini)} a ${dataCurtaISO(fim)}`} style={{ border: `1px solid ${on ? COLORS.navy : COLORS.rule}`, background: on ? COLORS.navy : "transparent", color: on ? "#fff" : COLORS.ink2, borderRadius: 14, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>
+                      {l}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div>
             <label style={{ ...labelStyle, marginTop: 0 }}>Comparar épocas</label>
             <FiltroEpocas epocas={epocasComDados.filter((e) => e <= epocaAtual)} valor={epocasComp} onChange={setEpocasComp} />
@@ -17668,19 +17834,20 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
             <h2 style={{ margin: "10px 0 10px", fontFamily: REL_SERIFA, fontSize: 40, fontWeight: 600, color: COLORS.ink, letterSpacing: "-0.015em", lineHeight: 1.05, textWrap: "balance" }}>{escola}</h2>
             <div style={{ fontSize: 13, color: COLORS.ink2 }}>
               Emitido a {geradoEm}
-              {cls ? ` · ${cls.label.toLowerCase()} face à época passada` : ""}
+              {cls ? ` · ${cls.label.toLowerCase()} face ao mesmo período da época passada` : ""}
             </div>
-            <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: `repeat(${comparar && posicaoGeral ? 5 : 4}, minmax(0, 1fr))`, marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
+            <div className="relCapaNumeros" style={{ display: "grid", gridTemplateColumns: `repeat(${comparar && posicaoGeral ? 6 : 5}, minmax(0, 1fr))`, marginTop: 34, borderTop: `2px solid ${REL_AZUL}`, borderBottom: `1px solid ${COLORS.rule}` }}>
               {[
-                ["Alunos inscritos", fmtNum(m.alunos), null, null],
-                ["Face à época passada", m.crescimento === null ? "—" : `${m.crescimento > 0 ? "+" : m.crescimento < 0 ? "−" : ""}${fmtNum(Math.abs(m.crescimento), 1)}%`, m.crescimento === null ? null : m.crescimento >= 0 ? REL_VERDE : REL_VERMELHO, m.ant ? `${fmtNum(m.ant)} na época passada` : null],
+                ["Alunos inscritos", fmtNum(m.alunos), null, periodo.startsWith("intervalo:") ? `a ${dataCurtaISO(dataRefPeriodo(periodo))}` : null],
+                ["Face ao mesmo período", m.crescimento === null ? "—" : `${m.crescimento > 0 ? "+" : m.crescimento < 0 ? "−" : ""}${fmtNum(Math.abs(m.crescimento), 1)}%`, m.crescimento === null ? null : m.crescimento >= 0 ? REL_VERDE : REL_VERMELHO, textoBaseAnt(m.cmp)],
+                ["Desistências", fmtNum(nDesist), null, [m.desistPct !== null ? `${fmtNum(m.desistPct, 1)}% dos alunos` : "", nDesistHom !== null ? `${fmtNum(nDesistHom)} em ${homologo}` : ""].filter(Boolean).join(" · ") || null],
                 ["Reclamações", fmtNum(recl.length), null, m.reclPor100 !== null ? `${fmtNum(m.reclPor100, 1)} por 100 alunos` : null],
                 ["Satisfação", m.satisfacao === null || m.satisfacao === undefined ? "—" : `${m.satisfacao}%`, null, "inquérito da escola"],
                 ...(comparar && posicaoGeral ? [["Posição geral", `${ordinal(posicaoGeral.pos)}`, null, `entre ${posicaoGeral.de} escolas`]] : []),
               ].map(([l, v, c, sub], i) => (
                 <div key={l} style={{ padding: "16px 16px 16px", paddingLeft: i ? 16 : 0, borderLeft: i ? `1px solid ${COLORS.rule}` : "none", minWidth: 0 }}>
                   <div className="relRotulo">{l}</div>
-                  <div style={{ fontFamily: REL_SERIFA, fontSize: 30, fontWeight: 600, color: c || COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
+                  <div style={{ fontFamily: REL_SERIFA, fontSize: 26, fontWeight: 600, color: c || COLORS.ink, marginTop: 8, lineHeight: 1, fontVariantNumeric: "lining-nums tabular-nums" }}>{v}</div>
                   {sub && <div style={{ fontSize: 11, color: COLORS.slate, marginTop: 6 }}>{sub}</div>}
                 </div>
               ))}
@@ -17907,12 +18074,12 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
         {ver("inscritos") && (
           <SeccaoRel titulo="Inscritos e turmas" nota={`${new Set(turmas.map((t) => t.turma)).size} turmas`}>
             <div className="relKpis">
-              <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={tPeriodo.fonte === "sem" ? `sem alunos importados em ${tPeriodo.ep}` : m.ant ? `${fmtNum(m.ant)} na época passada` : null} />
+              <KpiRel label="Alunos" valor={fmtNum(m.alunos)} comparacao={tPeriodo.fonte === "sem" ? `sem alunos importados em ${tPeriodo.ep}` : m.ant ? `mesmo período: ${textoBaseAnt(m.cmp)}` : null} />
               <KpiRel label="Em turmas" valor={fmtNum(pct(escolinha, masc + fem))} unidade="%" comparacao={`${fmtNum(escolinha)} alunos · ${fmtNum(masc + fem - escolinha)} em equipas de competição`} />
               <KpiRel label="Género feminino" valor={fmtNum(pct(fem, masc + fem))} unidade="%" comparacao={`${fmtNum(fem)} de ${fmtNum(masc + fem)}`} />
               {m.renovPct !== null && <KpiRel label="Renovaram" valor={fmtNum(m.renovPct)} unidade="%" comparacao={`${fmtNum(m.novos)} inscrições novas`} />}
-              <KpiRel label="Turmas cheias" valor={fmtNum(cheias.length)} comparacao="95% ou mais da capacidade" cor={cheias.length ? COLORS.warn : COLORS.ink} />
-              <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} cor={vazias.length ? COLORS.warn : COLORS.ink} />
+              <KpiRel label="Turmas cheias" valor={fmtNum(cheias.length)} comparacao={`95% ou mais da capacidade${sobrelotadas.length ? ` · ${sobrelotadas.length} em sobrelotação` : ""}`} cor={cheias.length ? COLORS.warn : COLORS.ink} />
+              <KpiRel label="Turmas abaixo de 50%" valor={fmtNum(vazias.length)} comparacao="sem as equipas de competição" cor={vazias.length ? COLORS.warn : COLORS.ink} />
               {tPeriodo.ep === epocaAtual && (() => {
                 const pv = preverEscola({ escola, inscritos, epocaAnterior, experiencias, turmasAlunos, niveis: niveis || DEFAULT_NIVEIS, hoje: isoDe(new Date()) });
                 if (pv.insuficiente) return <KpiRel label="Previsão para julho" valor="—" comparacao="Faltam semanas desta época" />;
@@ -18131,7 +18298,7 @@ function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscrito
               .map((i) => ({ i, s: satisfacaoDe(i.perguntas || [], escola) }))
               .filter((x) => x.s.pct !== null && x.s.pct < 70)
               .forEach((x) => itens.push({ nivel: "medio", t: `${x.i.edicao}: ${x.s.pct}% de satisfação entre os encarregados da escola` }));
-            cheias.forEach((t) => itens.push({ nivel: "baixo", t: `${t.turma} sem vagas (${t.n}/${t.cap})` }));
+            sobrelotadas.forEach((t) => itens.push({ nivel: "medio", t: `${t.turma} em sobrelotação: ${t.n} alunos para ${t.cap} lugares` }));
             const motivoTop = contar(desist.map((x) => ({ ...x, __peso: x.n })), "motivo")[0];
             if (motivoTop && motivoTop.value >= 2) itens.push({ nivel: "baixo", t: `Principal motivo de desistência: ${motivoTop.name.toLowerCase()} (${motivoTop.value})` });
             const corN = { alto: REL_VERMELHO, medio: "#C58A1A", baixo: COLORS.slate };
@@ -22213,13 +22380,14 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
 // ======================= MAPA DE OBJETIVOS =======================
 const ESTADO_OBJ = {
   ok: { rotulo: "Atingido", cor: () => COLORS.ok, bg: () => COLORS.okBg },
-  risco: { rotulo: "Ainda não", cor: () => COLORS.warn, bg: () => COLORS.warnBg },
+  quase: { rotulo: "Quase atingido", cor: () => COLORS.warn, bg: () => COLORS.warnBg },
+  risco: { rotulo: "Ainda não", cor: () => COLORS.slate, bg: () => COLORS.paperSunken },
   falha: { rotulo: "Não atingido", cor: () => COLORS.danger, bg: () => COLORS.dangerBg },
 };
 function EstadoObjetivo({ estado, fim }) {
   if (!estado) return <span style={{ fontSize: 11.5, color: COLORS.slate }}>—</span>;
   const e = ESTADO_OBJ[estado];
-  const rotulo = estado === "ok" && !fim ? "Na meta" : e.rotulo;
+  const rotulo = estado === "ok" && !fim ? "Na meta" : estado === "quase" && !fim ? "Quase na meta" : e.rotulo;
   return <span style={{ fontSize: 11, fontWeight: 600, color: e.cor(), background: e.bg(), borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>{rotulo}</span>;
 }
 
@@ -22738,8 +22906,9 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
           <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
             <StatCard label="Indicadores" value={itens.length} subtitle={`${comMeta.length} com meta e dados`} />
-            <StatCard label={acomp.fim ? "Atingidos" : "Na meta"} value={n("ok")} color={n("ok") ? COLORS.ok : undefined} />
-            <StatCard label={acomp.fim ? "Não atingidos" : "Ainda por atingir"} value={n("risco") + n("falha")} color={n("falha") ? COLORS.danger : n("risco") ? COLORS.warn : undefined} subtitle={n("falha") ? `${n("falha")} já sem margem` : undefined} />
+            <StatCard label={acomp.fim ? "Objetivos atingidos" : "Objetivos na meta"} value={comMeta.length ? `${Math.round((n("ok") / comMeta.length) * 100)}%` : "—"} color={n("ok") ? COLORS.ok : undefined} subtitle={`${n("ok")} de ${comMeta.length} com meta e dados`} />
+            <StatCard label={acomp.fim ? "Quase atingidos" : "Quase na meta"} value={n("quase")} color={n("quase") ? COLORS.warn : undefined} subtitle="a menos de 10% (ou 3 p.p.) da meta" />
+            <StatCard label={acomp.fim ? "Não atingidos" : "Ainda por atingir"} value={n("risco") + n("falha")} color={n("falha") ? COLORS.danger : undefined} subtitle={n("falha") ? `${n("falha")} já sem margem` : undefined} />
             <StatCard label="Com dados da app" value={nAuto} subtitle="atualizam-se sozinhos" />
           </div>
 
@@ -22765,6 +22934,7 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
               <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={selF} aria-label="Estado">
                 <option value="todos">Todos os estados</option>
                 <option value="ok">Na meta / atingidos</option>
+                <option value="quase">Quase atingidos</option>
                 <option value="risco">Ainda por atingir</option>
                 <option value="falha">Não atingidos</option>
                 <option value="sem">Sem meta ou sem dados</option>
@@ -22891,7 +23061,7 @@ function ObjetivosPage({ objetivos, onGuardar, notificar, contexto, escolas, doc
 const RISCO_COR = {
   baixo: { fg: "#2F6B1F", bg: "#E3EFD3" },
   medio: { fg: "#7A5A00", bg: "#FFF6BF" },
-  alto: { fg: "#9C1C1C", bg: "#F6D6D5" },
+  alto: { fg: "#A6470B", bg: "#FBE2CF" },
 };
 const ESTADOS_RISCO = ["Em análise", "Implementada", "Implementação contínua.", "Finalizado"];
 const epocaSeguinte = (ep) => `${Number(ep.slice(0, 4)) + 1}/${String(Number(ep.slice(0, 4)) + 2).slice(2)}`;
@@ -23935,7 +24105,7 @@ const DEFAULT_CATEGORIAS_OCORRENCIA = [
 const GRAVIDADE_OC = {
   baixa: { label: "Baixa", color: "#4B6B2F", bg: "#E6F0DA" },
   media: { label: "Média", color: "#8A6100", bg: "#FFF1C2" },
-  alta: { label: "Alta", color: "#A32020", bg: "#F8DADA" },
+  alta: { label: "Alta", color: "#A6470B", bg: "#FBE2CF" },
 };
 const novoIdOc = () => `oc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
@@ -24991,7 +25161,9 @@ function AppPrincipal({ onSair }) {
         turma: aluno ? aluno.turma : "",
         n: 1,
         data: x.data,
-        resultado: x.resultado === "pendente" && ant && ant.resultado !== "pendente" && ant.resultado !== "sucesso" ? ant.resultado : x.resultado || (aluno ? "sucesso" : "pendente"),
+        // Uma decisão tomada à mão (não converteu) mantém-se; a decidida pela importação anterior não.
+        resultado: x.resultado === "pendente" && ant && ant.manual && ant.resultado !== "pendente" && ant.resultado !== "sucesso" ? ant.resultado : x.resultado || (aluno ? "sucesso" : "pendente"),
+        ...(ant && ant.manual ? { manual: true } : {}),
         entraram: aluno ? 1 : 0,
         origem: "importacao",
       };
@@ -25319,7 +25491,7 @@ function AppPrincipal({ onSair }) {
       saveTurmaAlunos({ ...t, m: Math.max(0, t.m - x.entraram) });
       entraram = 0;
     }
-    persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, resultado, entraram } : e)));
+    persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, resultado, entraram, manual: true } : e)));
     return aviso;
   };
   const saveExperiencia = (reg) => {
