@@ -4,7 +4,7 @@ import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao
 import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, epocaAtualForm, mesesDaEpoca, FORMATOS_FORM, ESTADOS_FORM, MESES_CURTOS, MESES_LONGOS } from "./formacao";
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
-import { tirarFoto } from "./foto";
+import { imprimirBalanco } from "./foto";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
 import {
@@ -7372,7 +7372,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     .map((r) => `${r.treinadores}+ treinadores: até +${r.tolerancia}`)
     .join(" · ");
 
-  // Foto do mapa: uma versão compacta (só dias com treinos, letra pequena), desenhada fora do ecrã.
+  // PDF do mapa: uma versão compacta (só dias com treinos), desenhada fora do ecrã e impressa.
   const fotoRef = useRef(null);
   const [fotoEsp, setFotoEsp] = useState(false);
   useEffect(() => {
@@ -7380,7 +7380,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     const t = setTimeout(async () => {
       try {
         const nomeEsc = modoRecinto ? `recinto ${recintoSel}` : `${escola}${fRecinto ? ` · ${fRecinto}` : ""}`;
-        await tirarFoto(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+        imprimirBalanco(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
       } finally {
         setFotoEsp(false);
       }
@@ -7482,7 +7482,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           title="Imagem do mapa semanal, compacta (só os dias com treinos)"
           style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
         >
-          <Camera size={14} /> {fotoEsp ? "A preparar…" : "Foto do balanço"}
+          <Printer size={14} /> {fotoEsp ? "A preparar…" : "PDF do balanço"}
         </button>
         <button className="semFoto" onClick={() => setVerRegras((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
           Regras dos treinadores
@@ -22462,18 +22462,18 @@ function BotaoFoto({ alvo, titulo, subtitulo, nome }) {
       type="button"
       className="press semFoto"
       disabled={aTirar}
-      title="Descarregar uma imagem deste balanço"
-      onClick={async () => {
+      title="Abre a impressão: escolhe «Guardar como PDF»"
+      onClick={() => {
         setATirar(true);
         try {
-          await tirarFoto(alvo.current, { titulo, subtitulo, nome: nome || titulo, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
         } finally {
-          setATirar(false);
+          setTimeout(() => setATirar(false), 800);
         }
       }}
       style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
     >
-      <Camera size={14} /> {aTirar ? "A preparar…" : "Foto do balanço"}
+      <Printer size={14} /> {aTirar ? "A preparar…" : "PDF do balanço"}
     </button>
   );
 }
