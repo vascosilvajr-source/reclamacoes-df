@@ -7744,6 +7744,11 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                               {g.limite ? `${g.total}/${g.limite}` : "sem lotação"}
                               {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
                             </div>
+                            {g.limite ? (
+                              <div style={{ marginTop: 3 }}>
+                                <BarraLotacao pct={g.pct} largura={90} />
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
