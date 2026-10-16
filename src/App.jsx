@@ -7372,9 +7372,67 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     .map((r) => `${r.treinadores}+ treinadores: até +${r.tolerancia}`)
     .join(" · ");
 
+  // Foto do mapa: uma versão compacta (só dias com treinos, letra pequena), desenhada fora do ecrã.
   const fotoRef = useRef(null);
+  const [fotoEsp, setFotoEsp] = useState(false);
+  useEffect(() => {
+    if (!fotoEsp) return undefined;
+    const t = setTimeout(async () => {
+      try {
+        const nomeEsc = modoRecinto ? `recinto ${recintoSel}` : `${escola}${fRecinto ? ` · ${fRecinto}` : ""}`;
+        await tirarFoto(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+      } finally {
+        setFotoEsp(false);
+      }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [fotoEsp]); // eslint-disable-line react-hooks/exhaustive-deps
+  const diasFoto = DIAS_SEMANA.filter((d) => doEscola.some((x) => x.dia === d));
+  const fotoEspacos = fotoEsp ? (
+    <div style={{ position: "fixed", left: -20000, top: 0, width: Math.max(700, 150 + diasFoto.length * 190), background: COLORS.paper }}>
+      <div ref={fotoRef} style={{ background: COLORS.paper }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 11 }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: 54, padding: "6px 4px" }}>Hora</th>
+              {diasFoto.map((d) => (
+                <th key={d} style={{ ...thStyle, padding: "6px 4px" }}>{d}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {horas.map((h) => (
+              <tr key={h}>
+                <td style={{ ...tdStyle, padding: "4px", fontWeight: 600, verticalAlign: "top", fontVariantNumeric: "tabular-nums" }}>{h}</td>
+                {diasFoto.map((d) => (
+                  <td key={d} style={{ ...tdStyle, padding: "3px 4px", verticalAlign: "top" }}>
+                    {doEscola
+                      .filter((x) => horaFmt(x.hora) === h && x.dia === d)
+                      .map((b) => {
+                        const nomes = turmasDoBloco(b);
+                        const g = grupo(nomes, b.treinadores || 1, b.escola);
+                        return (
+                          <div key={b.id} style={{ borderLeft: `3px solid ${corEstado[g.estado]}`, background: fundoEstado[g.estado], borderRadius: 2, padding: "2px 5px", marginBottom: 3, lineHeight: 1.3 }}>
+                            <div style={{ fontWeight: 600 }}>{nomes.join(" + ")}</div>
+                            <div style={{ color: g.estado === "acima" ? COLORS.danger : g.estado === "tolerado" ? COLORS.warn : COLORS.slate }}>
+                              {g.limite ? `${g.total}/${g.limite}` : "sem lotação"}
+                              {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ) : null;
   return (
-    <div ref={fotoRef}>
+    <div>
+      {fotoEspacos}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <select
           value={escolaSel}
@@ -7416,7 +7474,16 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           </select>
         )}
         <span style={{ fontSize: 12.5, color: COLORS.slate, marginRight: "auto" }}>{textoRegras || "Sem tolerância por treinadores"}</span>
-        <BotaoFoto alvo={fotoRef} titulo={`Espaços · ${modoRecinto ? escolaSel.slice(4) : escolaSel}${fRecinto ? ` · ${fRecinto}` : ""}`} subtitulo="Mapa semanal de ocupação" nome={`Espacos ${modoRecinto ? escolaSel.slice(4) : escolaSel} ${isoDe(new Date())}`} />
+        <button
+          type="button"
+          className="press semFoto"
+          disabled={!!fotoEsp || !doEscola.length}
+          onClick={() => setFotoEsp(true)}
+          title="Imagem do mapa semanal, compacta (só os dias com treinos)"
+          style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <Camera size={14} /> {fotoEsp ? "A preparar…" : "Foto do balanço"}
+        </button>
         <button className="semFoto" onClick={() => setVerRegras((v) => !v)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
           Regras dos treinadores
         </button>
@@ -12693,6 +12760,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const epocas = Object.keys(registoAlunos || {}).sort();
   const epHoje = epocaDe(isoDe(new Date()));
+  const fotoRef = useRef(null);
   const [vista, setVista] = useState("epoca");
   // Um só filtro de épocas para todas as vistas: uma época mostra o detalhe, várias comparam.
   const [eps, setEps] = useState(() => selecaoInicial(epocas));
@@ -12866,8 +12934,12 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
 
   const epAnt = epAntDe(ep);
   const temAnt = !!dados[epAnt];
+  const tituloFoto = `Análise de inscritos · ${vista === "escola" ? escola || "escola" : vista === "indicadores" ? `indicadores${escInd ? ` · ${escInd}` : ""}` : "épocas"}`;
   const cab = (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+      <span className="semFoto" style={{ order: 99, marginLeft: "auto" }}>
+        <BotaoFoto alvo={fotoRef} titulo={tituloFoto} subtitulo={(eps && eps.length ? eps : [ep]).join(" · ")} nome={`${tituloFoto} ${isoDe(new Date())}`} />
+      </span>
       {seg(vista, setVista, [
         ["epoca", "Épocas"],
         ["escola", "Por escola"],
@@ -12932,7 +13004,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     // Escolas da época anterior que não têm alunos nesta: para onde foram os alunos.
     const fechadas = temAnt ? Object.keys(dados[epAnt].escolas).filter((e) => !D.escolas[e]) : [];
     return (
-      <div className="vistaTroca">
+      <div className="vistaTroca" ref={fotoRef}>
         {cab}
         <AvisoDadosEpoca registos={[[ep, registoAlunos[ep]], ...(temAnt ? [[epAnt, registoAlunos[epAnt]]] : [])]} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
@@ -13055,7 +13127,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   // ---------------- indicadores ----------------
   if (vista === "indicadores") {
     return (
-      <div className="vistaTroca">
+      <div className="vistaTroca" ref={fotoRef}>
         {cab}
         <IndicadoresInscritos registoAlunos={registoAlunos} niveis={niveis} capacidades={options.capacidades || {}} epocas={epocas} sel={eps} escola={escInd} />
       </div>
@@ -13069,7 +13141,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
     const k = kComp;
     const valor = (n) => naSemana(n, n.ep === epHoje ? null : k);
     return (
-      <div className="vistaTroca">
+      <div className="vistaTroca" ref={fotoRef}>
         {cab}
         <AvisoDadosEpoca registos={recentes.map((n) => [n.ep, registoAlunos[n.ep]])} />
         <div style={{ ...panelStyle, marginBottom: 14 }}>
@@ -13181,7 +13253,7 @@ function AnaliseInscritos({ registoAlunos, options, escolas, inscritos, epocaAnt
   const k = kComp;
   const valor = (n) => naSemana(n, n.ep === epHoje ? null : k);
   return (
-    <div className="vistaTroca">
+    <div className="vistaTroca" ref={fotoRef}>
       {cab}
       {!escola ? (
         <div style={panelStyle}>
