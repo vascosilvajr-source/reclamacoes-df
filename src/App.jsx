@@ -7706,7 +7706,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     const t = setTimeout(async () => {
       try {
         const nomeEsc = modoRecinto ? `recinto ${recintoSel}` : `${escola}${fRecinto ? ` · ${fRecinto}` : ""}`;
-        imprimirBalanco(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+        imprimirBalanco(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, logo: LOGO_BRANCO });
       } finally {
         setFotoEsp(false);
       }
@@ -22112,6 +22112,7 @@ function FormacaoPage({ dados, onGuardar, notificar }) {
   const [aGerar, setAGerar] = useState(false);
   const [texto, setTexto] = useState("");
   const [fEstado, setFEstado] = useState("todos");
+  const fotoRef = useRef(null);
 
   const doAno = itens.filter((i) => epocaDaAcao(i) === epoca);
   const r = resumoFormacao(doAno);
@@ -22185,7 +22186,7 @@ function FormacaoPage({ dados, onGuardar, notificar }) {
   const porFormato = FORMATOS_FORM.map((f) => ({ f, n: doAno.filter((i) => i.formato === f).length })).filter((x) => x.n);
 
   return (
-    <div>
+    <div ref={fotoRef}>
       {editar && <EditorFormacao inicial={editar} sugestoes={sugestoes} onGuardar={guardarItem} onApagar={apagar} onFechar={() => setEditar(null)} />}
       {importado && (
         <JanelaSGQ
@@ -22246,16 +22247,17 @@ function FormacaoPage({ dados, onGuardar, notificar }) {
           setVista
         )}
         <span style={{ flex: 1 }} />
-        <label className="press" style={{ ...btn, cursor: "pointer" }}>
+        {doAno.length > 0 && <BotaoFoto alvo={fotoRef} titulo={`Plano de formação · Época ${epoca}`} subtitulo={vista === "calendario" ? "Calendário das formações" : "Plano e execução"} nome={`Plano de formacao ${String(epoca).replace("/", "-")} ${isoDe(new Date())}`} />}
+        <label className="press semFoto" style={{ ...btn, cursor: "pointer" }}>
           <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
           <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
         </label>
         {doAno.length > 0 && (
-          <button className="press" disabled={aGerar} onClick={descarregar} style={btn}>
+          <button className="press semFoto" disabled={aGerar} onClick={descarregar} style={btn}>
             <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
           </button>
         )}
-        <button className="press" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <button className="press semFoto" onClick={() => novo()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "7px 14px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
           <Plus size={14} /> Nova ação
         </button>
       </div>
@@ -22795,7 +22797,7 @@ function BotaoFoto({ alvo, titulo, subtitulo, nome }) {
       onClick={() => {
         setATirar(true);
         try {
-          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, fundo: COLORS.paper, tinta: COLORS.ink, cinza: COLORS.slate, azul: COLORS.navy });
+          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, logo: LOGO_BRANCO });
         } finally {
           setTimeout(() => setATirar(false), 800);
         }
