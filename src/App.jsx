@@ -1899,8 +1899,112 @@ function GestorLista({ titulo, nota, itens, placeholder, emUso, onAdd, onRemove,
 
 // ---------- Manage schools/categories modal ----------
 
+// ---------- Avaliação da eficácia pela escola (e-mail ao operacional e ao coordenador) ----------
+const ROTULO_AVALIACAO = { eficaz: "Resolveu", parcial: "Resolveu em parte", ineficaz: "Não resolveu" };
+const novoTokenPedido = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+function AvaliacaoEscola({ entry, contactos, notificar }) {
+  const [pedidos, setPedidos] = useState(null);
+  const [resumo, setResumo] = useState("");
+  const [aEnviar, setAEnviar] = useState(false);
+  const carregar = useCallback(async () => {
+    try {
+      const { data } = await supabase.from("pedidos_operacionais").select("token, itens, respostas, respondido_em, criado, enviado_em, expira").eq("itens->>reclamacaoId", entry.id).order("criado", { ascending: false });
+      setPedidos(data || []);
+    } catch (e) {
+      setPedidos([]);
+    }
+  }, [entry.id]);
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
+  const papeis = [
+    ["operacional", "Operacional", contactos.op || []],
+    ["coordenador", "Coordenador", contactos.ct || []],
+  ].filter(([, , l]) => l.length);
+  const agora = new Date().toISOString();
+  const emEspera = (pedidos || []).filter((p) => !p.respondido_em && p.expira > agora);
+  const enviar = async () => {
+    setAEnviar(true);
+    try {
+      const concluida = entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : "";
+      const linhas = papeis.map(([papel, , l]) => ({
+        token: novoTokenPedido(),
+        escola: entry.school,
+        emails: l,
+        expira: new Date(Date.now() + 14 * 86400000).toISOString(),
+        itens: { tipo: "eficacia", papel, reclamacaoId: entry.id, numero: entry.entryNumber, tema: entry.tema || entry.categoria || "", recebida: entry.receivedDate || "", concluida, resumo: resumo.trim() },
+      }));
+      const { error } = await supabase.from("pedidos_operacionais").insert(linhas);
+      if (error) throw error;
+      notificar && notificar("Pedido feito. O agente envia o e-mail na próxima hora.", "ok", 7000);
+      setResumo("");
+      await carregar();
+    } catch (e) {
+      notificar && notificar("Não foi possível criar o pedido. Confirma que o SQL novo foi corrido no Supabase.", "aviso", 8000);
+    } finally {
+      setAEnviar(false);
+    }
+  };
+  if (!entry.school) return null;
+  return (
+    <div style={{ marginBottom: 18, padding: "12px 14px", background: COLORS.paper, border: `1px solid ${COLORS.rule}`, borderRadius: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Avaliar a eficácia com a escola</div>
+      {papeis.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: COLORS.slate, lineHeight: 1.5 }}>Não há e-mails definidos para {entry.school}. Define-os em Inscritos › Experiências › Contactos das escolas.</div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginBottom: 8 }}>
+            Envia um e-mail a {papeis.map(([, nome, l]) => `${nome.toLowerCase()} (${l.length})`).join(" e ")} de {entry.school} para dizerem se a resolução funcionou. O e-mail leva só o número, o tema e as datas.
+          </div>
+          <textarea
+            rows={2}
+            value={resumo}
+            maxLength={400}
+            onChange={(e) => setResumo(e.target.value)}
+            placeholder="O que foi feito (opcional, aparece no e-mail). Sem nomes de alunos ou famílias."
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+            <button onClick={enviar} disabled={aEnviar || emEspera.length > 0} style={{ ...primaryBtnStyle, flex: "none", padding: "7px 14px", fontSize: 12.5, opacity: aEnviar || emEspera.length > 0 ? 0.5 : 1 }}>
+              {aEnviar ? "A criar…" : "Enviar para avaliação"}
+            </button>
+            {emEspera.length > 0 && <span style={{ fontSize: 12, color: COLORS.slate }}>Já pedido, à espera de resposta.</span>}
+          </div>
+        </>
+      )}
+      {(pedidos || []).length > 0 && (
+        <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
+          {pedidos.map((p) => {
+            const av = p.respostas && p.respostas.avaliacao;
+            const cor = av === "eficaz" ? COLORS.ok : av === "ineficaz" ? COLORS.danger : av === "parcial" ? COLORS.warn : COLORS.slate;
+            return (
+              <div key={p.token} style={{ fontSize: 12.5, borderLeft: `3px solid ${cor}`, paddingLeft: 8 }}>
+                <strong>{p.itens?.papel === "coordenador" ? "Coordenador" : "Operacional"}</strong>
+                {": "}
+                {av ? (
+                  <>
+                    <span style={{ color: cor, fontWeight: 600 }}>{ROTULO_AVALIACAO[av]}</span>
+                    {p.respostas.nota ? <span style={{ color: COLORS.ink2 }}> · {p.respostas.nota}</span> : null}
+                  </>
+                ) : !p.enviado_em ? (
+                  <span style={{ color: COLORS.slate }}>a enviar na próxima hora</span>
+                ) : p.expira < agora ? (
+                  <span style={{ color: COLORS.slate }}>expirou sem resposta</span>
+                ) : (
+                  <span style={{ color: COLORS.warn }}>enviado, à espera de resposta</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Complaint detail / notes timeline ----------
-function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista }) {
+function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista, contactosEscola = {}, notificar }) {
   const [respostaTipoId, setRespostaTipoId] = useState(entry.respostaTipoId || null);
   const [assuntoSugerido, setAssuntoSugerido] = useState("");
   const [causaRaiz, setCausaRaiz] = useState(entry.causaRaiz || "");
@@ -2018,6 +2122,8 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen,
             </div>
           </div>
         )}
+
+        {entry.derivedStatus === "concluido" && <AvaliacaoEscola entry={entry} contactos={contactosEscola} notificar={notificar} />}
 
         {entry.derivedStatus !== "concluido" && (
           <SugestoesResposta
@@ -6167,7 +6273,7 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Data", "Escola", "Turma", "Escalão", "Motivo", "Nº", ""].map((h) => (
+                    {["Data", "Código", "Escola", "Turma", "Escalão", "Motivo", "Nº", ""].map((h) => (
                       <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
@@ -6176,6 +6282,7 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
                   {lista.map((d) => (
                     <tr key={d.id}>
                       <td style={{ ...tdStyle, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>{d.data}</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{d.alunoId || "—"}</td>
                       <td style={tdStyle}>{d.escola}</td>
                       <td style={tdStyle}>{d.turma}</td>
                       <td style={tdStyle}>{escalaoDaTurma(d.turma, niveis)}</td>
@@ -6210,8 +6317,10 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
   const [cts, setCts] = useState(() => Object.fromEntries(escolas.map((e) => [e, ((options.emailsCoordenadores || {})[e] || []).join("\n")])));
   const [responder, setResponder] = useState((options.emailResponderOperacionais || []).join(", "));
   const [motivos, setMotivos] = useState((options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO).join("\n"));
+  const [geral, setGeral] = useState((options.emailsCoordenadorGeral || []).join("\n"));
+  const [tecnicos, setTecnicos] = useState(options.temasTecnicos || []);
   const [filtro, setFiltro] = useState("");
-  const invalidos = [...Object.values(ops), ...Object.values(cts), responder]
+  const invalidos = [...Object.values(ops), ...Object.values(cts), responder, geral]
     .flatMap((t) => String(t || "").split(/[\s,;]+/).filter(Boolean))
     .filter((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
   const guardar = () => {
@@ -6220,6 +6329,8 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
       emailsOperacionais: limpa(ops),
       emailsCoordenadores: limpa(cts),
       emailResponderOperacionais: lerEmails(responder),
+      emailsCoordenadorGeral: lerEmails(geral),
+      temasTecnicos: tecnicos.filter((t) => (options.categories || []).includes(t)),
       motivosExperiencia: [...new Set(motivos.split("\n").map((x) => x.trim()).filter(Boolean))],
     });
   };
@@ -6244,7 +6355,7 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
     >
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55 }}>
-          <strong>Operacionais</strong> recebem à segunda-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas.
+          <strong>Operacionais</strong> recebem à segunda-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas. <strong>Coordenador geral</strong> recebe, à segunda-feira, um resumo da rede: escolas que precisam de atenção, escolas em destaque e reclamações de temas técnicos.
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>
@@ -6284,6 +6395,35 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
           Motivos de não conversão que os operacionais podem escolher (um por linha; os que têm "técnico" vão para o coordenador)
           <textarea rows={5} value={motivos} onChange={(e) => setMotivos(e.target.value)} style={{ ...ta, width: "100%" }} />
         </label>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>
+            Coordenador geral (e-mails)
+            <textarea rows={Math.max(2, String(geral || "").split("\n").length)} value={geral} onChange={(e) => setGeral(e.target.value)} placeholder="coordenador.geral@…" style={{ ...ta, width: "100%" }} />
+          </label>
+          <div style={{ flex: "1 1 340px", display: "grid", gap: 6, fontSize: 12.5, color: COLORS.ink2 }}>
+            <span>Temas de reclamação que contam como técnicos (aparecem no resumo do coordenador geral)</span>
+            {(options.categories || []).length === 0 ? (
+              <span style={{ color: COLORS.slate }}>Ainda não há temas. Cria-os em Listas › Temas de reclamação.</span>
+            ) : (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(options.categories || []).map((t) => {
+                  const on = tecnicos.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setTecnicos((l) => (on ? l.filter((x) => x !== t) : [...l, t]))}
+                      style={{ padding: "5px 10px", borderRadius: 999, fontSize: 12.5, cursor: "pointer", border: `1.5px solid ${on ? COLORS.navy : COLORS.rule}`, background: on ? COLORS.navy : "transparent", color: on ? "#fff" : COLORS.ink }}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </JanelaSGQ>
   );
@@ -6313,10 +6453,11 @@ function PainelEmailsEscolas({ op, escolas }) {
   }, [carregar]);
   const comOp = escolas.filter((e) => ((op.contactos.emailsOperacionais || {})[e] || []).length).length;
   const comCt = escolas.filter((e) => ((op.contactos.emailsCoordenadores || {})[e] || []).length).length;
+  const comGeral = (op.contactos.emailsCoordenadorGeral || []).length;
   const pedidoEm = op.pedidoEnvio && op.pedidoEnvio.em;
   const pendente = pedidoEm && (!envio || !envio.ultimo || pedidoEm > envio.ultimo);
   const hojeISO = new Date().toISOString();
-  const lista = (pedidos || []).filter((p) => verTodos || !p.respondido_em || (p.respostas?.turmas && Object.keys(p.respostas.turmas).length && !p.ids_aplicados_em) || p.criado > new Date(Date.now() - 14 * 86400000).toISOString());
+  const lista = (pedidos || []).filter((p) => p.itens?.tipo !== "eficacia").filter((p) => verTodos || !p.respondido_em || (p.respostas?.turmas && Object.keys(p.respostas.turmas).length && !p.ids_aplicados_em) || p.criado > new Date(Date.now() - 14 * 86400000).toISOString());
   const porConfirmar = (pedidos || []).filter((p) => p.respostas?.turmas && Object.values(p.respostas.turmas).some((l) => (l || []).length) && !p.ids_aplicados_em);
   const quando = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—");
   const aplicar = async (p) => {
@@ -6345,14 +6486,14 @@ function PainelEmailsEscolas({ op, escolas }) {
         {pendente ? (
           <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai na próxima hora</span>
         ) : (
-          <button onClick={op.onPedirEnvio} disabled={!comOp && !comCt} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt ? 1 : 0.5 }}>
+          <button onClick={op.onPedirEnvio} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
             Enviar agora
           </button>
         )}
       </div>
       <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px", lineHeight: 1.5 }}>
-        À segunda-feira, às escolas com situações: experiências com mais de 2 semanas por decidir e turmas do plano sem alunos. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico.
-        {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador.` : " Ainda sem envios."}
+        À segunda-feira, às escolas com situações: experiências com mais de 2 semanas por decidir e turmas do plano sem alunos. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
+        {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
       </div>
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
@@ -6403,14 +6544,17 @@ function PainelEmailsEscolas({ op, escolas }) {
                   const nx = (p.itens?.experiencias || []).length;
                   const rx = Object.keys(p.respostas?.experiencias || {}).length;
                   const nt = (p.itens?.turmas || []).length;
-                  const rt = Object.values(p.respostas?.turmas || {}).filter((l) => (l || []).length).length;
+                  const rt = Object.values(p.respostas?.turmas || {}).filter((l) => (l || []).length).length + (p.respostas?.turmasVazias || []).length;
                   const expirado = p.expira < hojeISO;
                   return (
                     <tr key={p.token}>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{p.escola}</td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>{quando(p.criado)}</td>
                       <td style={tdStyle}>{nx ? `${rx} de ${nx} respondidas` : "—"}</td>
-                      <td style={tdStyle}>{nt ? `${rt} de ${nt} com códigos` : "—"}</td>
+                      <td style={tdStyle}>
+                        {nt ? `${rt} de ${nt} tratadas` : "—"}
+                        {(p.respostas?.turmasVazias || []).length > 0 && <div style={{ fontSize: 11.5, color: COLORS.slate }}>sem alunos por agora: {p.respostas.turmasVazias.join(", ")}</div>}
+                      </td>
                       <td style={{ ...tdStyle, color: p.respondido_em ? COLORS.ok : expirado ? COLORS.slate : COLORS.warn, fontWeight: 600, fontSize: 12.5 }}>{p.respondido_em ? `Respondido ${quando(p.respondido_em)}` : expirado ? "Expirou sem resposta" : "À espera"}</td>
                     </tr>
                   );
@@ -11408,6 +11552,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const [hEsc, setHEsc] = useState(escolas[0] || "");
   const [hIns, setHIns] = useState("");
   const [hDes, setHDes] = useState("");
+  const [fMotDes, setFMotDes] = useState("todos");
 
   const capacidades = options.capacidades || {};
   const todos = Object.values(reg?.alunos || {});
@@ -11504,6 +11649,10 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
   })();
+
+  const listaDesist = desist
+    .filter((a) => fMotDes === "todos" || (a.motivo || "Não definido") === fMotDes)
+    .sort((a, b) => String(b.saida || "").localeCompare(String(a.saida || "")));
 
   const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "8px 9px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
   const td = { padding: "8px 9px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13, fontVariantNumeric: "tabular-nums" };
@@ -11765,6 +11914,55 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
                       <Bar dataKey="value" name="Desistências" fill={COLORS.danger} radius={[3, 3, 0, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2 }}>Quem desistiu ({desist.length})</div>
+                    <select value={fMotDes} onChange={(e) => setFMotDes(e.target.value)} className="semFoto" style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 12 }} aria-label="Filtrar por motivo">
+                      <option value="todos">Todos os motivos</option>
+                      {motivos.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.name} ({m.value})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {listaDesist.length === 0 ? (
+                    <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem desistências com este filtro.</div>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr>
+                            {["Código", ...(escolaSel ? [] : ["Escola"]), "Turma", "Entrada", "Desistiu a", "Motivo"].map((h) => (
+                              <th key={h} style={th}>
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {listaDesist.slice(0, 300).map((a) => (
+                            <tr key={a.id}>
+                              <td style={{ ...td, fontWeight: 600 }}>{a.id}</td>
+                              {!escolaSel && <td style={td}>{a.escola}</td>}
+                              <td style={td}>{a.turma || "—"}</td>
+                              <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
+                              <td style={td}>{a.saida ? fmt(new Date(a.saida + "T00:00:00")) : "—"}</td>
+                              <td style={{ ...td, fontSize: 12.5 }}>{a.motivo || "Não definido"}</td>
+                            </tr>
+                          ))}
+                          {listaDesist.length > 300 && (
+                            <tr>
+                              <td colSpan={6} style={{ ...td, color: COLORS.slate }}>
+                                A mostrar 300 de {listaDesist.length}. Filtra por motivo ou por escola.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -25619,8 +25817,10 @@ function AppPrincipal({ onSair }) {
   const importarInscritos = (r) => {
     const ep = r.epoca;
     // Experiências registadas à mão: convertem-se se o código aparecer nos inscritos.
-    const expManuais = experiencias.filter((x) => x.origem === "manual" && x.epoca === ep && x.alunoId && !r.experiencias[x.alunoId]);
-    expManuais.forEach((x) => (r.experiencias[x.alunoId] = { id: x.alunoId, escola: x.escola, data: x.data }));
+    const expManuais = experiencias.filter((x) => (x.origem === "manual" || x.origem === "operacional") && x.epoca === ep && x.alunoId && !r.experiencias[x.alunoId]);
+    expManuais.forEach(
+      (x) => (r.experiencias[x.alunoId] = { id: x.alunoId, escola: x.escola, data: x.data, ...(x.turma ? { turma: x.turma } : {}), ...(x.resultado && x.resultado !== "pendente" ? { resultado: x.resultado } : {}) })
+    );
     const reg = { semana1: r.semana1, avisos: r.avisos, alunos: r.alunos, experiencias: r.experiencias, importacoes: r.importacoes };
     const al = Object.values(r.alunos);
 
@@ -27290,6 +27490,11 @@ function AppPrincipal({ onSair }) {
           biblioteca={respostasTipo.filter((r) => !r.arquivada)}
           historico={withStatus}
           onGerirLista={setListaAberta}
+          notificar={notificar}
+          contactosEscola={{
+            op: (options.emailsOperacionais || {})[(withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail).school] || [],
+            ct: (options.emailsCoordenadores || {})[(withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail).school] || [],
+          }}
           onStart={(id) => {
             startWork(id);
             setViewingDetail(null);

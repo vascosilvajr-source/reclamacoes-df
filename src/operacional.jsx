@@ -18,7 +18,26 @@ const OPCOES = [
   ["insucesso", "Não converteu", LARANJA, "#FDEEE3"],
 ];
 
+const AVALIACOES = [
+  ["eficaz", "Resolveu", VERDE, "#E6F4EE"],
+  ["parcial", "Resolveu em parte", AMBAR, "#FBF2DE"],
+  ["ineficaz", "Não resolveu", LARANJA, "#FDEEE3"],
+];
+
 const dataPT = (iso) => (iso ? `${String(iso).slice(8, 10)}/${String(iso).slice(5, 7)}/${String(iso).slice(0, 4)}` : "");
+const ehOutro = (m) => /^outr/i.test(String(m || ""));
+const ehEquipa = (t) => /^sub[\s-]?\d/i.test(String(t || "")); // equipas de competição: Sub-9, Sub-11 A…
+const ROTULO_RES = { sucesso: "Converteu", pendente: "Ainda a decorrer", insucesso: "Não converteu" };
+const novaVazia = () => ({ k: Math.random().toString(36).slice(2), id: "", data: "", turma: "", r: "", motivo: "", nota: "" });
+const faltaNova = (n) => {
+  if (!/^[0-9A-Za-z-]{1,20}$/.test(n.id.trim())) return "o código do atleta";
+  if (!n.data) return "a data";
+  if (!n.turma) return "a turma ou equipa";
+  if (!n.r) return "o resultado";
+  if (n.r === "insucesso" && !n.motivo) return "o motivo";
+  if (n.r === "insucesso" && ehOutro(n.motivo) && !n.nota.trim()) return "o detalhe do motivo";
+  return "";
+};
 const lerIds = (t) =>
   [...new Set(String(t || "").split(/[\s,;]+/).map((x) => x.trim()).filter((x) => /^[0-9A-Za-z-]{1,20}$/.test(x)))];
 
@@ -27,7 +46,11 @@ export default function Operacional({ token }) {
   const [pedido, setPedido] = useState(null);
   const [exp, setExp] = useState({}); // id → { r, motivo, turma, nota }
   const [ids, setIds] = useState({}); // turma → texto
+  const [vazias, setVazias] = useState({}); // turma → true ("ainda não há alunos")
+  const [novas, setNovas] = useState([]); // experiências acrescentadas pelo operacional (ex.: equipas de competição)
   const [nota, setNota] = useState("");
+  const [av, setAv] = useState(""); // avaliação da eficácia de uma reclamação
+  const [avNota, setAvNota] = useState("");
   const [erro, setErro] = useState("");
   const [enviado, setEnviado] = useState(null);
 
@@ -44,35 +67,69 @@ export default function Operacional({ token }) {
       const i0 = {};
       Object.entries(r.turmas || {}).forEach(([k, v]) => (i0[k] = (v || []).join(", ")));
       setIds(i0);
+      setVazias(Object.fromEntries((r.turmasVazias || []).map((t) => [t, true])));
       setNota(r.nota || "");
+      if (r.avaliacao) {
+        setAv(r.avaliacao);
+        setAvNota(r.nota || "");
+      }
       setEstado(data.expirado ? "expirado" : "pronto");
     })();
   }, [token]);
 
   const itens = (pedido && pedido.itens) || {};
+  const ehEficacia = itens.tipo === "eficacia";
   const experiencias = itens.experiencias || [];
   const turmas = itens.turmas || [];
   const motivos = itens.motivos || [];
   const turmasEscola = itens.turmasEscola || [];
   const faltaMotivo = experiencias.filter((x) => exp[x.id] && exp[x.id].r === "insucesso" && !exp[x.id].motivo);
+  const faltaDetalhe = experiencias.filter((x) => exp[x.id] && exp[x.id].r === "insucesso" && ehOutro(exp[x.id].motivo) && !(exp[x.id].nota || "").trim());
   const respondidas = experiencias.filter((x) => exp[x.id] && exp[x.id].r).length;
-  const comIds = turmas.filter((t) => lerIds(ids[t.turma]).length).length;
+  const nVazias = turmas.filter((t) => vazias[t.turma]).length;
+  const guardadas = (pedido && pedido.respostas && pedido.respostas.novas) || [];
+  const novasPreenchidas = novas.filter((n) => n.id.trim() || n.data || n.turma || n.r);
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const equipas = turmasEscola.filter(ehEquipa);
+  const turmasNormais = turmasEscola.filter((t) => !ehEquipa(t));
+  const mudaNova = (k, campos) => setNovas((l) => l.map((n) => (n.k === k ? { ...n, ...campos } : n)));
+  const comIds = turmas.filter((t) => !vazias[t.turma] && lerIds(ids[t.turma]).length).length;
   const muda = (id, campos) => setExp((e) => ({ ...e, [id]: { ...(e[id] || {}), ...campos } }));
 
+  const enviarAvaliacao = async () => {
+    setErro("");
+    if (!av) return setErro("Escolhe como ficou a situação.");
+    if (av !== "eficaz" && !avNota.trim()) return setErro("Explica em poucas palavras o que falta ou o que voltou a acontecer.");
+    setEstado("a enviar");
+    const { data, error } = await supabase.rpc("op_responder", { p_token: token, p_respostas: { avaliacao: av, nota: avNota.trim() } });
+    if (error) {
+      setEstado("pronto");
+      return setErro(/expirado/.test(error.message) ? "Este pedido já expirou." : /detalhe/.test(error.message) ? "Falta explicar o que falta ou o que voltou a acontecer." : "Não foi possível enviar. Tenta outra vez daqui a pouco.");
+    }
+    setEnviado(data);
+    setEstado("enviado");
+  };
+
   const enviar = async () => {
+    if (ehEficacia) return enviarAvaliacao();
     setErro("");
     if (faltaMotivo.length) return setErro(faltaMotivo.length === 1 ? "Falta o motivo na experiência que não converteu." : `Falta o motivo em ${faltaMotivo.length} experiências que não converteram.`);
-    if (!respondidas && !comIds && !nota.trim()) return setErro("Ainda não respondeste a nada.");
+    if (faltaDetalhe.length) return setErro(faltaDetalhe.length === 1 ? "Quando o motivo é «Outro», explica-o no detalhe." : `Quando o motivo é «Outro», explica-o no detalhe (faltam ${faltaDetalhe.length}).`);
+    const malNova = novasPreenchidas.find((n) => faltaNova(n));
+    if (malNova) return setErro(`Numa experiência acrescentada falta ${faltaNova(malNova)}.`);
+    if (!respondidas && !comIds && !nVazias && !novasPreenchidas.length && !nota.trim()) return setErro("Ainda não respondeste a nada.");
     setEstado("a enviar");
     const respostas = {
+      novas: novasPreenchidas.map((n) => ({ id: n.id.trim(), data: n.data, turma: n.turma, r: n.r, ...(n.r === "insucesso" ? { motivo: n.motivo } : {}), ...(n.nota.trim() ? { nota: n.nota.trim() } : {}) })),
       experiencias: Object.fromEntries(Object.entries(exp).filter(([, v]) => v && v.r)),
-      turmas: Object.fromEntries(turmas.map((t) => [t.turma, lerIds(ids[t.turma])]).filter(([, l]) => l.length)),
+      turmas: Object.fromEntries(turmas.filter((t) => !vazias[t.turma]).map((t) => [t.turma, lerIds(ids[t.turma])]).filter(([, l]) => l.length)),
+      turmasVazias: turmas.filter((t) => vazias[t.turma]).map((t) => t.turma),
       nota: nota.trim(),
     };
     const { data, error } = await supabase.rpc("op_responder", { p_token: token, p_respostas: respostas });
     if (error) {
       setEstado("pronto");
-      return setErro(/expirado/.test(error.message) ? "Este pedido já expirou." : "Não foi possível enviar. Tenta outra vez daqui a pouco.");
+      return setErro(/expirado/.test(error.message) ? "Este pedido já expirou." : /detalhe/.test(error.message) ? "Falta o detalhe numa experiência com o motivo «Outro»." : /inválid|motivo/.test(error.message) ? "Há um dado inválido ou em falta numa experiência acrescentada (código, data, turma ou motivo)." : "Não foi possível enviar. Tenta outra vez daqui a pouco.");
     }
     setEnviado(data);
     setEstado("enviado");
@@ -82,16 +139,22 @@ export default function Operacional({ token }) {
     if (estado === "a carregar") return <div style={{ color: CINZA, fontSize: 14 }}>A abrir o pedido…</div>;
     if (estado === "invalido") return <Aviso titulo="Link inválido" texto="Este link não existe ou foi copiado incompleto. Abre-o outra vez a partir do e-mail." />;
     if (estado === "expirado") return <Aviso titulo="Pedido expirado" texto="Este pedido já não aceita respostas. O próximo chega no e-mail da semana." />;
+    if (estado === "enviado" && pedido && pedido.itens && pedido.itens.tipo === "eficacia")
+      return <Aviso titulo="Obrigado, a avaliação ficou registada" texto={`Podes voltar a abrir o link para a corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`} cor={VERDE} />;
     if (estado === "enviado")
       return (
         <Aviso
           titulo="Obrigado, ficou registado"
-          texto={`${enviado?.experiencias || 0} experiência(s) atualizadas na app${enviado?.turmas ? ` · códigos de ${enviado.turmas} turma(s)/equipa(s) enviados para confirmação` : ""}. Podes voltar a abrir o link para corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`}
+          texto={`${enviado?.experiencias || 0} experiência(s) atualizadas na app${enviado?.turmas ? ` · códigos de ${enviado.turmas} turma(s)/equipa(s) enviados para confirmação` : ""}${enviado?.vazias ? ` · ${enviado.vazias} turma(s)/equipa(s) sem alunos por agora` : ""}${enviado?.novas ? ` · ${enviado.novas} experiência(s) acrescentada(s)` : ""}. Podes voltar a abrir o link para corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`}
           cor={VERDE}
         />
       );
     return null;
   }, [estado, enviado, pedido]);
+
+  useEffect(() => {
+    if (ehEficacia) document.title = "Dragon Force · Avaliação de reclamação";
+  }, [ehEficacia]);
 
   return (
     <div className="opEcra">
@@ -109,7 +172,72 @@ export default function Operacional({ token }) {
           </div>
         </div>
         <div className="opCartao">
-          {corpo || (
+          {corpo ||
+            (ehEficacia ? (
+              <>
+                <div className="opRotulo">Avaliação da resposta a uma reclamação</div>
+                <h1 className="opTitulo">{pedido.escola}</h1>
+                <div className="opMeta">
+                  <span>Reclamação</span>
+                  <strong>nº {String(itens.numero || "").padStart(4, "0")}</strong>
+                  {itens.tema && (
+                    <>
+                      <span>Tema</span>
+                      <strong>{itens.tema}</strong>
+                    </>
+                  )}
+                  {itens.recebida && (
+                    <>
+                      <span>Recebida</span>
+                      <strong>{dataPT(itens.recebida)}</strong>
+                    </>
+                  )}
+                  {itens.concluida && (
+                    <>
+                      <span>Concluída</span>
+                      <strong>{dataPT(itens.concluida)}</strong>
+                    </>
+                  )}
+                  <span>Responde até</span>
+                  <strong>{dataPT(String(pedido.expira).slice(0, 10))}</strong>
+                </div>
+                <section className="opSeccao">
+                  {itens.resumo && (
+                    <>
+                      <h2>O que foi feito</h2>
+                      <p className="opNota" style={{ color: TINTA }}>{itens.resumo}</p>
+                    </>
+                  )}
+                  <h2>A situação ficou resolvida?</h2>
+                  <p className="opNota">
+                    Diz como está agora, {itens.papel === "coordenador" ? "do ponto de vista técnico" : "no dia a dia da escola"}. Serve para saber se a resposta funcionou.
+                  </p>
+                  <div className="opEscolha" role="radiogroup" aria-label="Eficácia da resposta">
+                    {AVALIACOES.map(([k, l, cor, fundo]) => (
+                      <button key={k} type="button" role="radio" aria-checked={av === k} onClick={() => setAv(k)} style={av === k ? { borderColor: cor, color: cor, background: fundo } : undefined}>
+                        <span className="opBola" style={av === k ? { borderColor: cor, background: cor } : undefined} />
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="opLargo" style={{ marginTop: 12 }}>
+                    <span className="opRotuloCampo">{av && av !== "eficaz" ? "O que falta ou o que voltou a acontecer (obrigatório)" : "Comentário (opcional)"}</span>
+                    <textarea
+                      rows={3}
+                      value={avNota}
+                      maxLength={600}
+                      onChange={(e) => setAvNota(e.target.value)}
+                      className={av && av !== "eficaz" && !avNota.trim() ? "opFalta" : ""}
+                      placeholder="Não escrevas nomes nem dados de saúde."
+                    />
+                  </label>
+                </section>
+                {erro && <div className="opErro">{erro}</div>}
+                <button type="button" className="opEnviar" onClick={enviar} disabled={estado === "a enviar"}>
+                  {estado === "a enviar" ? "A enviar…" : "Enviar avaliação"}
+                </button>
+              </>
+            ) : (
             <>
               <div className="opRotulo">Pedido da semana</div>
               <h1 className="opTitulo">{pedido.escola}</h1>
@@ -180,8 +308,14 @@ export default function Operacional({ token }) {
                                 </label>
                               )}
                               <label className="opLargo">
-                                Detalhe (opcional)
-                                <input value={v.nota || ""} maxLength={300} onChange={(e) => muda(x.id, { nota: e.target.value })} placeholder="Sem nomes. Ex.: achou o treino muito exigente" />
+                                {ehOutro(v.motivo) ? "Detalhe (obrigatório: explica o motivo)" : "Detalhe (opcional)"}
+                                <input
+                                  value={v.nota || ""}
+                                  maxLength={300}
+                                  onChange={(e) => muda(x.id, { nota: e.target.value })}
+                                  className={ehOutro(v.motivo) && !(v.nota || "").trim() ? "opFalta" : ""}
+                                  placeholder="Sem nomes. Ex.: achou o treino muito exigente"
+                                />
                               </label>
                             </div>
                           )}
@@ -195,10 +329,11 @@ export default function Operacional({ token }) {
               {turmas.length > 0 && (
                 <section className="opSeccao">
                   <h2>Turmas e equipas do plano sem alunos na app</h2>
-                  <p className="opNota">Estão no plano semanal, mas a app não tem alunos inscritos nelas. Escreve os códigos (ID) dos alunos que treinam em cada uma, separados por vírgulas. Vão para confirmação antes de mudarem na app.</p>
+                  <p className="opNota">Estão no plano semanal, mas a app não tem alunos inscritos nelas. Escreve os códigos (ID) dos alunos que treinam em cada uma, separados por vírgulas, ou assinala que ainda não há alunos. Os códigos vão para confirmação antes de mudarem na app.</p>
                   <div className="opLista">
                     {turmas.map((t) => {
-                      const n = lerIds(ids[t.turma]).length;
+                      const vazia = !!vazias[t.turma];
+                      const n = vazia ? 0 : lerIds(ids[t.turma]).length;
                       return (
                         <div key={t.turma} className="opItem">
                           <div className="opItemCab">
@@ -206,11 +341,125 @@ export default function Operacional({ token }) {
                             <span>{(t.horarios || []).join(" · ")}</span>
                             {n > 0 && <span className="opConta">{n} {n === 1 ? "código" : "códigos"}</span>}
                           </div>
-                          <textarea rows={2} value={ids[t.turma] || ""} onChange={(e) => setIds((s) => ({ ...s, [t.turma]: e.target.value }))} placeholder="Ex.: 22534, 22987, 23011" inputMode="numeric" />
+                          <label className="opCheck">
+                            <input type="checkbox" checked={vazia} onChange={(e) => setVazias((s) => ({ ...s, [t.turma]: e.target.checked }))} />
+                            Ainda não há alunos nesta turma/equipa
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={vazia ? "" : ids[t.turma] || ""}
+                            disabled={vazia}
+                            onChange={(e) => setIds((s) => ({ ...s, [t.turma]: e.target.value }))}
+                            placeholder={vazia ? "Sem alunos por agora" : "Ex.: 22534, 22987, 23011"}
+                            inputMode="numeric"
+                          />
                         </div>
                       );
                     })}
                   </div>
+                </section>
+              )}
+
+              {turmasEscola.length > 0 && (
+                <section className="opSeccao">
+                  <h2>Experiências que faltam na lista</h2>
+                  <p className="opNota">Fizeste experiências que não aparecem acima, por exemplo em equipas de competição (Sub-…)? Acrescenta-as: código do atleta, data, turma ou equipa e como ficou.</p>
+                  {guardadas.length > 0 && (
+                    <div className="opLista">
+                      {guardadas.map((g) => (
+                        <div key={g.id} className="opItem opBloqueado">
+                          <div className="opItemCab">
+                            <strong className="opCodigo">{g.id}</strong>
+                            <span>experiência a {dataPT(g.data)}</span>
+                            <span>· {g.turma}</span>
+                            <span className="opConta" style={{ color: CINZA }}>{ROTULO_RES[g.r] || g.r}{g.motivo ? ` · ${g.motivo}` : ""}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="opLista">
+                    {novas.map((n) => (
+                      <div key={n.k} className="opItem">
+                        <div className="opItemCab">
+                          <strong>Nova experiência</strong>
+                          <button type="button" className="opRemover" onClick={() => setNovas((l) => l.filter((x) => x.k !== n.k))}>
+                            Remover
+                          </button>
+                        </div>
+                        <div className="opDetalhe">
+                          <label>
+                            Código do atleta (ID)
+                            <input value={n.id} maxLength={20} onChange={(e) => mudaNova(n.k, { id: e.target.value })} placeholder="Ex.: 22534" />
+                          </label>
+                          <label>
+                            Data da experiência
+                            <input type="date" value={n.data} max={hojeISO} onChange={(e) => mudaNova(n.k, { data: e.target.value })} />
+                          </label>
+                          <label className="opLargo">
+                            Turma ou equipa
+                            <select value={n.turma} onChange={(e) => mudaNova(n.k, { turma: e.target.value })}>
+                              <option value="">Escolher…</option>
+                              {equipas.length > 0 && (
+                                <optgroup label="Equipas de competição">
+                                  {equipas.map((t) => (
+                                    <option key={t} value={t}>
+                                      {t}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {turmasNormais.length > 0 && (
+                                <optgroup label="Turmas">
+                                  {turmasNormais.map((t) => (
+                                    <option key={t} value={t}>
+                                      {t}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                            </select>
+                          </label>
+                        </div>
+                        <div className="opEscolha" role="radiogroup" aria-label="Resultado da experiência acrescentada">
+                          {OPCOES.map(([k, l, cor, fundo]) => (
+                            <button key={k} type="button" role="radio" aria-checked={n.r === k} onClick={() => mudaNova(n.k, { r: k })} style={n.r === k ? { borderColor: cor, color: cor, background: fundo } : undefined}>
+                              <span className="opBola" style={n.r === k ? { borderColor: cor, background: cor } : undefined} />
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                        {n.r === "insucesso" && (
+                          <div className="opDetalhe">
+                            <label>
+                              Motivo
+                              <select value={n.motivo} onChange={(e) => mudaNova(n.k, { motivo: e.target.value })} className={!n.motivo ? "opFalta" : ""}>
+                                <option value="">Escolher…</option>
+                                {motivos.map((m) => (
+                                  <option key={m} value={m}>
+                                    {m}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              {ehOutro(n.motivo) ? "Detalhe (obrigatório)" : "Detalhe (opcional)"}
+                              <input value={n.nota} maxLength={300} onChange={(e) => mudaNova(n.k, { nota: e.target.value })} className={ehOutro(n.motivo) && !n.nota.trim() ? "opFalta" : ""} placeholder="Sem nomes" />
+                            </label>
+                          </div>
+                        )}
+                        {n.r !== "insucesso" && (
+                          <label className="opLargo">
+                            Detalhe (opcional)
+                            <input value={n.nota} maxLength={300} onChange={(e) => mudaNova(n.k, { nota: e.target.value })} placeholder="Sem nomes" />
+                          </label>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="opMais" onClick={() => setNovas((l) => [...l, novaVazia()])}>
+                    + Acrescentar experiência
+                  </button>
                 </section>
               )}
 
@@ -226,10 +475,10 @@ export default function Operacional({ token }) {
                 {estado === "a enviar" ? "A enviar…" : "Enviar respostas"}
               </button>
               <div className="opRodape">
-                {respondidas} de {experiencias.length} experiências respondidas{turmas.length ? ` · ${comIds} de ${turmas.length} turmas com códigos` : ""}
+                {respondidas} de {experiencias.length} experiências respondidas{novasPreenchidas.length ? ` · ${novasPreenchidas.length} acrescentada(s)` : ""}{turmas.length ? ` · ${comIds + nVazias} de ${turmas.length} turmas tratadas` : ""}
               </div>
             </>
-          )}
+            ))}
         </div>
       </div>
     </div>
@@ -283,6 +532,12 @@ html, body { margin: 0; background: #07142A; }
 .opRotuloCampo { font-size: 14px; color: ${TINTA}; font-weight: 600; }
 .opCartao select, .opCartao input, .opCartao textarea { font: inherit; font-size: 14px; color: ${TINTA}; border: 1px solid #CDD4DF; border-radius: 9px; padding: 9px 10px; background: #fff; width: 100%; box-sizing: border-box; }
 .opCartao textarea { resize: vertical; }
+.opBloqueado { background: #F7F9FC; }
+.opRemover { margin-left: auto; border: none; background: none; color: ${CINZA}; font: inherit; font-size: 12.5px; text-decoration: underline; cursor: pointer; padding: 4px; }
+.opMais { width: 100%; min-height: 44px; border: 1.5px dashed #B5BDCA; background: #fff; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 600; color: ${AZUL}; cursor: pointer; margin-bottom: 14px; }
+.opCartao textarea:disabled { background: #F3F5F9; color: #8A93A3; }
+.opCheck { display: flex; align-items: center; gap: 9px; font-size: 14px; color: ${TINTA}; font-weight: 500; cursor: pointer; min-height: 32px; }
+.opCartao .opCheck input { width: 18px; height: 18px; padding: 0; flex: none; accent-color: ${AZUL}; }
 .opCartao .opFalta { border-color: ${LARANJA}; }
 .opErro { color: ${LARANJA}; font-size: 13.5px; margin: 12px 0 0; font-weight: 600; }
 .opEnviar { margin-top: 16px; width: 100%; min-height: 48px; border: none; border-radius: 12px; background: ${AZUL}; color: #fff; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
