@@ -19,9 +19,9 @@ const OPCOES = [
 ];
 
 const AVALIACOES = [
-  ["eficaz", "Resolveu", VERDE, "#E6F4EE"],
-  ["parcial", "Resolveu em parte", AMBAR, "#FBF2DE"],
-  ["ineficaz", "Não resolveu", LARANJA, "#FDEEE3"],
+  ["eficaz", "Eficaz", VERDE, "#E6F4EE"],
+  ["parcial", "Parcialmente eficaz", AMBAR, "#FBF2DE"],
+  ["ineficaz", "Não eficaz", LARANJA, "#FDEEE3"],
 ];
 
 const dataPT = (iso) => (iso ? `${String(iso).slice(8, 10)}/${String(iso).slice(5, 7)}/${String(iso).slice(0, 4)}` : "");
@@ -99,12 +99,11 @@ export default function Operacional({ token }) {
   const enviarAvaliacao = async () => {
     setErro("");
     if (!av) return setErro("Escolhe como ficou a situação.");
-    if (av !== "eficaz" && !avNota.trim()) return setErro("Explica em poucas palavras o que falta ou o que voltou a acontecer.");
     setEstado("a enviar");
     const { data, error } = await supabase.rpc("op_responder", { p_token: token, p_respostas: { avaliacao: av, nota: avNota.trim() } });
     if (error) {
       setEstado("pronto");
-      return setErro(/expirado/.test(error.message) ? "Este pedido já expirou." : /detalhe/.test(error.message) ? "Falta explicar o que falta ou o que voltou a acontecer." : "Não foi possível enviar. Tenta outra vez daqui a pouco.");
+      return setErro(/expirado/.test(error.message) ? "Este pedido já expirou." : /detalhe/.test(error.message) ? "Falta o detalhe." : "Não foi possível enviar. Tenta outra vez daqui a pouco.");
     }
     setEnviado(data);
     setEstado("enviado");
@@ -173,7 +172,47 @@ export default function Operacional({ token }) {
         </div>
         <div className="opCartao">
           {corpo ||
-            (ehEficacia ? (
+            (itens.tipo === "reclamacao" ? (
+              <>
+                <div className="opRotulo">Reclamação para acompanhamento técnico</div>
+                <h1 className="opTitulo">{pedido.escola}</h1>
+                <div className="opMeta">
+                  <span>Reclamação</span>
+                  <strong>nº {String(itens.numero || "").padStart(4, "0")}</strong>
+                  {itens.tema && (
+                    <>
+                      <span>Tema</span>
+                      <strong>{itens.tema}</strong>
+                    </>
+                  )}
+                  {itens.categoria && (
+                    <>
+                      <span>Categoria</span>
+                      <strong>{itens.categoria}</strong>
+                    </>
+                  )}
+                  {itens.recebida && (
+                    <>
+                      <span>Recebida</span>
+                      <strong>{dataPT(itens.recebida)}</strong>
+                    </>
+                  )}
+                  <span>Estado</span>
+                  <strong>{itens.estado}</strong>
+                </div>
+                <section className="opSeccao">
+                  <h2>O que aconteceu e onde</h2>
+                  <p className="opNota" style={{ color: TINTA, whiteSpace: "pre-wrap" }}>{itens.descricao || "Sem descrição registada."}</p>
+                  {itens.contexto && (
+                    <>
+                      <h2>Contexto adicional</h2>
+                      <p className="opNota" style={{ color: TINTA, whiteSpace: "pre-wrap" }}>{itens.contexto}</p>
+                    </>
+                  )}
+                </section>
+                <div className="opRodape" style={{ textAlign: "left" }}>Página só de consulta. O link é pessoal e vale até {dataPT(String(pedido.expira).slice(0, 10))}. Não o reencaminhes.</div>
+              </>
+            ) : ehEficacia ? (
               <>
                 <div className="opRotulo">Avaliação da resposta a uma reclamação</div>
                 <h1 className="opTitulo">{pedido.escola}</h1>
@@ -208,9 +247,9 @@ export default function Operacional({ token }) {
                       <p className="opNota" style={{ color: TINTA }}>{itens.resumo}</p>
                     </>
                   )}
-                  <h2>A situação ficou resolvida?</h2>
+                  <h2>A resolução foi eficaz?</h2>
                   <p className="opNota">
-                    Diz como está agora, {itens.papel === "coordenador" ? "do ponto de vista técnico" : "no dia a dia da escola"}. Serve para saber se a resposta funcionou.
+                    Avalia {itens.papel === "coordenador" ? "do ponto de vista técnico" : "no dia a dia da escola"}: eficaz, parcialmente eficaz ou não eficaz.
                   </p>
                   <div className="opEscolha" role="radiogroup" aria-label="Eficácia da resposta">
                     {AVALIACOES.map(([k, l, cor, fundo]) => (
@@ -221,13 +260,12 @@ export default function Operacional({ token }) {
                     ))}
                   </div>
                   <label className="opLargo" style={{ marginTop: 12 }}>
-                    <span className="opRotuloCampo">{av && av !== "eficaz" ? "O que falta ou o que voltou a acontecer (obrigatório)" : "Comentário (opcional)"}</span>
+                    <span className="opRotuloCampo">Comentário (opcional)</span>
                     <textarea
                       rows={3}
                       value={avNota}
                       maxLength={600}
                       onChange={(e) => setAvNota(e.target.value)}
-                      className={av && av !== "eficaz" && !avNota.trim() ? "opFalta" : ""}
                       placeholder="Não escrevas nomes nem dados de saúde."
                     />
                   </label>

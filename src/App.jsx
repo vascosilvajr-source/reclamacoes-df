@@ -1900,7 +1900,7 @@ function GestorLista({ titulo, nota, itens, placeholder, emUso, onAdd, onRemove,
 // ---------- Manage schools/categories modal ----------
 
 // ---------- Avaliação da eficácia pela escola (e-mail ao operacional e ao coordenador) ----------
-const ROTULO_AVALIACAO = { eficaz: "Resolveu", parcial: "Resolveu em parte", ineficaz: "Não resolveu" };
+const ROTULO_AVALIACAO = { eficaz: "Eficaz", parcial: "Parcialmente eficaz", ineficaz: "Não eficaz" };
 const novoTokenPedido = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 function AvaliacaoEscola({ entry, contactos, notificar }) {
@@ -1955,7 +1955,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
       ) : (
         <>
           <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.5, marginBottom: 8 }}>
-            Envia um e-mail a {papeis.map(([, nome, l]) => `${nome.toLowerCase()} (${l.length})`).join(" e ")} de {entry.school} para dizerem se a resolução funcionou. O e-mail leva só o número, o tema e as datas.
+            Envia um e-mail a {papeis.map(([, nome, l]) => `${nome.toLowerCase()} (${l.length})`).join(" e ")} de {entry.school} para avaliarem se foi eficaz, parcialmente eficaz ou não eficaz. O e-mail leva só o número, o tema e as datas.
           </div>
           <textarea
             rows={2}
@@ -6355,7 +6355,7 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
     >
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55 }}>
-          <strong>Operacionais</strong> recebem à segunda-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas. <strong>Coordenador geral</strong> recebe, à segunda-feira, um resumo da rede: escolas que precisam de atenção, escolas em destaque e reclamações de temas técnicos.
+          <strong>Operacionais</strong> recebem à segunda-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas, e as reclamações dos temas técnicos, cada uma com link para ver a descrição. <strong>Coordenador geral</strong> recebe, à segunda-feira, um resumo da rede: escolas que precisam de atenção, escolas em destaque e reclamações de temas técnicos.
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>

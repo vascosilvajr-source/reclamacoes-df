@@ -41,17 +41,29 @@ create or replace function privado.epoca_atual() returns text language sql stabl
       from (select (now() at time zone 'Europe/Lisbon')::date d) x) y
 $$;
 
+-- 2a. Página de uma reclamação para o coordenador (link sem login): descrição e contexto, nunca o nome de quem reclamou.
+create or replace function privado.link_reclamacao(p_escola text, p_x jsonb) returns text language plpgsql as $$
+declare v_tok text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+begin
+  insert into pedidos_operacionais (token, escola, emails, expira, itens, enviado_em)
+  values (v_tok, p_escola, '[]'::jsonb, now() + interval '30 days',
+    jsonb_build_object('tipo', 'reclamacao', 'numero', p_x->>'entryNumber', 'tema', coalesce(p_x->>'tema', ''), 'categoria', coalesce(p_x->>'categoria', ''),
+      'recebida', coalesce(p_x->>'receivedDate', ''), 'estado', case when p_x->>'status' = 'concluido' then 'concluída' else 'em aberto' end,
+      'descricao', left(coalesce(p_x->>'description', ''), 4000), 'contexto', left(coalesce(p_x->>'context', ''), 4000)), now());
+  return v_tok;
+end $$;
+
 -- 2b. Resumo para o coordenador geral: escolas a precisar de atenção, escolas em destaque e reclamações
 --     de temas técnicos (os temas escolhe-os o utilizador na app). Só números e textos curtos, nunca nomes.
 create or replace function privado.resumo_geral(p_opc jsonb, p_reg jsonb, p_regp jsonb, p_hoje date)
-returns jsonb language plpgsql stable as $$
+returns jsonb language plpgsql as $$
 declare
   e text; v_rec jsonb; v_tem jsonb := coalesce(p_opc->'temasTecnicos', '[]'::jsonb);
   v_ref date := (p_hoje - interval '1 year')::date;
-  v_at int; v_ant int; v_des int; v_conv int; v_nao int; v_atras int; v_tecab int;
+  v_at int; v_ant int; v_des int; v_conv int; v_nao int; v_tecab int;
   v_var numeric; v_taxa numeric; v_cv numeric; v_tx jsonb;
   v_atencao jsonb := '[]'::jsonb; v_destaque jsonb := '[]'::jsonb; v_tecnicas jsonb := '[]'::jsonb;
-  t_at int := 0; t_ant int := 0; t_des int := 0; t_conv int := 0; t_nao int := 0; t_atras int := 0;
+  t_at int := 0; t_ant int := 0; t_des int := 0; t_conv int := 0; t_nao int := 0;
 begin
   select value into v_rec from app_storage where key = 'reclamacoes:registo';
   if v_rec is null or jsonb_typeof(v_rec) <> 'array' then v_rec := '[]'::jsonb; end if;
@@ -69,12 +81,11 @@ begin
            count(*) filter (where x->>'resultado' = 'insucesso' and not (coalesce(p_reg->'alunos', '{}'::jsonb) ? ex.id))
       into v_conv, v_nao
       from jsonb_each(coalesce(p_reg->'experiencias', '{}'::jsonb)) ex(id, x) where x->>'escola' = e;
-    select count(*) filter (where x->>'status' <> 'concluido' and coalesce(x->>'deadline', '') <> '' and left(x->>'deadline', 10) < p_hoje::text),
-           count(*) filter (where x->>'status' <> 'concluido' and v_tem ? coalesce(x->>'tema', ''))
-      into v_atras, v_tecab
+    select count(*) filter (where x->>'status' <> 'concluido' and v_tem ? coalesce(x->>'tema', ''))
+      into v_tecab
       from jsonb_array_elements(v_rec) x where x->>'school' = e;
 
-    t_at := t_at + v_at; t_ant := t_ant + v_ant; t_des := t_des + v_des; t_conv := t_conv + v_conv; t_nao := t_nao + v_nao; t_atras := t_atras + v_atras;
+    t_at := t_at + v_at; t_ant := t_ant + v_ant; t_des := t_des + v_des; t_conv := t_conv + v_conv; t_nao := t_nao + v_nao;
 
     if v_ant >= 20 then
       v_var := (v_at - v_ant)::numeric / v_ant * 100;
@@ -98,18 +109,14 @@ begin
         v_destaque := v_destaque || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s%% das experiências converteram (%s de %s decididas)', round(v_cv), v_conv, v_conv + v_nao)));
       end if;
     end if;
-    if v_atras > 0 then
-      v_atencao := v_atencao || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s %s fora do prazo', v_atras, case when v_atras = 1 then 'reclamação' else 'reclamações' end)));
-    end if;
     if v_tecab > 0 then
       v_atencao := v_atencao || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s %s de tema técnico em aberto', v_tecab, case when v_tecab = 1 then 'reclamação' else 'reclamações' end)));
     end if;
 
     -- reclamações de temas técnicos: em aberto ou recebidas nos últimos 90 dias
     select coalesce(jsonb_agg(jsonb_build_object('escola', e, 'numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
-             'estado', case when x->>'status' = 'concluido' then 'concluída'
-                            when coalesce(x->>'deadline', '') <> '' and left(x->>'deadline', 10) < p_hoje::text then 'fora do prazo'
-                            else 'em aberto' end) order by x->>'receivedDate' desc), '[]'::jsonb)
+             'estado', case when x->>'status' = 'concluido' then 'concluída' else 'em aberto' end,
+             'token', privado.link_reclamacao(e, x)) order by x->>'receivedDate' desc), '[]'::jsonb)
       into v_tx
       from jsonb_array_elements(v_rec) x
      where x->>'school' = e and v_tem ? coalesce(x->>'tema', '')
@@ -119,7 +126,7 @@ begin
 
   return jsonb_build_object(
     'rede', jsonb_build_object('inscritos', t_at, 'anterior', t_ant, 'desistencias', t_des,
-        'convertidas', t_conv, 'naoConvertidas', t_nao, 'reclamacoesForaDoPrazo', t_atras),
+        'convertidas', t_conv, 'naoConvertidas', t_nao),
     'atencao', v_atencao, 'destaque', v_destaque, 'tecnicas', v_tecnicas,
     'temasTecnicos', v_tem);
 end $$;
@@ -137,6 +144,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -159,6 +167,9 @@ begin
   if v_esp is null or jsonb_typeof(v_esp) <> 'array' then v_esp := '[]'::jsonb; end if;
   v_vistos := coalesce(v_opc->'planosNormalizacao'->'semAlunosVistos', '{}'::jsonb);
   v_avisos := coalesce(v_env->'avisosTurma', '{}'::jsonb);
+  v_recAv := coalesce(v_env->'reclamacoesAvisadas', '{}'::jsonb);
+  select value into v_regs from app_storage where key = 'reclamacoes:registo';
+  if v_regs is null or jsonb_typeof(v_regs) <> 'array' then v_regs := '[]'::jsonb; end if;
 
   for e in select jsonb_array_elements_text(coalesce(v_opc->'schools', '[]'::jsonb)) loop
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
@@ -222,8 +233,21 @@ begin
          group by 1) q
        where nao >= 3 and nao * 2 >= dec
          and coalesce(v_avisos->>(e || '|' || turma), '') < (v_hoje - 28)::text;
-      if jsonb_array_length(v_te) > 0 or jsonb_array_length(v_inc) > 0 then
-        v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc));
+      -- reclamações de temas técnicos (em aberto ou dos últimos 90 dias) que ainda não foram enviadas, cada uma com link para a página
+      with t as (
+        select x from jsonb_array_elements(v_regs) x
+         where x->>'school' = e and coalesce(v_opc->'temasTecnicos', '[]'::jsonb) ? coalesce(x->>'tema', '')
+           and (x->>'status' <> 'concluido' or left(coalesce(x->>'receivedDate', ''), 10) >= (v_hoje - 90)::text)
+           and not (v_recAv ? coalesce(x->>'id', ''))
+      )
+      select coalesce(jsonb_agg(jsonb_build_object('numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
+                      'estado', case when x->>'status' = 'concluido' then 'concluída' else 'em aberto' end, 'token', privado.link_reclamacao(e, x))
+                      order by x->>'receivedDate' desc), '[]'::jsonb),
+             coalesce(jsonb_object_agg(x->>'id', v_hoje::text), '{}'::jsonb)
+        into v_rc, v_marc from t;
+      if jsonb_array_length(v_te) > 0 or jsonb_array_length(v_inc) > 0 or jsonb_array_length(v_rc) > 0 then
+        v_recAv := v_recAv || v_marc;
+        v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc, 'reclamacoes', v_rc));
         if coalesce(array_length(v_avisados, 1), 0) > 0 then
           update app_storage s set value = (
             select jsonb_agg(case when x->>'id' = any(v_avisados) then x || '{"coordAvisado": true}'::jsonb else x end order by o)
@@ -244,7 +268,7 @@ begin
     v_geral := jsonb_build_object('emails', v_gem) || privado.resumo_geral(v_opc, v_reg, v_regp, v_hoje);
   end if;
 
-  v_env := v_env || jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'avisosTurma', v_avisos,
+  v_env := v_env || jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
              'ultimoResumo', jsonb_build_object('em', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'operacionais', jsonb_array_length(v_ops), 'coordenadores', jsonb_array_length(v_coords),
                                                 'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado));
   insert into app_storage (key, value, updated_at) values ('reclamacoes:operacionais-envio', v_env, now())
@@ -278,12 +302,12 @@ begin
   select * into p from pedidos_operacionais where token = p_token and length(coalesce(p_token,'')) >= 32 for update;
   if p.token is null then raise exception 'pedido inexistente'; end if;
   if p.expira < now() then raise exception 'pedido expirado'; end if;
+  if p.itens->>'tipo' = 'reclamacao' then raise exception 'pedido só de leitura'; end if;
   -- Avaliação da eficácia de uma reclamação (operacional ou coordenador da escola)
   if p.itens->>'tipo' = 'eficacia' then
     v_av := p_respostas->>'avaliacao';
     if v_av is null or v_av not in ('eficaz','parcial','ineficaz') then raise exception 'avaliação inválida'; end if;
     v_nota := left(trim(coalesce(p_respostas->>'nota','')), 600);
-    if v_av <> 'eficaz' and v_nota = '' then raise exception 'falta o detalhe'; end if;
     update pedidos_operacionais set respostas = jsonb_build_object('avaliacao', v_av, 'nota', v_nota), respondido_em = now() where token = p.token;
     return jsonb_build_object('ok', true, 'avaliacao', v_av);
   end if;
