@@ -4,7 +4,7 @@
 
 - **Repo:** `vascosilvajr-source/reclamacoes-df`
 - **Stack:** React 18 + Vite, JavaScript (sem TypeScript), Supabase (PostgreSQL + RPC)
-- **Deploy:** Cloudflare Workers (main → produção automática) — https://gestaodaqualidade-df.coachvascosilva.workers.dev
+- **Deploy:** Cloudflare Workers (main → produção automática) — https://gestaodaqualidade-df.dfqualidade.workers.dev
 - **Supabase project:** `dvkzayecqgcvowyrvmfr`
 
 ---
