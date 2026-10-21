@@ -2843,6 +2843,7 @@ function AuditDetail({
   const [area, setArea] = useState("");
   const [description, setDescription] = useState("");
   const [acaoDraft, setAcaoDraft] = useState({});
+  const fotoRef = useRef(null);
 
   const submit = () => {
     const v = description.trim();
@@ -2870,6 +2871,7 @@ function AuditDetail({
     >
       <div
         className="sheet"
+        ref={fotoRef}
         style={{ width: "min(600px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}`, boxShadow: "0 20px 50px -12px rgba(8,14,24,0.35)" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -2877,7 +2879,8 @@ function AuditDetail({
           <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: COLORS.slate, letterSpacing: "0.08em" }}>
             {dataAud(audit)} · Época {epocaAud(audit) || "—"}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="semFoto" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <BotaoFoto alvo={fotoRef} vertical rotulo="PDF" titulo={`Auditoria · ${audit.school}`} subtitulo={`${dataAud(audit)} · Época ${epocaAud(audit) || "—"}`} nome={`Auditoria ${audit.school} ${audit.date || isoDe(new Date())}`} />
             <button title="Eliminar auditoria" onClick={() => onRemoveAudit(audit.id)} style={iconBtnStyle}>
               <Trash2 size={16} color={COLORS.danger} />
             </button>
@@ -2892,13 +2895,13 @@ function AuditDetail({
             {audit.findings.length} constatações · {resolvidas} resolvidas
           </span>
           {onUpdateAudit && (
-            <button onClick={() => setEditarVisita((x) => !x)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+            <button className="semFoto" onClick={() => setEditarVisita((x) => !x)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
               {editarVisita ? "Fechar edição" : "Editar escola, data ou época"}
             </button>
           )}
         </div>
         {editarVisita && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, borderRadius: 10, background: COLORS.paperSunken, marginBottom: 18 }}>
+          <div className="semFoto" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, padding: 12, borderRadius: 10, background: COLORS.paperSunken, marginBottom: 18 }}>
             <div>
               <label style={{ ...labelStyle, marginTop: 0 }}>Escola</label>
               <select value={visita.school} onChange={(e) => setVisita((x) => ({ ...x, school: e.target.value }))} style={inputStyle}>
@@ -2931,6 +2934,7 @@ function AuditDetail({
           </div>
         )}
 
+        <div className="semFoto">
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           Nova constatação
         </div>
@@ -2999,12 +3003,13 @@ function AuditDetail({
             Adicionar
           </button>
         </div>
+        </div>
 
         <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           Constatações ({audit.findings.length})
         </div>
         {onUpdateFindings && semAreaCat.length > 0 && !preencher && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 12px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, marginBottom: 12, fontSize: 12.5 }}>
+          <div className="semFoto" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 12px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, marginBottom: 12, fontSize: 12.5 }}>
             <span style={{ flex: 1 }}>
               {semAreaCat.length} {semAreaCat.length === 1 ? "constatação" : "constatações"} sem área ou categoria.
             </span>
@@ -3106,7 +3111,7 @@ function AuditDetail({
                         </div>
                       )}
                     </div>
-                    <button title="Remover" onClick={() => onRemoveFinding(audit.id, f.id)} style={{ ...iconBtnStyle, padding: 0 }}>
+                    <button className="semFoto" title="Remover" onClick={() => onRemoveFinding(audit.id, f.id)} style={{ ...iconBtnStyle, padding: 0 }}>
                       <X size={14} />
                     </button>
                   </div>
@@ -3153,6 +3158,7 @@ function AuditDetail({
                         {Object.entries(EFICACIA_ACAO_META).map(([k, meta]) => (
                           <button
                             key={k}
+                            className={f.eficacia === k ? undefined : "semFoto"}
                             onClick={() => onUpdateFinding(audit.id, f.id, { eficacia: k })}
                             style={{
                               padding: "5px 11px",
@@ -3180,7 +3186,7 @@ function AuditDetail({
                   )}
 
                   {f.resolvida && (
-                    <div style={{ marginTop: 9 }}>
+                    <div className={f.acao ? undefined : "semFoto"} style={{ marginTop: 9 }}>
                       <label style={{ ...labelStyle, marginTop: 0 }}>Ação corretiva / correção aplicada</label>
                       <div style={{ display: "flex", gap: 8 }}>
                         <textarea
@@ -3191,6 +3197,7 @@ function AuditDetail({
                           style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
                         />
                         <button
+                          className="semFoto"
                           onClick={() => {
                             onUpdateFinding(audit.id, f.id, { acao: (acaoDraft[f.id] !== undefined ? acaoDraft[f.id] : f.acao || "").trim() });
                             setAcaoDraft((d) => {
@@ -22989,7 +22996,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
 }
 
 // Botão "Foto": imagem do balanço que está à vista (o elemento de alvo), com cabeçalho e data.
-function BotaoFoto({ alvo, titulo, subtitulo, nome }) {
+function BotaoFoto({ alvo, titulo, subtitulo, nome, vertical, rotulo }) {
   const [aTirar, setATirar] = useState(false);
   return (
     <button
@@ -23000,14 +23007,14 @@ function BotaoFoto({ alvo, titulo, subtitulo, nome }) {
       onClick={() => {
         setATirar(true);
         try {
-          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, logo: LOGO_BRANCO });
+          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, vertical, logo: LOGO_BRANCO });
         } finally {
           setTimeout(() => setATirar(false), 800);
         }
       }}
       style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
     >
-      <Printer size={14} /> {aTirar ? "A preparar…" : "PDF do balanço"}
+      <Printer size={14} /> {aTirar ? "A preparar…" : rotulo || "PDF do balanço"}
     </button>
   );
 }
