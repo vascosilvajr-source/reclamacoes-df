@@ -5443,8 +5443,9 @@ function AreasConstatacoes({ audits, areas, mapaGuardado, onAplicar, onFechar, o
   );
 }
 
-function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPreencher, onIso, schoolOptions, areaOptions, auditCategoryOptions }) {
+function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onApagarTodas, onAreas, onPreencher, onIso, schoolOptions, areaOptions, auditCategoryOptions }) {
   const [view, setView] = useState("registo");
+  const [apagarTodas, setApagarTodas] = useState(false);
   const [fEpoca, setFEpoca] = useState([]);
   const [fEscola, setFEscola] = useState("todas");
   const [fTipo, setFTipo] = useState("todos");
@@ -5521,6 +5522,25 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
         <AuditsAnalysis audits={audits} schoolOptions={schoolOptions} areaOptions={areaOptions} auditCategoryOptions={auditCategoryOptions} />
       ) : (
         <>
+          {apagarTodas && (
+            <div style={{ border: `1px solid ${COLORS.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: 220, fontSize: 13, color: COLORS.ink, lineHeight: 1.5 }}>
+                Apagar todas as {audits.length} auditorias e as suas constatações? Não dá para desfazer.
+              </span>
+              <button onClick={() => setApagarTodas(false)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+                Não
+              </button>
+              <button
+                onClick={() => {
+                  onApagarTodas();
+                  setApagarTodas(false);
+                }}
+                style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px", background: COLORS.warn }}
+              >
+                Sim, apagar tudo
+              </button>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             {onPreencher && audits.some((a) => (a.findings || []).some((f) => !f.area || !f.category)) && (
               <button onClick={onPreencher} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7 }}>
@@ -5540,6 +5560,11 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
             {onImportar && (
               <button onClick={onImportar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7 }}>
                 <FileText size={15} /> Importar Excel
+              </button>
+            )}
+            {onApagarTodas && audits.length > 0 && (
+              <button onClick={() => setApagarTodas(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7, color: COLORS.warn }}>
+                <Trash2 size={15} /> Apagar todas
               </button>
             )}
             <button
@@ -27751,6 +27776,10 @@ function AppPrincipal({ onSair }) {
             audits={auditsVista}
             onNewAudit={() => setShowAuditForm(true)}
             onImportar={() => setImportarAud(true)}
+            onApagarTodas={() => {
+              persistAudits([]);
+              notificar("Todas as auditorias foram apagadas.");
+            }}
             onAreas={() => setAreasAud(true)}
             onPreencher={() => setPreencherAud(true)}
             onIso={() => setIsoAud(true)}
