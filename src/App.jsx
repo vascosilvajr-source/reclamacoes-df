@@ -7049,6 +7049,155 @@ function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
   );
 }
 
+// Histórico de e-mails por escola: o que foi enviado, aberto, lembrado e respondido.
+// Só lê tipos, datas e estados (nunca os dados dos pedidos).
+function HistoricoEmailsEscolas({ escolas }) {
+  const [dias, setDias] = useState(90);
+  const [linhas, setLinhas] = useState(null);
+  const [escolaSel, setEscolaSel] = useState("");
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      setLinhas(null);
+      const desde = new Date(Date.now() - dias * 86400000).toISOString();
+      const out = [];
+      try {
+        const { data } = await supabase
+          .from("pedidos_operacionais")
+          .select("token,escola,criado,enviado_em,aberto_em,lembrete_em,respondido_em,contactado_em,tipo:itens->>tipo,numero:itens->>numero,papel:itens->>papel")
+          .gte("criado", desde)
+          .order("criado", { ascending: false })
+          .limit(2000);
+        (data || []).forEach((p) =>
+          out.push({
+            id: p.token,
+            escola: p.escola,
+            em: p.enviado_em || p.criado,
+            tipo: p.tipo === "eficacia" ? `Avaliação de eficácia · reclamação nº ${String(p.numero || "").padStart(4, "0")}${p.papel === "coordenador" ? " (coordenador)" : ""}` : p.tipo === "reclamacao" ? "Reclamação técnica" : "Semanal aos operacionais",
+            pedido: true,
+            enviado: !!p.enviado_em,
+            aberto: p.aberto_em,
+            lembrete: p.lembrete_em,
+            respondido: p.respondido_em,
+            contactado: p.contactado_em,
+          })
+        );
+      } catch (e) {
+        /* sem acesso */
+      }
+      try {
+        const { data } = await supabase.from("emails_fila").select("id,tipo,escola,criado,enviado_em,erro,tentativas").in("tipo", ["coordenador"]).gte("criado", desde).order("id", { ascending: false }).limit(1000);
+        (data || []).forEach((f) => out.push({ id: `f${f.id}`, escola: f.escola, em: f.enviado_em || f.criado, tipo: "Coordenador técnico", pedido: false, enviado: !!f.enviado_em, falhou: !f.enviado_em && f.tentativas >= 6 }));
+      } catch (e) {
+        /* sem acesso */
+      }
+      if (ativo) setLinhas(out.sort((a, b) => String(b.em).localeCompare(String(a.em))));
+    })();
+    return () => {
+      ativo = false;
+    };
+  }, [dias]);
+
+  const data = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "");
+  const resumo = useMemo(() => {
+    const r = {};
+    (escolas || []).forEach((e) => (r[e] = { escola: e, enviados: 0, pedidos: 0, abertos: 0, respondidos: 0, lembretes: 0, ultimo: "" }));
+    (linhas || []).forEach((l) => {
+      const x = r[l.escola] || (r[l.escola] = { escola: l.escola, enviados: 0, pedidos: 0, abertos: 0, respondidos: 0, lembretes: 0, ultimo: "" });
+      if (!l.enviado) return;
+      x.enviados++;
+      if (l.em > x.ultimo) x.ultimo = l.em;
+      if (!l.pedido) return;
+      x.pedidos++;
+      if (l.aberto || l.respondido) x.abertos++;
+      if (l.respondido) x.respondidos++;
+      if (l.lembrete) x.lembretes++;
+    });
+    return Object.values(r).filter((x) => x.enviados).sort((a, b) => (a.pedidos ? a.abertos / a.pedidos : 2) - (b.pedidos ? b.abertos / b.pedidos : 2) || a.escola.localeCompare(b.escola, "pt"));
+  }, [linhas, escolas]);
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "—");
+  const th = { textAlign: "left", fontSize: 11, color: COLORS.slate, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", padding: "6px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
+  const td = { padding: "6px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5, verticalAlign: "top" };
+  const daEscola = (linhas || []).filter((l) => l.escola === escolaSel);
+  const estado = (l) => {
+    if (!l.enviado) return [l.falhou ? "Falhou" : "Na fila", l.falhou ? COLORS.danger : COLORS.slate];
+    if (!l.pedido) return ["Enviado", COLORS.ink2];
+    if (l.respondido) return [`Respondido ${data(l.respondido)}`, COLORS.ok];
+    if (l.aberto) return [`Aberto ${data(l.aberto)}`, COLORS.navySoft];
+    if (l.contactado) return [`Sem abrir · contactado ${data(l.contactado)}`, COLORS.warn];
+    return [l.lembrete ? `Sem abrir · lembrete ${data(l.lembrete)}` : "Ainda sem abrir", COLORS.warn];
+  };
+
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, flex: "1 1 220px" }}>Histórico por escola</div>
+        <select value={dias} onChange={(e) => setDias(Number(e.target.value))} aria-label="Período" style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12.5 }}>
+          <option value={30}>Últimos 30 dias</option>
+          <option value={90}>Últimos 90 dias</option>
+          <option value={365}>Último ano</option>
+        </select>
+      </div>
+      <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10 }}>Abertura e resposta contam só os e-mails com link (semanais e avaliações de eficácia). As escolas que menos abrem aparecem primeiro. Carrega numa escola para ver cada envio.</div>
+      {linhas === null ? (
+        <div style={{ fontSize: 12.5, color: COLORS.slate }}>A carregar…</div>
+      ) : !resumo.length ? (
+        <div style={{ fontSize: 12.5, color: COLORS.slate }}>Sem envios neste período.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr>
+                {["Escola", "Enviados", "Abertos", "Respondidos", "Com lembrete", "Último envio"].map((h) => (
+                  <th key={h} style={th}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {resumo.map((x) => (
+                <tr key={x.escola} className="rowHover" onClick={() => setEscolaSel(escolaSel === x.escola ? "" : x.escola)} style={{ cursor: "pointer", background: escolaSel === x.escola ? COLORS.paper : undefined }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{x.escola}</td>
+                  <td style={td}>{x.enviados}</td>
+                  <td style={{ ...td, color: x.pedidos && x.abertos / x.pedidos < 0.5 ? COLORS.warn : undefined, fontWeight: x.pedidos && x.abertos / x.pedidos < 0.5 ? 600 : 400 }}>
+                    {x.abertos}/{x.pedidos} · {pct(x.abertos, x.pedidos)}
+                  </td>
+                  <td style={td}>
+                    {x.respondidos}/{x.pedidos} · {pct(x.respondidos, x.pedidos)}
+                  </td>
+                  <td style={td}>{x.lembretes}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>{data(x.ultimo)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {escolaSel && (
+        <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.rule}`, paddingTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{escolaSel}</div>
+            <button type="button" onClick={() => setEscolaSel("")} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+              Fechar
+            </button>
+          </div>
+          {daEscola.map((l) => {
+            const [txt, cor] = estado(l);
+            return (
+              <div key={l.id} style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12.5, padding: "5px 0", borderTop: `1px solid ${COLORS.ruleSoft}` }}>
+                <span style={{ width: 92, color: COLORS.slate, flex: "none" }}>{data(l.em)}</span>
+                <span style={{ flex: "1 1 200px", minWidth: 0 }}>{l.tipo}</span>
+                <span style={{ color: cor, fontWeight: 600 }}>{txt}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PainelEmailsEscolas({ op, escolas }) {
   const [pedidos, setPedidos] = useState(null);
   const [envio, setEnvio] = useState(null);
@@ -28704,7 +28853,10 @@ function AppPrincipal({ onSair }) {
             auditCategoryOptions={options.auditCategories}
           />
         ) : page === "emails" ? (
-          <PainelEmailsEscolas op={opEmails} escolas={options.schools || []} />
+          <>
+            <PainelEmailsEscolas op={opEmails} escolas={options.schools || []} />
+            <HistoricoEmailsEscolas escolas={options.schools || []} />
+          </>
         ) : page === "inscritos" ? (
           <InscritosPage
             op={opEmails}
