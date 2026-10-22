@@ -7121,7 +7121,7 @@ function PainelEmailsEscolas({ op, escolas }) {
         )}
       </div>
       <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px", lineHeight: 1.5 }}>
-        À segunda-feira, às escolas com situações: experiências com mais de 2 semanas por decidir e turmas do plano sem alunos. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
+        À segunda-feira: aos operacionais, experiências com mais de 2 semanas por decidir e turmas do plano sem alunos; ao coordenador técnico, reclamações técnicas em aberto e o resumo da época; ao coordenador geral, o resumo da rede. Os pedidos de avaliação de eficácia saem quando os envias numa reclamação. Quem não abrir o link recebe um lembrete no dia seguinte. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
         {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
       </div>
       {(() => {
@@ -7408,7 +7408,15 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
 
   return (
     <div>
-      {op && <PainelEmailsEscolas op={op} escolas={escolas} />}
+      {op && op.irParaEmails && (
+        <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 12 }}>
+          Os e-mails às escolas (experiências, turmas, reclamações e eficácia) estão em{" "}
+          <button type="button" onClick={op.irParaEmails} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+            Gestão › E-mails às escolas
+          </button>
+          .
+        </div>
+      )}
       <div style={{ ...panelStyle, marginBottom: 16 }}>
         <div style={panelTitle}>Registar experiência</div>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -27735,6 +27743,7 @@ function AppPrincipal({ onSair }) {
     hoje: "Geral",
     riscos: "Geral",
     ocorrencias: "Ocorrências",
+    emails: "Geral",
   }[page];
 
   const titulo =
@@ -27762,6 +27771,8 @@ function AppPrincipal({ onSair }) {
       ? "Apagados"
       : page === "ocorrencias"
       ? "Ocorrências"
+      : page === "emails"
+      ? "E-mails às escolas"
       : "Reclamações";
 
   // Catálogo das listas geríveis: título, onde vivem e onde são usadas.
@@ -27892,6 +27903,7 @@ function AppPrincipal({ onSair }) {
     { id: "p-documentos", grupo: "Ir para", titulo: "Controlo documental", icon: FileText, acao: () => setPage("documentos") },
     { id: "p-formacao", grupo: "Ir para", titulo: "Plano de formação", icon: GraduationCap, acao: () => setPage("formacao") },
     { id: "p-ocorrencias", grupo: "Ir para", titulo: "Ocorrências", icon: AlertTriangle, acao: () => setPage("ocorrencias") },
+    { id: "p-emails", grupo: "Ir para", titulo: "E-mails às escolas", icon: Mail, acao: () => setPage("emails") },
     {
       id: "a-nova",
       grupo: "Ações",
@@ -27980,6 +27992,23 @@ function AppPrincipal({ onSair }) {
     }
   })();
 
+  // Contactos e ações dos e-mails às escolas (página própria e experiências).
+  const opEmails = {
+    irParaEmails: () => setPage("emails"),
+    contactos: options,
+    motivos: options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO,
+    pedidoEnvio: options.pedidoEnvioOperacionais || null,
+    carregadoEm: carregadoEm.current,
+    notificar,
+    onAbrirContactos: () => setContactosAbertos(true),
+    onPedirEnvio: () => {
+      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString() } });
+      notificar("Pedido feito. Os e-mails saem nos próximos 10 minutos.", "ok", 7000);
+    },
+    onAplicarIds: aplicarIdsOperacional,
+    onMotivo: motivoExperiencia,
+  };
+
   const secoes = [
     {
       grupo: "Início",
@@ -27994,6 +28023,7 @@ function AppPrincipal({ onSair }) {
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
         { key: "ocorrencias", label: "Ocorrências", icon: AlertTriangle, contador: ocorrencias.filter((o) => (o.estado || "aberta") === "aberta").length || null },
+        { key: "emails", label: "E-mails às escolas", icon: Mail, contador: null },
       ],
     },
     {
@@ -28527,22 +28557,11 @@ function AppPrincipal({ onSair }) {
             areaOptions={options.auditAreas}
             auditCategoryOptions={options.auditCategories}
           />
+        ) : page === "emails" ? (
+          <PainelEmailsEscolas op={opEmails} escolas={options.schools || []} />
         ) : page === "inscritos" ? (
           <InscritosPage
-            op={{
-              contactos: options,
-              motivos: options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO,
-              pedidoEnvio: options.pedidoEnvioOperacionais || null,
-              carregadoEm: carregadoEm.current,
-              notificar,
-              onAbrirContactos: () => setContactosAbertos(true),
-              onPedirEnvio: () => {
-                persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString() } });
-                notificar("Pedido feito. Os e-mails saem nos próximos 10 minutos.", "ok", 7000);
-              },
-              onAplicarIds: aplicarIdsOperacional,
-              onMotivo: motivoExperiencia,
-            }}
+            op={opEmails}
             inscritos={inscritosVista}
             turmasAlunos={turmasAlunos}
             epocaAnterior={epocaAnterior}
