@@ -5,6 +5,7 @@ import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, ep
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { imprimirBalanco } from "./foto";
+import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais } from "./inscritosAtuais";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
@@ -11107,6 +11108,7 @@ function InscritosPage({
   onImportarTurmas,
   registoAlunos,
   onImportarInscritos,
+  onAplicarAtuais,
   onCapacidade,
   onMudarTurma,
   gestaoDados,
@@ -11262,6 +11264,7 @@ function InscritosPage({
           options={options}
           registoAlunos={registoAlunos}
           onImportarInscritos={onImportarInscritos}
+          onAplicarAtuais={onAplicarAtuais}
           onCapacidade={onCapacidade}
           onSaveEpocaAnterior={onSaveEpocaAnterior}
           gestaoDados={gestaoDados}
@@ -12215,7 +12218,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           {a.turma}
                           {(a.turmaManual || a.mudadoPor) && (
-                            <span title={`Mudado à mão${a.mudadoPor === "operacional" ? " (pelo operacional)" : ""}. No ficheiro: ${a.turmaFicheiro || a.turmaAntes || "—"}`} style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.navySoft }}>
+                            <span title={`${a.mudadoPor === "mapa" ? "Acertado pelo mapa de inscritos atuais" : "Mudado à mão"}${a.mudadoPor === "operacional" ? " (pelo operacional)" : ""}. No ficheiro: ${a.turmaFicheiro || a.turmaAntes || "—"}`} style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.navySoft }}>
                               mudado
                             </span>
                           )}
@@ -12252,7 +12255,282 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   );
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
+// ---------- Escolher o tipo de documento a importar nos Inscritos ----------
+function EscolherDocumentoInscritos({ onEscolher, onFechar }) {
+  const opcoes = [
+    { k: "acompanhamento", titulo: "Mapa de acompanhamento", texto: "O ficheiro da semana: alunos, desistências e experiências. Cria escolas, turmas e o balanço semanal." },
+    { k: "atuais", titulo: "Inscritos atualmente", texto: "Centro, número, turma, início e término. Só acerta a equipa de cada aluno e avisa de quem já saiu." },
+    { k: "controlo", titulo: "Mapa de controlo", texto: "Chega mais à frente.", desativado: true },
+  ];
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(520px, 100%)", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Que documento queres importar?</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {opcoes.map((o) => (
+            <button
+              key={o.k}
+              type="button"
+              disabled={o.desativado}
+              onClick={() => onEscolher(o.k)}
+              style={{ textAlign: "left", padding: "13px 15px", borderRadius: 10, border: `1px solid ${COLORS.rule}`, background: COLORS.paper, cursor: o.desativado ? "default" : "pointer", opacity: o.desativado ? 0.55 : 1, fontFamily: "inherit" }}
+            >
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: COLORS.navy }}>{o.titulo}</div>
+              <div style={{ fontSize: 12.5, color: COLORS.slate, marginTop: 3, lineHeight: 1.5 }}>{o.texto}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Inscritos atualmente: acerta a equipa de cada aluno ----------
+function ListaIdsAviso({ titulo, ids, nota }) {
+  const [copiado, setCopiado] = useState(false);
+  if (!ids.length) return null;
+  const MAX = 300;
+  return (
+    <details style={{ marginTop: 8, fontSize: 12.5 }}>
+      <summary style={{ cursor: "pointer", color: COLORS.warn, fontWeight: 600 }}>
+        {ids.length} {titulo}
+      </summary>
+      {nota && <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.5 }}>{nota}</div>}
+      <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.7, wordBreak: "break-word", fontVariantNumeric: "tabular-nums" }}>
+        {ids.slice(0, MAX).join(", ")}
+        {ids.length > MAX ? ` … e mais ${ids.length - MAX}` : ""}
+      </div>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(ids.join("\n"));
+            setCopiado(true);
+            setTimeout(() => setCopiado(false), 1500);
+          } catch (e) {
+            /* sem permissão para copiar */
+          }
+        }}
+        style={{ ...linkBtnStyle, marginTop: 6, fontSize: 12 }}
+      >
+        {copiado ? "Copiado" : "Copiar os códigos"}
+      </button>
+    </details>
+  );
+}
+
+function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAplicar, onFechar }) {
+  const [lido, setLido] = useState(null);
+  const [epoca, setEpoca] = useState("");
+  const [assoc, setAssoc] = useState({});
+  const [aLer, setALer] = useState(false);
+  const [erro, setErro] = useState("");
+  const hoje = isoDe(new Date());
+  const epocasReg = Object.keys(registoAlunos || {}).sort().reverse();
+
+  const carregar = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setALer(true);
+    setErro("");
+    try {
+      const folhas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f, { todas: true }) : [{ nome: f.name, linhas: lerCSVInq(await f.text()) }];
+      let achado = null;
+      for (const fo of folhas) {
+        const m = lerMapaInscritosAtuais(fo.linhas);
+        if (m && m.registos.length && (!achado || m.registos.length > achado.registos.length)) achado = m;
+      }
+      if (!achado) throw new Error("não encontrei as colunas Centro, Numero e Turma");
+      const ep = epocaDoMapa(achado.registos, epocaDe(hoje));
+      setLido({ nome: f.name, registos: achado.registos });
+      setEpoca(ep);
+      setAssoc({});
+    } catch (err) {
+      setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const reg = epoca ? registoAlunos[epoca] : null;
+  const resultado = useMemo(() => {
+    if (!lido || !reg) return null;
+    return compararInscritosAtuais({
+      registos: lido.registos,
+      reg,
+      escolas,
+      mapaTurmasGuardado: options.mapaTurmasAlunos || {},
+      mapaEscolasGuardado: options.mapaEscolasAlunos || {},
+      associacoes: assoc,
+      nomeProposto: (t) => nomeTurmaProposto(t, niveis),
+      hoje,
+    });
+  }, [lido, reg, assoc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const turmasDe = useMemo(() => {
+    const m = {};
+    Object.values((reg && reg.alunos) || {}).forEach((a) => (m[a.escola] = m[a.escola] || new Set()).add(a.turma));
+    return m;
+  }, [reg]);
+
+  const aplicar = () => {
+    const mapaTurmas = {};
+    Object.entries(assoc).forEach(([k, v]) => {
+      if (!v || v === "__skip__") return;
+      mapaTurmas[normChave(k.split("|").slice(1).join("|"))] = v;
+    });
+    // Alunos cujas turmas foram associadas a mão entram nas mudanças (a comparação já as usa).
+    onAplicar(epoca, resultado.mudar, mapaTurmas);
+  };
+
+  const avisos = resultado
+    ? resultado.desistidosNoMapa.length + resultado.terminados.length + resultado.escolaDiferente.length + resultado.variasTurmas.length + resultado.semRegisto.length + resultado.foraDoMapa.length
+    : 0;
+  const nAplicar = resultado ? resultado.mudar.length : 0;
+
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(760px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Inscritos atualmente</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
+          Compara a turma de cada aluno (pelo código) com o que a app já tem e acerta só a <strong>equipa</strong>. Escola, rubrica, entrada e o resto não mudam. Quem já saiu ou não bate certo fica em aviso, só com o código.
+        </div>
+
+        <label style={{ ...secondaryBtnStyle, width: "auto", display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", cursor: "pointer" }}>
+          <FileText size={15} /> {aLer ? "A ler…" : lido ? "Trocar ficheiro" : "Escolher o Excel"}
+          <input type="file" accept=".xlsx,.csv" onChange={carregar} style={{ display: "none" }} />
+        </label>
+        {lido && <span style={{ marginLeft: 10, fontSize: 12, color: COLORS.slate }}>{lido.nome}</span>}
+        {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.warn }}>{erro}</div>}
+
+        {lido && (
+          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12.5, color: COLORS.ink2 }}>Época</label>
+            <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
+              {[...new Set([epoca, ...epocasReg])].filter(Boolean).map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {lido && !reg && (
+          <div style={{ marginTop: 12, fontSize: 13, color: COLORS.warn, lineHeight: 1.5 }}>
+            A app ainda não tem alunos na época {epoca}. Importa primeiro o mapa de acompanhamento dessa época.
+          </div>
+        )}
+
+        {resultado && (
+          <>
+            <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 10, background: COLORS.paperSunken, fontSize: 13, lineHeight: 1.7 }}>
+              <strong>{resultado.ids}</strong> alunos no mapa ({resultado.linhas} linhas) · <strong>{resultado.iguais}</strong> já na equipa certa · <strong style={{ color: COLORS.navy }}>{resultado.mudar.length}</strong> mudam de equipa
+              {resultado.porAssociar.length > 0 && <> · {resultado.semAssociacao} à espera de associação de turma</>}
+              {resultado.ignorados > 0 && <> · {resultado.ignorados} deixados como estão</>}
+            </div>
+
+            {resultado.porAssociar.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.navy, flex: 1, minWidth: 220 }}>
+                    {resultado.porAssociar.length} turmas do mapa que a app não reconhece
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAssoc((a) => ({ ...a, ...Object.fromEntries(resultado.porAssociar.map((x) => [x.chave, nomeTurmaProposto(x.turmaFicheiro, niveis) || x.turmaFicheiro])) }))}
+                    style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}
+                  >
+                    Criar todas como novas
+                  </button>
+                  <button type="button" onClick={() => setAssoc((a) => ({ ...a, ...Object.fromEntries(resultado.porAssociar.map((x) => [x.chave, "__skip__"])) }))} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                    Não mexer em nenhuma
+                  </button>
+                </div>
+                <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${COLORS.rule}`, borderRadius: 8 }}>
+                  {resultado.porAssociar.slice(0, 200).map((x) => {
+                    const existentes = [...(turmasDe[x.escola] || [])].sort();
+                    const prop = nomeTurmaProposto(x.turmaFicheiro, niveis) || x.turmaFicheiro;
+                    return (
+                      <div key={x.chave} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 10px", borderBottom: `1px solid ${COLORS.rule}`, flexWrap: "wrap" }}>
+                        <div style={{ flex: 1, minWidth: 200, fontSize: 12.5 }}>
+                          <div style={{ fontWeight: 600 }}>{x.turmaFicheiro}</div>
+                          <div style={{ color: COLORS.slate, fontSize: 11.5 }}>
+                            {x.escola} · {x.n} {x.n === 1 ? "aluno" : "alunos"}
+                          </div>
+                        </div>
+                        <select value={assoc[x.chave] || ""} onChange={(e) => setAssoc((a) => ({ ...a, [x.chave]: e.target.value }))} style={{ ...inputStyle, width: 230, fontSize: 12.5 }}>
+                          <option value="">Escolher…</option>
+                          <option value="__skip__">Não mexer nestes alunos</option>
+                          <option value={prop}>Criar «{prop}»</option>
+                          {existentes.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                  {resultado.porAssociar.length > 200 && <div style={{ padding: 8, fontSize: 12, color: COLORS.slate }}>Mostra as 200 com mais alunos; as outras ficam por associar.</div>}
+                </div>
+              </div>
+            )}
+
+            {resultado.mudar.length > 0 && (
+              <details style={{ marginTop: 12, fontSize: 12.5 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600, color: COLORS.navy }}>Ver as {resultado.mudar.length} mudanças</summary>
+                <div style={{ marginTop: 6, maxHeight: 220, overflowY: "auto", lineHeight: 1.7, fontVariantNumeric: "tabular-nums", color: COLORS.ink2 }}>
+                  {resultado.mudar.slice(0, 400).map((m) => (
+                    <div key={m.id}>
+                      {m.id} · {m.escola}: {m.de} → <strong>{m.para}</strong>
+                    </div>
+                  ))}
+                  {resultado.mudar.length > 400 && <div>… e mais {resultado.mudar.length - 400}</div>}
+                </div>
+              </details>
+            )}
+
+            {avisos > 0 && (
+              <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${COLORS.rule}` }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.navy }}>Avisos (códigos de aluno)</div>
+                <ListaIdsAviso titulo="alunos que a app tem como desistidos mas aparecem como inscritos no mapa" ids={resultado.desistidosNoMapa} />
+                <ListaIdsAviso titulo="alunos com término já passado no mapa" ids={resultado.terminados} nota="Todas as linhas destes alunos têm a data de término anterior a hoje." />
+                <ListaIdsAviso titulo="alunos ativos na app que não constam do mapa" ids={resultado.foraDoMapa} nota="Só se contam as escolas que o mapa traz. Podem ter saído." />
+                <ListaIdsAviso titulo="alunos com escola diferente no mapa (não alterados)" ids={resultado.escolaDiferente.map((x) => `${x.id} (app: ${x.escolaApp} · mapa: ${x.centro})`)} />
+                <ListaIdsAviso titulo="alunos em duas equipas no mapa, sem nenhuma igual à da app (não alterados)" ids={resultado.variasTurmas.map((x) => `${x.id} (${x.turmas.join(" + ")})`)} />
+                <ListaIdsAviso titulo="códigos do mapa que a app não conhece" ids={resultado.semRegisto} />
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: 1 }}>
+            Cancelar
+          </button>
+          <button onClick={aplicar} disabled={!resultado || !nAplicar} style={{ ...primaryBtnStyle, flex: 2, opacity: !resultado || !nAplicar ? 0.5 : 1 }}>
+            {nAplicar ? `Mudar ${nAplicar} alunos de equipa` : "Sem mudanças a aplicar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
   const [gerir, setGerir] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const epocaHoje = epocaDe(isoDe(new Date()));
@@ -12261,6 +12539,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
   const reg = (registoAlunos || {})[epoca];
   const epAnt = `${Number(epoca.slice(0, 4)) - 1}/${epoca.slice(2, 4)}`;
   const regAnt = (registoAlunos || {})[epAnt];
+  const [escolherDoc, setEscolherDoc] = useState(false);
+  const [importarAtuais, setImportarAtuais] = useState(false);
   const [importar, setImportar] = useState(null);
   const [aba, setAba] = useState("escolas");
   const fotoRef = useRef(null);
@@ -12428,8 +12708,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           <button className="press" onClick={() => setImportar(epAntDe(epocaHoje))} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
             Importar época anterior
           </button>
-          <button className="press" onClick={() => setImportar("semana")} style={{ ...primaryBtnStyle, width: "auto", padding: "9px 16px", display: "flex", alignItems: "center", gap: 8 }}>
-            <FileText size={15} /> Importar ficheiro da semana
+          <button className="press" onClick={() => setEscolherDoc(true)} style={{ ...primaryBtnStyle, width: "auto", padding: "9px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+            <FileText size={15} /> Importar documento
           </button>
         </div>
       </div>
@@ -12437,7 +12717,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
       {reg && <AvisoDadosEpoca registos={[[epoca, reg]]} />}
       {!reg ? (
         <div style={{ ...panelStyle, marginBottom: 16 }}>
-          <Vazio icon={Users} titulo={`Ainda sem alunos em ${epoca}`} texto="Importa o Excel da semana: a app cria as escolas, as turmas e o balanço semanal a partir dele. Para comparar com épocas anteriores, importa também os ficheiros dessas épocas." acao="Importar ficheiro da semana" onAcao={() => setImportar(epoca === epocaHoje ? "semana" : epoca)} />
+          <Vazio icon={Users} titulo={`Ainda sem alunos em ${epoca}`} texto="Importa o Excel da semana: a app cria as escolas, as turmas e o balanço semanal a partir dele. Para comparar com épocas anteriores, importa também os ficheiros dessas épocas." acao="Importar documento" onAcao={() => setEscolherDoc(true)} />
         </div>
       ) : (
         <>
@@ -12731,6 +13011,30 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
         </details>
       )}
 
+      {escolherDoc && (
+        <EscolherDocumentoInscritos
+          onFechar={() => setEscolherDoc(false)}
+          onEscolher={(k) => {
+            setEscolherDoc(false);
+            if (k === "acompanhamento") setImportar("semana");
+            else if (k === "atuais") setImportarAtuais(true);
+          }}
+        />
+      )}
+      {importarAtuais && (
+        <ImportarInscritosAtuais
+          registoAlunos={registoAlunos}
+          escolas={escolas}
+          niveis={niveis}
+          options={options}
+          onFechar={() => setImportarAtuais(false)}
+          onAplicar={(ep, mudancas, mapaTurmas) => {
+            onAplicarAtuais(ep, mudancas, mapaTurmas);
+            setEpoca(ep);
+            setImportarAtuais(false);
+          }}
+        />
+      )}
       {importar && (
         <ImportarInscritos
           escolas={escolas}
@@ -26633,6 +26937,35 @@ function AppPrincipal({ onSair }) {
     notificar(`${r.ativos} alunos importados · ${r.desistNovas} desistências novas · ${expNovas.length} experiências.`);
   };
 
+  // "Inscritos atualmente": acerta só a equipa. A mudança fica marcada e a importação semanal
+  // respeita-a enquanto o mapa de acompanhamento continuar a trazer a turma antiga.
+  const aplicarInscritosAtuais = (ep, mudancas, mapaTurmas = {}) => {
+    const reg = registoAlunos[ep];
+    if (!reg || !mudancas.length) return;
+    const alunos = { ...reg.alunos };
+    const tpe = { ...(options.turmasPorEscola || {}) };
+    const novasTurmas = [];
+    let n = 0;
+    mudancas.forEach((m) => {
+      const a = alunos[m.id];
+      if (!a || a.turma === m.para) return;
+      alunos[m.id] = { ...a, turma: m.para, turmaManual: true, turmaFicheiro: a.turmaFicheiro || a.turmaAntes || a.turma, turmaAntes: a.turma, mudadoPor: "mapa" };
+      const l = tpe[a.escola] || [];
+      if (!l.includes(m.para)) tpe[a.escola] = [...l, m.para];
+      novasTurmas.push(m.para);
+      n++;
+    });
+    const listaTurmas = options.turmas || DEFAULT_TURMAS;
+    persistOptions({
+      ...options,
+      turmas: [...listaTurmas, ...[...new Set(novasTurmas)].filter((t) => !listaTurmas.includes(t))],
+      turmasPorEscola: tpe,
+      mapaTurmasAlunos: { ...(options.mapaTurmasAlunos || {}), ...mapaTurmas },
+    });
+    gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos }));
+    notificar(`${n} alunos mudaram de equipa pelo mapa de inscritos atuais.`);
+  };
+
   // Apagar dados de forma seletiva. f = { epocas, escola, tipo, turma, id, retirarEscola }.
   // tipo: "tudo" | "desist" | "exp" | "turma" | "aluno". Com simular devolve só as contagens.
   const apagarDadosAlunos = (f, simular) => {
@@ -27956,6 +28289,7 @@ function AppPrincipal({ onSair }) {
             onImportarTurmas={importarTurmas}
             registoAlunos={registoAlunos}
             onImportarInscritos={importarInscritos}
+            onAplicarAtuais={aplicarInscritosAtuais}
             onCapacidade={definirCapacidade}
             onMudarTurma={mudarTurmaAluno}
             gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, renomearTurma: renomearTurmaLivre, turmasAtuais: turmasAlunos, distintas: marcarTurmasDistintas, renomearEscola: renomearEscolaEpoca, estadoEscola: definirEstadoEscola, epocas: epocasComDados, escolasComDados }}
