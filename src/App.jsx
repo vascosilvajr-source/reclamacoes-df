@@ -5,7 +5,7 @@ import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, ep
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { imprimirBalanco } from "./foto";
-import { LOGO_BRANCO, FOTO_ESTADIO } from "./imagens";
+import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
 import {
@@ -427,6 +427,56 @@ function capacidadeSugerida(turma, niveis) {
   return ehEscolinha(turma, niveis) ? 16 : 20;
 }
 
+// Turmas/equipas que treinam juntas (no mesmo horário, nos Espaços) partilham uma só lotação:
+// se B1 e D1 treinam juntas, as vagas são para as duas, não para cada uma.
+// A lotação do grupo é a definida para o grupo; se não houver, a mais baixa entre as turmas.
+// Quando uma turma treina com turmas diferentes em dias diferentes, fica no grupo mais frequente.
+function gruposLotacao(escola, nomesTurmas, espacos, capacidades, niveis) {
+  const caps = capacidades || {};
+  const nomes = [...new Set((nomesTurmas || []).filter(Boolean))];
+  const porCompacto = {};
+  nomes.forEach((n) => (porCompacto[compactoTurma(n)] = n));
+  const resolve = (t) => (nomes.includes(t) ? t : porCompacto[compactoTurma(t)] || null);
+  const eEsc = normChave(escola);
+  const conjuntos = {};
+  (espacos || [])
+    .filter((b) => normChave(b.escola) === eEsc)
+    .forEach((b) => {
+      const ts = [...new Set(turmasDoBloco(b).map(resolve).filter(Boolean))].sort((x, y) => x.localeCompare(y, "pt", { numeric: true }));
+      if (ts.length < 2) return;
+      const k = ts.join(" + ");
+      conjuntos[k] = conjuntos[k] || { turmas: ts, n: 0 };
+      conjuntos[k].n++;
+    });
+  const capTurma = (t) => caps[`${escola}|${t}`] || capacidadeSugerida(t, niveis);
+  const grupoDe = {};
+  const grupos = [];
+  Object.values(conjuntos)
+    .sort((a, b) => b.n - a.n || b.turmas.length - a.turmas.length)
+    .forEach((c) => {
+      if (c.turmas.some((t) => grupoDe[t])) return;
+      const chave = `grupo:${c.turmas.join(" + ")}`;
+      const propria = caps[`${escola}|${chave}`];
+      const g = { chave, turmas: c.turmas, cap: propria || Math.min(...c.turmas.map(capTurma)), propria: !!propria, horarios: c.n };
+      grupos.push(g);
+      c.turmas.forEach((t) => (grupoDe[t] = g));
+    });
+  nomes.forEach((t) => {
+    if (grupoDe[t]) return;
+    const g = { chave: t, turmas: [t], cap: capTurma(t), propria: !!caps[`${escola}|${t}`], horarios: 0, sozinha: true };
+    grupos.push(g);
+    grupoDe[t] = g;
+  });
+  return {
+    grupos,
+    grupoDe,
+    // Parte da lotação do grupo que cabe a uma turma (para somas por escalão).
+    parte: (t) => (grupoDe[t] ? grupoDe[t].cap / grupoDe[t].turmas.length : capTurma(t)),
+    // Lotação de um conjunto de turmas: cada grupo conta uma vez.
+    total: (ts) => [...new Set(ts.map((t) => grupoDe[t]).filter(Boolean))].reduce((n, g) => n + g.cap, 0),
+  };
+}
+
 // Mês (aaaa-mm) a partir de uma data ISO, para filtros e agregações.
 function mesDeData(d) {
   return d ? String(d).slice(0, 7) : "";
@@ -441,6 +491,132 @@ function corLotacao(pct) {
 }
 
 const DEFAULT_AREAS_AUDITORIA = ["Técnica", "Médica", "Instalações e Equipamentos", "Administrativa", "Escolar e Social"];
+
+// ---------- Requisitos da NP EN ISO 9001:2015 ----------
+// Cada constatação pode ser associada a um requisito. As palavras-chave servem para sugerir
+// o requisito a partir do texto; a sugestão só é aplicada sozinha quando a certeza é alta.
+const REQUISITOS_ISO = [
+  { c: "4.1", t: "Compreender a organização e o seu contexto", kw: ["contexto", "swot", "envolvente", "concorrencia", "concorrente"] },
+  { c: "4.2", t: "Necessidades e expetativas das partes interessadas", kw: ["partes interessadas", "parceiro", "parceria", "autarquia", "camara municipal", "junta de freguesia", "colegio parceiro"] },
+  { c: "4.3", t: "Âmbito do sistema de gestão da qualidade", kw: ["ambito do sistema", "ambito do sgq", "fora do ambito"] },
+  { c: "4.4", t: "Sistema de gestão da qualidade e respetivos processos", kw: ["processo nao definido", "mapa de processos", "fluxograma", "interacao entre processos", "dono do processo"] },
+  { c: "5.1.1", t: "Liderança e compromisso: generalidades", kw: ["lideranca", "compromisso da gestao", "gestao de topo", "direcao nao"] },
+  { c: "5.1.2", t: "Foco no cliente", kw: ["foco no cliente", "expetativas dos encarregados", "expectativas dos encarregados", "requisitos do cliente"] },
+  { c: "5.2", t: "Política da qualidade", kw: ["politica da qualidade", "politica de qualidade", "politica nao"] },
+  { c: "5.3", t: "Funções, responsabilidades e autoridades", kw: ["organograma", "funcoes", "responsabilidades", "descricao de funcao", "sem responsavel", "responsavel nao definido", "quem e responsavel", "autoridade"] },
+  { c: "6.1", t: "Ações para tratar riscos e oportunidades", kw: ["risco", "riscos", "oportunidade", "plano de contingencia", "matriz de risco", "analise de risco"] },
+  { c: "6.2", t: "Objetivos da qualidade e planeamento para os atingir", kw: ["objetivo", "objetivos", "meta", "metas", "indicador", "indicadores", "kpi"] },
+  { c: "6.3", t: "Planeamento das alterações", kw: ["planeamento das alteracoes", "mudanca organizacional", "reestruturacao"] },
+  { c: "7.1.2", t: "Pessoas", kw: ["falta de treinador", "falta de treinadores", "recursos humanos", "staff insuficiente", "numero de treinadores", "racio", "sem treinador", "treinadores insuficientes", "falta de pessoal", "falta de coordenador"] },
+  { c: "7.1.3", t: "Infraestrutura", kw: ["instalacoes", "instalacao", "balneario", "balnearios", "vestiario", "campo", "relvado", "sintetico", "baliza", "balizas", "equipamento", "equipamentos", "material", "materiais", "bolas", "cones", "coletes", "sinalizadores", "iluminacao", "manutencao", "redes", "piso", "armazem", "arrecadacao", "casa de banho", "casas de banho", "wc", "chuveiro", "pavilhao", "bancada", "vedacao", "porta", "fechadura", "avariado", "danificado", "partido", "estragado", "desfibrilhador", "dae", "mala de primeiros socorros", "kit de primeiros socorros", "estojo"] },
+  { c: "7.1.4", t: "Ambiente para a operacionalização dos processos", kw: ["limpeza", "higiene", "sujo", "sujidade", "lixo", "ruido", "temperatura", "aquecimento", "agua quente", "ambiente", "seguranca", "inseguro", "perigo", "perigoso", "bullying", "comportamento", "conflito", "clima", "emocional", "acolhimento"] },
+  { c: "7.1.5", t: "Recursos de monitorização e medição", kw: ["calibracao", "calibrado", "balanca", "cronometro", "medicao", "instrumento de medicao", "termometro", "fita metrica"] },
+  { c: "7.1.6", t: "Conhecimento organizacional", kw: ["conhecimento organizacional", "licoes aprendidas", "partilha de conhecimento", "boas praticas", "metodologia df", "manual do treinador"] },
+  { c: "7.2", t: "Competências", kw: ["formacao", "formacoes", "qualificacao", "qualificacoes", "certificado", "certificacao", "tptd", "cedula", "curso", "competencia", "competencias", "grau", "licenca", "habilitacao", "nao habilitado", "suporte basico de vida", "sbv"] },
+  { c: "7.3", t: "Consciencialização", kw: ["desconhece", "desconheciam", "nao conhece", "nao conheciam", "consciencializacao", "sensibilizacao", "nao sabia", "nao sabiam"] },
+  { c: "7.4", t: "Comunicação", kw: ["comunicacao", "comunicar", "comunicado", "informacao aos", "informar", "email", "e-mail", "contacto", "contactos", "aviso", "avisos", "divulgacao", "afixado", "afixada", "afixar", "placard", "quadro informativo", "redes sociais", "whatsapp", "reuniao", "reunioes"] },
+  { c: "7.5", t: "Informação documentada", kw: ["registo", "registos", "documento", "documentos", "documentacao", "folha de presencas", "presencas", "arquivo", "arquivado", "dossier", "dossie", "ficha", "fichas", "impresso", "modelo", "versao", "desatualizado", "desatualizada", "nao preenchido", "preenchimento", "assinatura", "assinado", "evidencia", "evidencias", "lista de"] },
+  { c: "8.1", t: "Planeamento e controlo operacional", kw: ["planeamento", "plano de treino", "planos de treino", "plano semanal", "planos semanais", "microciclo", "mesociclo", "horario", "horarios", "calendario", "calendarizacao", "programacao"] },
+  { c: "8.2", t: "Requisitos para produtos e serviços", kw: ["inscricao", "inscricoes", "contrato", "mensalidade", "mensalidades", "pagamento", "pagamentos", "quota", "regulamento", "condicoes de inscricao", "preco", "precario", "kit de equipamento", "comunicacao com o cliente", "pedido do encarregado"] },
+  { c: "8.3", t: "Design e desenvolvimento de produtos e serviços", kw: ["novo programa", "novo servico", "desenvolvimento de produto", "conteudos programaticos", "design"] },
+  { c: "8.4", t: "Controlo de fornecedores externos", kw: ["fornecedor", "fornecedores", "subcontrat", "prestador", "prestadores", "transporte", "autocarro", "empresa de", "aluguer", "catering", "outsourcing", "externo"] },
+  { c: "8.5.1", t: "Controlo da prestação do serviço", kw: ["treino", "treinos", "sessao", "sessoes", "pontualidade", "atraso", "atrasos", "assiduidade", "faltas do treinador", "acompanhamento", "jogo", "jogos", "torneio", "competicao", "aquecimento", "exercicio", "exercicios", "avaliacao dos alunos", "relatorio de avaliacao", "metodologia", "supervisao", "vigilancia"] },
+  { c: "8.5.2", t: "Identificação e rastreabilidade", kw: ["identificacao", "identificado", "identificados", "etiqueta", "etiquetado", "cartao", "credencial", "rastreabilidade"] },
+  { c: "8.5.3", t: "Propriedade dos clientes ou de fornecedores externos", kw: ["objetos pessoais", "perdidos", "perdidos e achados", "dados pessoais", "rgpd", "protecao de dados", "consentimento", "direitos de imagem", "autorizacao de imagem", "fotografias"] },
+  { c: "8.5.4", t: "Preservação", kw: ["armazenamento", "armazenado", "conservacao", "validade", "fora de validade", "expirado", "acondicionamento", "acondicionado", "guardado", "medicamentos"] },
+  { c: "8.5.5", t: "Atividades posteriores à entrega", kw: ["pos-servico", "follow-up", "seguimento apos"] },
+  { c: "8.5.6", t: "Controlo das alterações", kw: ["alteracao de horario", "alteracao do treinador", "substituicao do treinador", "mudanca de horario", "cancelamento de treino", "treino cancelado"] },
+  { c: "8.6", t: "Libertação de produtos e serviços", kw: ["libertacao", "verificacao final", "aprovacao final"] },
+  { c: "8.7", t: "Controlo de saídas não conformes", kw: ["saida nao conforme", "servico nao conforme", "produto nao conforme"] },
+  { c: "9.1.1", t: "Monitorização e medição: generalidades", kw: ["monitorizacao", "monitorizar", "medir", "medicao do desempenho"] },
+  { c: "9.1.2", t: "Satisfação do cliente", kw: ["satisfacao", "inquerito", "inqueritos", "questionario", "questionarios", "reclamacao", "reclamacoes", "elogio", "feedback dos encarregados"] },
+  { c: "9.1.3", t: "Análise e avaliação", kw: ["analise de dados", "analise dos dados", "dados nao analisados", "tratamento de dados", "estatistica", "relatorio de analise"] },
+  { c: "9.2", t: "Auditoria interna", kw: ["auditoria", "auditorias", "auditor", "programa de auditorias"] },
+  { c: "9.3", t: "Revisão pela gestão", kw: ["revisao pela gestao", "revisao do sistema"] },
+  { c: "10.2", t: "Não conformidade e ação corretiva", kw: ["acao corretiva", "acoes corretivas", "nao conformidade anterior", "reincidencia", "reincidente", "repete-se", "voltou a acontecer", "nao resolvida", "por resolver", "anteriormente identificad"] },
+  { c: "10.3", t: "Melhoria contínua", kw: ["melhoria continua", "melhorar", "melhoria"] },
+];
+const REQUISITO_ISO_POR_CODIGO = Object.fromEntries(REQUISITOS_ISO.map((r) => [r.c, r]));
+const GRUPOS_ISO = { 4: "4 · Contexto da organização", 5: "5 · Liderança", 6: "6 · Planeamento", 7: "7 · Suporte", 8: "8 · Operacionalização", 9: "9 · Avaliação do desempenho", 10: "10 · Melhoria" };
+const rotuloISO = (c) => (REQUISITO_ISO_POR_CODIGO[c] ? `${c} ${REQUISITO_ISO_POR_CODIGO[c].t}` : c || "");
+
+// Pistas pela área: quando o texto não diz nada, a área aponta para onde costuma cair.
+const ISO_POR_AREA = {
+  "instalacoes e equipamentos": "7.1.3",
+  medica: "7.1.4",
+  tecnica: "8.5.1",
+  administrativa: "7.5",
+  "escolar e social": "7.1.4",
+};
+
+// Sugere o requisito ISO de uma constatação. Devolve { c, certeza: "alta" | "media" | "baixa", alternativas }.
+function sugerirRequisitoISO(f) {
+  const norm = (t) => " " + normChave(t).replace(/[^a-z0-9 -]/g, " ").replace(/\s+/g, " ") + " ";
+  const titulo = norm([f.description, f.category].filter(Boolean).join(" "));
+  const resto = norm([f.analiseCausas, f.acao].filter(Boolean).join(" "));
+  // Palavras curtas (wc, dae, kpi) têm de aparecer inteiras; as outras contam também no plural.
+  const tem = (txt, k) => (k.length <= 3 ? txt.includes(` ${k} `) : txt.includes(` ${k}`));
+  const pont = REQUISITOS_ISO.map((r) => {
+    let s = 0;
+    // Sem contar duas vezes a mesma palavra (ex.: "balneario" e "balnearios").
+    const kws = r.kw.filter((k) => !r.kw.some((o) => o !== k && o.length > 3 && k.startsWith(o)));
+    kws.forEach((k) => {
+      // Uma expressão inteira ("plano de treino") diz mais do que uma palavra solta ("treino").
+      const peso = k.includes(" ") ? 4 : 2;
+      if (tem(titulo, k)) s += peso;
+      else if (tem(resto, k)) s += 1;
+    });
+    return { c: r.c, s };
+  });
+  const area = ISO_POR_AREA[normChave(f.area)];
+  if (area) pont.find((p) => p.c === area).s += 1;
+  pont.sort((a, b) => b.s - a.s);
+  const [a, b] = pont;
+  if (!a || a.s === 0) return { c: area || "", certeza: "baixa", alternativas: [] };
+  const certeza = a.s >= 4 && a.s >= (b ? b.s : 0) * 2 ? "alta" : a.s >= 2 && a.s > (b ? b.s : 0) ? "media" : "baixa";
+  return { c: a.c, certeza, alternativas: pont.slice(1, 3).filter((p) => p.s > 0 && p.s >= a.s / 2).map((p) => p.c) };
+}
+
+// Constatações que já constavam na auditoria anterior da mesma escola (mesmo âmbito).
+// Compara as palavras com significado do título; a mesma categoria e o mesmo requisito ajudam.
+function auditoriaAnterior(audit, audits) {
+  const chave = (a) => `${normChave(a.school)}|${a.ambito || ""}`;
+  const k = chave(audit);
+  const d = String(audit.date || "");
+  if (!d) return null;
+  return (
+    (audits || [])
+      .filter((a) => a.id !== audit.id && chave(a) === k && a.date && String(a.date) < d)
+      .sort((x, y) => String(y.date).localeCompare(String(x.date)))[0] || null
+  );
+}
+function semelhancaConstatacoes(f, g) {
+  const p1 = new Set(palavrasDe(f.description));
+  const p2 = new Set(palavrasDe(g.description));
+  if (!p1.size || !p2.size) return 0;
+  const comuns = [...p1].filter((w) => p2.has(w)).length;
+  let s = comuns / Math.min(p1.size, p2.size);
+  if (normChave(f.description) === normChave(g.description)) s = 1;
+  if (f.category && g.category && normChave(f.category) === normChave(g.category)) s += 0.15;
+  if (f.iso && g.iso && f.iso === g.iso) s += 0.1;
+  return Math.min(1, s);
+}
+// Mapa findingId -> { f, audit } com a constatação equivalente na auditoria anterior.
+function repetidasDaAnterior(audit, audits) {
+  const ant = auditoriaAnterior(audit, audits);
+  if (!ant) return { anterior: null, mapa: {} };
+  const mapa = {};
+  (audit.findings || []).forEach((f) => {
+    if (f.repetidaManual === false) return;
+    let melhor = null;
+    (ant.findings || []).forEach((g) => {
+      const s = semelhancaConstatacoes(f, g);
+      if (s >= 0.6 && (!melhor || s > melhor.s)) melhor = { s, f: g };
+    });
+    if (melhor) mapa[f.id] = { f: melhor.f, audit: ant, s: melhor.s };
+  });
+  return { anterior: ant, mapa };
+}
 
 const DEFAULT_NIVEIS = ["Raíz", "Iniciação", "Básico", "Intermédio", "Avançado", "Expert"];
 const DEFAULT_TURMAS = [
@@ -541,16 +717,25 @@ const MOTIVO_META = {
 };
 
 const PERSON_TYPE_META = {
-  familia: { label: "Pai / Encarregado de Educação" },
+  familia: { label: "Encarregado de educação" },
   elemento_df: { label: "Elemento Dragon Force" },
   atleta: { label: "Atleta(s)" },
 };
 
-// Uma ocorrência de atletas pode ter um ou vários nomes.
+// Uma ocorrência de atletas pode ter um ou vários alunos, identificados pelo código.
+// (Registos antigos podem ter iniciais em vez do código.)
 function nomesAtletas(s) {
   return (s.atletas || []).map((n) => String(n || "").trim()).filter(Boolean);
 }
+function idsFilhos(s) {
+  return (s.idsFilhos || []).map((n) => String(n || "").trim()).filter(Boolean);
+}
 function nomeOcorrencia(s) {
+  if (s.personType === "familia") {
+    const ids = idsFilhos(s);
+    if (ids.length) return `EE ${ids.length === 1 ? "do aluno" : "dos alunos"} ${ids.join(", ")}`;
+    return s.personName || "EE (sem código de aluno)";
+  }
   if (s.personType !== "atleta") return s.personName;
   const nomes = nomesAtletas(s);
   if (nomes.length) return nomes.join(", ");
@@ -2832,10 +3017,16 @@ function AuditDetail({
   onUpdateAudit,
   schoolOptions,
   onGerirLista,
+  audits,
 }) {
   const [editarVisita, setEditarVisita] = useState(false);
   const [preencher, setPreencher] = useState(false);
+  const [associarIso, setAssociarIso] = useState(false);
   const semAreaCat = audit.findings.filter((f) => !f.area || !f.category);
+  const semIso = audit.findings.filter((f) => !f.iso);
+  // Constatações que já vinham da auditoria anterior da mesma escola.
+  const rep = useMemo(() => repetidasDaAnterior(audit, audits || []), [audit, audits]);
+  const nRep = Object.keys(rep.mapa).length;
   const [visita, setVisita] = useState({ school: audit.school, date: audit.date || "", epoca: audit.epoca || "" });
   useEffect(() => setVisita({ school: audit.school, date: audit.date || "", epoca: audit.epoca || "" }), [audit.id, audit.school, audit.date, audit.epoca]);
   const [classification, setClassification] = useState("NC");
@@ -2848,12 +3039,13 @@ function AuditDetail({
   const submit = () => {
     const v = description.trim();
     if (!v) return;
+    const nova = { classification, category, area, description: v };
+    // Requisito ISO: só fica associado sozinho quando a certeza é alta; senão aparece como sugestão.
+    const sug = sugerirRequisitoISO(nova);
     onAddFinding(audit.id, {
       id: `f_${Date.now()}`,
-      classification,
-      category,
-      area,
-      description: v,
+      ...nova,
+      ...(sug.certeza === "alta" && sug.c ? { iso: sug.c, isoOrigem: "auto" } : {}),
       resolvida: false,
       eficacia: "",
       acao: "",
@@ -2893,6 +3085,12 @@ function AuditDetail({
         <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: editarVisita ? 10 : 18, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
           <span>
             {audit.findings.length} constatações · {resolvidas} resolvidas
+            {nRep > 0 && (
+              <strong style={{ color: COLORS.warn, fontWeight: 600 }}>
+                {" "}
+                · {nRep} {nRep === 1 ? "repetida" : "repetidas"} da auditoria de {dataAud(rep.anterior)}
+              </strong>
+            )}
           </span>
           {onUpdateAudit && (
             <button className="semFoto" onClick={() => setEditarVisita((x) => !x)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
@@ -3018,6 +3216,27 @@ function AuditDetail({
             </button>
           </div>
         )}
+        {onUpdateFindings && semIso.length > 0 && !associarIso && !preencher && (
+          <div className="semFoto" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 12px", borderRadius: 10, border: `1px solid ${COLORS.rule}`, background: COLORS.paperSunken, marginBottom: 12, fontSize: 12.5 }}>
+            <span style={{ flex: 1 }}>
+              {semIso.length} {semIso.length === 1 ? "constatação" : "constatações"} sem requisito ISO 9001.
+            </span>
+            <button onClick={() => setAssociarIso(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Sparkles size={14} /> Associar requisitos ISO
+            </button>
+          </div>
+        )}
+        {associarIso && (
+          <AssociarISO
+            embutido
+            itens={semIso.map((f) => ({ auditId: audit.id, f }))}
+            onFechar={() => setAssociarIso(false)}
+            onAplicar={(alteracoes) => {
+              onUpdateFindings(alteracoes);
+              setAssociarIso(false);
+            }}
+          />
+        )}
         {preencher && (
           <PreencherAreasCategorias
             embutido
@@ -3039,6 +3258,8 @@ function AuditDetail({
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {audit.findings.map((f) => {
               const cm = CLASSIFICATION_META[f.classification] || { color: COLORS.slate, bg: COLORS.paperSunken };
+              const repetida = rep.mapa[f.id];
+              const sugIso = f.iso ? null : sugerirRequisitoISO(f);
               return (
                 <div key={f.id} style={{ padding: "11px 13px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${f.classification ? COLORS.rule : COLORS.warn}` }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -3085,8 +3306,52 @@ function AuditDetail({
                             </option>
                           ))}
                         </select>
+                        <SeletorISO
+                          valor={f.iso}
+                          onChange={(v) => onUpdateFinding(audit.id, f.id, { iso: v, isoOrigem: v ? "manual" : null })}
+                          vazio="Sem requisito ISO"
+                          style={{ fontSize: 11, color: f.iso ? COLORS.ink2 : COLORS.slate, background: "transparent", border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "1px 4px", fontFamily: "inherit", maxWidth: 230 }}
+                        />
+                        {f.iso && f.isoOrigem === "auto" && (
+                          <span className="semFoto" title="Associado automaticamente (certeza alta). Muda no seletor se não estiver certo." style={{ fontSize: 10.5, color: COLORS.slate, alignSelf: "center" }}>
+                            auto
+                          </span>
+                        )}
+                        {sugIso && sugIso.c && (
+                          <button
+                            className="semFoto"
+                            type="button"
+                            onClick={() => onUpdateFinding(audit.id, f.id, { iso: sugIso.c, isoOrigem: "confirmado" })}
+                            title={`Sugestão: ${rotuloISO(sugIso.c)}${sugIso.alternativas.length ? ` (alternativas: ${sugIso.alternativas.join(", ")})` : ""}. Carrega para confirmar.`}
+                            style={{ fontSize: 10.5, fontWeight: 600, color: sugIso.certeza === "alta" ? COLORS.ok : COLORS.warn, background: "transparent", border: `1px dashed ${sugIso.certeza === "alta" ? COLORS.ok : COLORS.warn}`, borderRadius: 4, padding: "1px 6px", cursor: "pointer", fontFamily: "inherit" }}
+                          >
+                            {sugIso.certeza === "alta" ? "Sugestão" : "Talvez"} {sugIso.c} · confirmar
+                          </button>
+                        )}
+                        {repetida && (
+                          <span
+                            title={`Já constava na auditoria de ${dataAud(repetida.audit)}: «${repetida.f.description}»${repetida.f.resolvida ? " (dada como resolvida)" : " (ainda por resolver)"}`}
+                            style={{ fontSize: 10.5, fontWeight: 700, color: COLORS.warn, background: COLORS.warnBg, border: `1px solid ${COLORS.warn}`, borderRadius: 4, padding: "1px 6px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                          >
+                            ↻ Repetida
+                            <button
+                              className="semFoto"
+                              type="button"
+                              onClick={() => onUpdateFinding(audit.id, f.id, { repetidaManual: false })}
+                              title="Não é a mesma constatação: tirar o sinal"
+                              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: COLORS.warn, fontSize: 11, lineHeight: 1 }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: 13.5 }}>{f.description}</div>
+                      {repetida && (
+                        <div style={{ fontSize: 11.5, color: COLORS.warn, marginTop: 3 }}>
+                          Já em {dataAud(repetida.audit)}: «{repetida.f.description}»{repetida.f.resolvida ? " · tinha sido dada como resolvida" : " · ainda por resolver"}
+                        </div>
+                      )}
                       {(f.responsavel || f.resolvidaEm || f.analiseCausas || f.prazo || f.prazoTexto) && (
                         <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 5, lineHeight: 1.5 }}>
                           {f.analiseCausas && (
@@ -4966,6 +5231,126 @@ function PreencherAreasCategorias({ itens, areas, categorias, mapaAreas, onAplic
   );
 }
 
+// Seletor do requisito ISO, agrupado pelos capítulos da norma.
+function SeletorISO({ valor, onChange, style, vazio = "Sem requisito ISO" }) {
+  const grupos = {};
+  REQUISITOS_ISO.forEach((r) => {
+    const g = r.c.split(".")[0];
+    (grupos[g] = grupos[g] || []).push(r);
+  });
+  return (
+    <select value={valor || ""} onChange={(e) => onChange(e.target.value)} aria-label="Requisito ISO 9001" title={valor ? rotuloISO(valor) : "Requisito ISO 9001"} style={style}>
+      <option value="">{vazio}</option>
+      {Object.entries(grupos).map(([g, rs]) => (
+        <optgroup key={g} label={GRUPOS_ISO[g]}>
+          {rs.map((r) => (
+            <option key={r.c} value={r.c}>
+              {r.c} {r.t}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+const CERTEZA_ISO = {
+  alta: { rotulo: "certeza alta", cor: () => COLORS.ok },
+  media: { rotulo: "por confirmar", cor: () => COLORS.warn },
+  baixa: { rotulo: "sem certeza: escolhe", cor: () => COLORS.warn },
+};
+
+// Revisão em lote do requisito ISO. itens: [{ auditId, f, rotulo }].
+// As de certeza alta vêm marcadas; as outras ficam por confirmar.
+function AssociarISO({ itens, onAplicar, onFechar, embutido }) {
+  const [linhas, setLinhas] = useState(() =>
+    itens.map((it) => {
+      const s = sugerirRequisitoISO(it.f);
+      return { ...it, iso: s.c, certeza: s.certeza, alternativas: s.alternativas, incluir: s.certeza === "alta" && !!s.c };
+    })
+  );
+  const [so, setSo] = useState("todas");
+  const muda = (i, campos) => setLinhas((l) => l.map((x, j) => (j === i ? { ...x, ...campos } : x)));
+  const aAplicar = linhas.filter((x) => x.incluir && x.iso);
+  const n = (c) => linhas.filter((x) => x.certeza === c).length;
+  const visiveis = linhas.map((x, i) => ({ x, i })).filter(({ x }) => so === "todas" || (so === "duvida" ? x.certeza !== "alta" : x.certeza === "alta"));
+  const corpo = (
+    <>
+      <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 10 }}>
+        A app propõe o requisito da NP EN ISO 9001:2015 pelo texto, pela categoria e pela área. As de certeza alta vêm marcadas. Nas outras, confirma ou escolhe o requisito e marca a linha.
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, fontSize: 12 }}>
+        {[
+          ["todas", `Todas (${linhas.length})`],
+          ["duvida", `Por confirmar (${n("media") + n("baixa")})`],
+          ["alta", `Certeza alta (${n("alta")})`],
+        ].map(([k, l]) => (
+          <button key={k} type="button" onClick={() => setSo(k)} style={{ border: `1px solid ${so === k ? COLORS.navy : COLORS.rule}`, background: so === k ? COLORS.navy : "transparent", color: so === k ? COLORS.onAccent : COLORS.ink2, borderRadius: 14, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>
+            {l}
+          </button>
+        ))}
+      </div>
+      <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, overflow: "hidden", maxHeight: embutido ? 380 : "none", overflowY: embutido ? "auto" : "visible" }}>
+        {visiveis.map(({ x, i }, k) => (
+          <div key={`${x.auditId}|${x.f.id}`} style={{ padding: "9px 12px", borderTop: k ? `1px solid ${COLORS.ruleSoft}` : "none", fontSize: 12.5, background: x.incluir ? "transparent" : COLORS.paperSunken }}>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+              <input type="checkbox" checked={x.incluir} disabled={!x.iso} onChange={(e) => muda(i, { incluir: e.target.checked })} style={{ marginTop: 3 }} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {x.rotulo && <span style={{ fontSize: 11, color: COLORS.slate }}>{x.rotulo} · </span>}
+                <strong style={{ fontWeight: 600 }}>{x.f.classification || "—"}</strong> {x.f.description || "(sem título)"}
+                {(x.f.area || x.f.category) && <span style={{ display: "block", fontSize: 11.5, color: COLORS.slate, marginTop: 2 }}>{[x.f.area, x.f.category].filter(Boolean).join(" · ")}</span>}
+              </span>
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 7, paddingLeft: 24, flexWrap: "wrap" }}>
+              <SeletorISO valor={x.iso} onChange={(v) => muda(i, { iso: v, certeza: v ? "alta" : "baixa", incluir: !!v, escolhida: true })} style={{ ...inputStyle, padding: "5px 8px", fontSize: 12.5, flex: "1 1 260px", borderColor: x.iso ? undefined : COLORS.warn }} vazio="Escolher requisito…" />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: x.escolhida ? COLORS.slate : CERTEZA_ISO[x.certeza].cor(), whiteSpace: "nowrap" }}>{x.escolhida ? "escolhido" : CERTEZA_ISO[x.certeza].rotulo}</span>
+              {!x.escolhida && x.alternativas.length > 0 && (
+                <span style={{ fontSize: 11, color: COLORS.slate }}>
+                  ou{" "}
+                  {x.alternativas.map((c, j) => (
+                    <button key={c} type="button" onClick={() => muda(i, { iso: c, incluir: true, escolhida: true })} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11 }} title={rotuloISO(c)}>
+                      {j ? ", " : ""}
+                      {c}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+        {!visiveis.length && <div style={{ padding: 12, fontSize: 12.5, color: COLORS.slate }}>Nada neste filtro.</div>}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ flex: 1, fontSize: 12, color: COLORS.slate }}>{linhas.length - aAplicar.length} ficam por associar</span>
+        <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "8px 14px" }}>
+          Cancelar
+        </button>
+        <button
+          disabled={!aAplicar.length}
+          onClick={() => onAplicar(aAplicar.map((x) => ({ auditId: x.auditId, findingId: x.f.id, patch: { iso: x.iso, isoOrigem: "confirmado" } })))}
+          style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "8px 16px", opacity: aAplicar.length ? 1 : 0.5 }}
+        >
+          Associar {aAplicar.length} {aAplicar.length === 1 ? "constatação" : "constatações"}
+        </button>
+      </div>
+    </>
+  );
+  if (embutido) return <div className="semFoto" style={{ padding: 12, borderRadius: 10, background: COLORS.paperSunken, border: `1px solid ${COLORS.rule}`, marginBottom: 14 }}>{corpo}</div>;
+  return (
+    <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
+      <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Requisitos ISO 9001 das constatações</h2>
+          <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
+            <X size={18} />
+          </button>
+        </div>
+        {itens.length === 0 ? <div style={{ fontSize: 13, color: COLORS.ink2 }}>Todas as constatações já têm requisito ISO.</div> : corpo}
+      </div>
+    </div>
+  );
+}
+
 // Associa a cada assunto (categoria) a sua área / departamento, em todas as constatações de uma vez.
 function AreasConstatacoes({ audits, areas, mapaGuardado, onAplicar, onFechar, onGerirLista }) {
   const assuntos = useMemo(() => {
@@ -5036,22 +5421,26 @@ function AreasConstatacoes({ audits, areas, mapaGuardado, onAplicar, onFechar, o
   );
 }
 
-function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPreencher, schoolOptions, areaOptions, auditCategoryOptions }) {
+function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPreencher, onIso, schoolOptions, areaOptions, auditCategoryOptions }) {
   const [view, setView] = useState("registo");
   const [fEpoca, setFEpoca] = useState([]);
   const [fEscola, setFEscola] = useState("todas");
   const [fTipo, setFTipo] = useState("todos");
   const [fEstado, setFEstado] = useState("todos");
   const [fArea, setFArea] = useState("todas");
+  const [fIso, setFIso] = useState("");
   const [fTexto, setFTexto] = useState("");
+  // Quantas constatações de cada visita já vinham da visita anterior à mesma escola.
+  const repPorAud = useMemo(() => Object.fromEntries(audits.map((a) => [a.id, Object.keys(repetidasDaAnterior(a, audits).mapa).length])), [audits]);
 
   const epocasLista = [...new Set(audits.map((a) => epocaAud(a)).filter(Boolean))].sort().reverse();
   const escolasLista = [...new Set(audits.map((a) => a.school).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
   const areasLista = [...new Set(audits.flatMap((a) => (a.findings || []).map((f) => f.area)).filter(Boolean))].sort();
-  const temFiltroConst = fTipo !== "todos" || fArea !== "todas" || fTexto.trim();
+  const temFiltroConst = fTipo !== "todos" || fArea !== "todas" || fIso || fTexto.trim();
   const passaConst = (f) =>
     (fTipo === "todos" || (fTipo === "sem" ? !f.classification : f.classification === fTipo)) &&
     (fArea === "todas" || (fArea === "sem" ? !f.area : f.area === fArea)) &&
+    (!fIso || (fIso === "sem" ? !f.iso : String(f.iso || "") === fIso || String(f.iso || "").startsWith(`${fIso}.`))) &&
     (!fTexto.trim() || normChave([f.description, f.category, f.area, f.analiseCausas, f.acao, f.responsavel].join(" ")).includes(normChave(fTexto)));
   const filtradas = audits.filter((a) => {
     if (!naSelecao(fEpoca, epocaAud(a))) return false;
@@ -5116,6 +5505,11 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
                 <Sparkles size={15} /> Preencher área e categoria
               </button>
             )}
+            {onIso && audits.some((a) => (a.findings || []).some((f) => !f.iso)) && (
+              <button onClick={onIso} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px", display: "flex", alignItems: "center", gap: 7 }}>
+                <Sparkles size={15} /> Requisitos ISO 9001
+              </button>
+            )}
             {onAreas && audits.length > 0 && (
               <button onClick={onAreas} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "10px 14px" }}>
                 Áreas e categorias
@@ -5174,6 +5568,20 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
                   </option>
                 ))}
                 <option value="sem">Sem área</option>
+              </select>
+              <select value={fIso} onChange={(e) => setFIso(e.target.value)} style={{ ...filtroSel, maxWidth: 220 }} aria-label="Requisito ISO">
+                <option value="">Todos os requisitos ISO</option>
+                {Object.entries(GRUPOS_ISO).map(([g, l]) => (
+                  <optgroup key={g} label={l}>
+                    <option value={g}>Todo o capítulo {g}</option>
+                    {REQUISITOS_ISO.filter((r) => r.c.split(".")[0] === g).map((r) => (
+                      <option key={r.c} value={r.c}>
+                        {r.c} {r.t}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <option value="sem">Sem requisito ISO</option>
               </select>
               <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={filtroSel} aria-label="Estado">
                 <option value="todos">Todos os estados</option>
@@ -5235,6 +5643,7 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
                         return <Tag key={c} label={`${n} ${c}`} color={CLASSIFICATION_META[c].color} bg={CLASSIFICATION_META[c].bg} />;
                       })}
                       {fs.some((f) => !f.classification) && <Tag label={`${fs.filter((f) => !f.classification).length} sem tipo`} color={COLORS.warn} bg={COLORS.warnBg} />}
+                      {repPorAud[a.id] > 0 && <Tag label={`↻ ${repPorAud[a.id]} ${repPorAud[a.id] === 1 ? "repetida" : "repetidas"}`} color={COLORS.warn} bg={COLORS.warnBg} />}
                       {fs.length > 0 &&
                         (pend ? (
                           <Tag label={`${pend} por resolver`} color={COLORS.warn} bg={COLORS.warnBg} />
@@ -5255,11 +5664,13 @@ function AuditsPage({ audits, onNewAudit, onOpenAudit, onImportar, onAreas, onPr
 }
 
 // ---------- Sanções: novo registo de ocorrência ----------
-function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista, turmas, turmasPorEscola, inicial }) {
+function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTypes, onGerirLista, turmas, turmasPorEscola, inicial, registoAlunos }) {
   const [form, setForm] = useState(() => inicial ? {
     ...inicial,
     personName: inicial.personName || "",
     atletas: inicial.atletas && inicial.atletas.length ? inicial.atletas : [""],
+    idsFilhos: inicial.idsFilhos && inicial.idsFilhos.length ? inicial.idsFilhos : [""],
+    semCodigo: inicial.personType === "familia" && !(inicial.idsFilhos || []).some(Boolean) && !!inicial.personName,
     escalao: inicial.escalao || "",
     school: inicial.school || "",
     description: inicial.description || "",
@@ -5268,6 +5679,8 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
     personType: "familia",
     personName: "",
     atletas: [""],
+    idsFilhos: [""],
+    semCodigo: false,
     escalao: "",
     school: "",
     motivo: "ma_conduta",
@@ -5281,9 +5694,79 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const eAtleta = form.personType === "atleta";
   const escaloes = (form.school && turmasPorEscola?.[form.school]?.length ? turmasPorEscola[form.school] : turmas) || [];
+  const eFamilia = form.personType === "familia";
   const nomesValidos = form.atletas.map((n) => n.trim()).filter(Boolean);
-  const podeGuardar = eAtleta ? nomesValidos.length >= 1 : !!form.personName.trim();
-  const setAtleta = (i, v) => setForm((f) => ({ ...f, atletas: f.atletas.map((n, j) => (j === i ? v : n)) }));
+  const filhosValidos = (form.idsFilhos || []).map((n) => n.trim()).filter(Boolean);
+  const familiaPorCodigo = eFamilia && !form.semCodigo;
+  const podeGuardar = eAtleta ? nomesValidos.length >= 1 : familiaPorCodigo ? filhosValidos.length >= 1 : !!form.personName.trim();
+
+  // Procura o código nos inscritos (época mais recente primeiro) para mostrar turma e escola.
+  const procurarCodigo = (cod) => {
+    const c = String(cod || "").trim();
+    if (!c) return null;
+    for (const ep of Object.keys(registoAlunos || {}).sort().reverse()) {
+      const a = registoAlunos[ep]?.alunos?.[c];
+      if (a) return { ...a, epoca: ep };
+    }
+    return null;
+  };
+  // Se a escola ou a turma estão vazias, preenche-as pelo primeiro código reconhecido.
+  const aoMudarCodigo = (campo, i, v) =>
+    setForm((f) => {
+      const lista = f[campo].map((n, j) => (j === i ? v : n));
+      const a = procurarCodigo(v);
+      return {
+        ...f,
+        [campo]: lista,
+        school: f.school || (a && (schoolOptions || []).includes(a.escola) ? a.escola : f.school),
+        escalao: campo === "atletas" && !f.escalao && a ? a.turma || f.escalao : f.escalao,
+      };
+    });
+
+  // Lista de códigos de aluno (um ou vários), com a turma e a escola de cada código reconhecido.
+  const listaCodigos = (campo, rotulo, rotuloMais) => (
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {form[campo].map((cod, i) => {
+          const a = procurarCodigo(cod);
+          return (
+            <div key={i}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder={i === 0 ? rotulo : `${rotulo} ${i + 1}`}
+                  value={cod}
+                  autoFocus={i > 0 && i === form[campo].length - 1 && !cod}
+                  onChange={(e) => aoMudarCodigo(campo, i, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (cod.trim()) setForm((f) => ({ ...f, [campo]: [...f[campo], ""] }));
+                    }
+                  }}
+                  style={{ ...inputStyle, flex: 1, fontVariantNumeric: "tabular-nums" }}
+                />
+                {form[campo].length > 1 && (
+                  <button type="button" title="Remover" onClick={() => setForm((f) => ({ ...f, [campo]: f[campo].filter((_, j) => j !== i) }))} style={{ ...iconBtnStyle, flex: "none" }}>
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              {cod.trim() && (
+                <div style={{ fontSize: 11.5, marginTop: 3, color: a ? COLORS.slate : COLORS.warn }}>
+                  {a ? `${a.turma || "sem turma"} · ${a.escola}${a.ano ? ` · ${a.ano}` : ""}${a.estado === "desistiu" ? " · desistiu" : ""}` : "Código não encontrado nos inscritos (guarda-se na mesma)"}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" onClick={() => setForm((f) => ({ ...f, [campo]: [...f[campo], ""] }))} style={{ ...linkBtnStyle, marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <Plus size={14} /> {rotuloMais}
+      </button>
+    </>
+  );
 
   return (
     <div
@@ -5328,45 +5811,9 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
 
         {eAtleta ? (
           <>
-            <label style={{ ...labelStyle, marginTop: 0 }}>{form.atletas.length > 1 ? `Atletas (${form.atletas.length})` : "Nome do atleta"}</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {form.atletas.map((nome, i) => (
-                <div key={i} style={{ display: "flex", gap: 6 }}>
-                  <input
-                    type="text"
-                    placeholder={i === 0 ? "Nome do atleta" : `Atleta ${i + 1}`}
-                    value={nome}
-                    autoFocus={i > 0 && i === form.atletas.length - 1 && !nome}
-                    onChange={(e) => setAtleta(i, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        if (nome.trim()) setForm((f) => ({ ...f, atletas: [...f.atletas, ""] }));
-                      }
-                    }}
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {form.atletas.length > 1 && (
-                    <button
-                      type="button"
-                      title="Remover atleta"
-                      onClick={() => setForm((f) => ({ ...f, atletas: f.atletas.filter((_, j) => j !== i) }))}
-                      style={{ ...iconBtnStyle, flex: "none" }}
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, atletas: [...f.atletas, ""] }))}
-              style={{ ...linkBtnStyle, marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4 }}
-            >
-              <Plus size={14} /> Adicionar outro atleta
-            </button>
-            <label style={labelStyle}>Escalão / turma</label>
+            <label style={{ ...labelStyle, marginTop: 0 }}>{form.atletas.length > 1 ? `Códigos dos alunos (${form.atletas.length})` : "Código do aluno"}</label>
+            {listaCodigos("atletas", "Código do aluno", "Adicionar outro aluno")}
+            <label style={labelStyle}>Turma / equipa</label>
             <select value={form.escalao} onChange={set("escalao")} style={inputStyle}>
               <option value="">Sem escalão indicado</option>
               {escaloes.map((t) => (
@@ -5375,6 +5822,26 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
                 </option>
               ))}
             </select>
+          </>
+        ) : eFamilia ? (
+          <>
+            {!form.semCodigo && (
+              <>
+                <label style={{ ...labelStyle, marginTop: 0 }}>{form.idsFilhos.length > 1 ? `Códigos dos educandos (${form.idsFilhos.length})` : "Código do educando"}</label>
+                <div style={{ fontSize: 11.5, color: COLORS.slate, marginBottom: 6 }}>O EE fica identificado pelo código do aluno de quem é encarregado.</div>
+                {listaCodigos("idsFilhos", "Código do educando", "Adicionar outro educando")}
+              </>
+            )}
+            <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: COLORS.ink2, marginTop: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!form.semCodigo} onChange={(e) => setForm((f) => ({ ...f, semCodigo: e.target.checked }))} />
+              Não é possível identificar pelo código do aluno
+            </label>
+            {form.semCodigo && (
+              <>
+                <label style={labelStyle}>Identificação</label>
+                <input type="text" placeholder="Ex.: iniciais ou referência interna" value={form.personName} onChange={set("personName")} style={inputStyle} />
+              </>
+            )}
           </>
         ) : (
           <>
@@ -5535,8 +6002,10 @@ function SanctionForm({ onCancel, onSave, schoolOptions, complaints, sanctionTyp
               if (!podeGuardar) return;
               onSave({
                 ...form,
-                personName: eAtleta ? "" : form.personName.trim(),
+                personName: eAtleta || familiaPorCodigo ? "" : form.personName.trim(),
                 atletas: eAtleta ? nomesValidos : undefined,
+                idsFilhos: familiaPorCodigo ? filhosValidos : undefined,
+                semCodigo: eFamilia ? !!form.semCodigo : undefined,
                 nAtletas: eAtleta ? nomesValidos.length : undefined,
                 escalao: eAtleta ? form.escalao : undefined,
                 id: inicial ? inicial.id : `s_${Date.now()}`,
@@ -5896,7 +6365,7 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
         metricas={[
           { key: "n", label: "Ocorrências", melhor: "baixo" },
           { key: "graves", label: "Ameaças e agressões", melhor: "baixo" },
-          { key: "familia", label: "Com pais / EE", melhor: "baixo" },
+          { key: "familia", label: "Com EE", melhor: "baixo" },
           { key: "atletas", label: "Atletas envolvidos", melhor: "baixo" },
           { key: "df", label: "Com elementos DF", melhor: "baixo" },
         ]}
@@ -5914,8 +6383,8 @@ function SanctionsPage({ sanctions, onNew, onOpen }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", flex: 1 }}>
           <StatCard label="Total de ocorrências" value={sanctions.length} />
-          <StatCard label="Sanções aplicadas (Pais/EE)" value={sancoesAplicadasFamilia} color={COLORS.danger} />
-          <StatCard label="Sem sanção (Pais/EE)" value={semSancaoFamilia} color={COLORS.ok} />
+          <StatCard label="Sanções aplicadas (EE)" value={sancoesAplicadasFamilia} color={COLORS.danger} />
+          <StatCard label="Sem sanção (EE)" value={semSancaoFamilia} color={COLORS.ok} />
           <StatCard label="Suspensão/Expulsão (DF)" value={sancoesFinaisDF} color={COLORS.danger} />
           <StatCard
             label="Atletas envolvidos"
@@ -7775,7 +8244,10 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     const pt = escBloco ? turmasDaEscola(escBloco) : porTurma;
     const ts = nomes.map((n) => pt[n]).filter(Boolean);
     const total = ts.reduce((t, x) => t + x.total, 0);
-    const limite = ts.length ? Math.min(...ts.map((x) => x.cap)) : 0;
+    // Lotação definida para o grupo (na página de Inscritos) manda; senão, a mais baixa das turmas.
+    const chaveGrupo = `${escBloco || escola}|grupo:${[...new Set(ts.map((x) => x.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true })).join(" + ")}`;
+    const capGrupo = ts.length > 1 ? (capacidades || {})[chaveGrupo] : null;
+    const limite = capGrupo || (ts.length ? Math.min(...ts.map((x) => x.cap)) : 0);
     const daTurma = ts.find((x) => x.cap === limite);
     const tol = toleranciaTreinadores(nTreinadores, regrasT);
     const estado = !limite ? "sem" : total <= limite ? "ok" : total <= limite + tol ? "tolerado" : "acima";
@@ -10493,6 +10965,7 @@ function InscritosPage({
   registoAlunos,
   onImportarInscritos,
   onCapacidade,
+  onMudarTurma,
   gestaoDados,
   onGuardarMapaEscaloes,
   notificar,
@@ -10649,6 +11122,8 @@ function InscritosPage({
           onCapacidade={onCapacidade}
           onSaveEpocaAnterior={onSaveEpocaAnterior}
           gestaoDados={gestaoDados}
+          espacos={espacos}
+          onMudarTurma={onMudarTurma}
         />
       ) : (
         <AnaliseInscritos registoAlunos={registoAlunos} options={options} escolas={escolas} inscritos={inscritos} epocaAnterior={epocaAnterior} experiencias={experiencias} turmasAlunos={turmasAlunos} gestaoDados={gestaoDados} />
@@ -11046,10 +11521,14 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     aF.forEach((r) => {
       const prev = anterior.alunos[r.id];
       vistos.add(r.id);
+      const turmaFicheiro = mapaTurma[r.equipa] || nomeTurmaProposto(r.equipa, niveis) || "Sem turma";
+      // Turma mudada à mão (ou pelo operacional): mantém-se enquanto o ficheiro trouxer a mesma turma de antes.
+      const manter = prev && (prev.turmaManual || prev.mudadoPor) && (prev.turmaFicheiro || prev.turmaAntes) === turmaFicheiro;
       alunos[r.id] = {
         id: r.id,
-        escola: escolaDe(r.escola),
-        turma: mapaTurma[r.equipa] || nomeTurmaProposto(r.equipa, niveis) || "Sem turma",
+        escola: manter ? prev.escola : escolaDe(r.escola),
+        turma: manter ? prev.turma : turmaFicheiro,
+        ...(manter ? { turmaManual: true, turmaFicheiro, ...(prev.mudadoPor ? { mudadoPor: prev.mudadoPor } : {}) } : {}),
         ano: r.ano || prev?.ano || null,
         genero: r.genero || prev?.genero || "",
         rubrica: r.rubrica || prev?.rubrica || "",
@@ -11391,7 +11870,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
 }
 
 // Escola em detalhe: turmas (lotação) e alunos pelo código.
-function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar }) {
+function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma }) {
+  const [aEditar, setAEditar] = useState(null);
   const [aba, setAba] = useState("turmas");
   const [procura, setProcura] = useState("");
   const [fEstado, setFEstado] = useState("ativo");
@@ -11399,6 +11879,11 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   const alunos = Object.values(reg?.alunos || {}).filter((a) => a.escola === escola);
   const ativos = alunos.filter((a) => a.estado === "ativo");
   const turmas = [...new Set(alunos.map((a) => a.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  // Turmas/equipas para onde se pode mudar um aluno: as da escola e as que aparecem nos espaços.
+  const turmasPossiveis = [...new Set([...turmas, ...(espacos || []).filter((b) => normChave(b.escola) === normChave(escola)).flatMap(turmasDoBloco)])]
+    .filter((t) => t && t !== "Sem turma")
+    .sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const lot = gruposLotacao(escola, turmas, espacos, capacidades, niveis);
   const exps = Object.values(reg?.experiencias || {}).filter((x) => x.escola === escola);
   const lista = alunos
     .filter((a) => fEstado === "todos" || a.estado === fEstado || (fEstado === "emFalta" && a.emFalta && a.estado === "ativo"))
@@ -11432,6 +11917,12 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
           ))}
         </div>
         {aba === "turmas" ? (
+          <>
+          {lot.grupos.some((g) => g.turmas.length > 1) && (
+            <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10, lineHeight: 1.5 }}>
+              As turmas e equipas que treinam no mesmo horário (aba Espaços) partilham a lotação: o número do grupo é para todas juntas, não para cada uma.
+            </div>
+          )}
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
@@ -11443,44 +11934,87 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
               </tr>
             </thead>
             <tbody>
-              {turmas.map((t) => {
-                const at = ativos.filter((a) => a.turma === t);
-                if (!at.length) return null;
-                const cap = capacidades[`${escola}|${t}`] || capacidadeSugerida(t, niveis);
-                const p = cap ? Math.round((at.length / cap) * 100) : null;
-                return (
-                  <tr key={t}>
-                    <td style={{ ...td, fontWeight: 600 }}>{t}</td>
-                    <td style={{ ...td, color: COLORS.slate }}>{escalaoDaTurma(t, niveis)}</td>
-                    <td style={td}>{at.filter((a) => a.genero !== "f").length}</td>
-                    <td style={td}>{at.filter((a) => a.genero === "f").length}</td>
-                    <td style={{ ...td, fontWeight: 600 }}>{at.length}</td>
-                    <td style={td}>
-                      <input
-                        type="number"
-                        min="1"
-                        defaultValue={cap}
-                        onBlur={(e) => {
-                          const v = Number(e.target.value);
-                          if (v > 0 && v !== cap) onCapacidade(escola, t, v);
-                        }}
-                        style={{ ...inputStyle, width: 70, padding: "4px 6px" }}
-                        aria-label={`Capacidade de ${t}`}
-                      />
-                    </td>
-                    <td style={{ ...td, minWidth: 140 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 6, background: COLORS.ruleSoft, borderRadius: 3 }}>
-                          <div style={{ width: `${Math.min(100, p || 0)}%`, height: "100%", borderRadius: 3, background: p >= 95 ? COLORS.warn : p < 50 ? COLORS.slate : COLORS.navy }} />
-                        </div>
-                        <span style={{ fontSize: 12, width: 38, textAlign: "right", color: p >= 95 ? COLORS.warn : COLORS.ink2, fontWeight: p >= 95 ? 700 : 500 }}>{p}%</span>
+              {lot.grupos
+                .filter((g) => g.turmas.some((t) => ativos.some((a) => a.turma === t)))
+                .sort((x, y) => x.turmas[0].localeCompare(y.turmas[0], "pt", { numeric: true }))
+                .map((g) => {
+                  const atG = ativos.filter((a) => g.turmas.includes(a.turma));
+                  const p = g.cap ? Math.round((atG.length / g.cap) * 100) : null;
+                  const junto = g.turmas.length > 1;
+                  const celCap = (
+                    <input
+                      key={`${g.chave}|${g.cap}`}
+                      type="number"
+                      min="1"
+                      defaultValue={g.cap}
+                      onBlur={(e) => {
+                        const v = Number(e.target.value);
+                        if (v > 0 && v !== g.cap) onCapacidade(escola, g.chave, v);
+                      }}
+                      style={{ ...inputStyle, width: 70, padding: "4px 6px" }}
+                      aria-label={`Lotação de ${g.turmas.join(" + ")}`}
+                      title={junto ? `Lotação para ${g.turmas.join(" + ")} juntas${g.propria ? "" : " (a mais baixa das turmas; muda aqui se for outra)"}` : undefined}
+                    />
+                  );
+                  const celOcup = (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, background: COLORS.ruleSoft, borderRadius: 3 }}>
+                        <div style={{ width: `${Math.min(100, p || 0)}%`, height: "100%", borderRadius: 3, background: p >= 95 ? COLORS.warn : p < 50 ? COLORS.slate : COLORS.navy }} />
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <span style={{ fontSize: 12, width: 38, textAlign: "right", color: p >= 95 ? COLORS.warn : COLORS.ink2, fontWeight: p >= 95 ? 700 : 500 }}>{p}%</span>
+                    </div>
+                  );
+                  const contagem = (at) => (
+                    <>
+                      <td style={td}>{at.filter((a) => a.genero !== "f").length}</td>
+                      <td style={td}>{at.filter((a) => a.genero === "f").length}</td>
+                      <td style={{ ...td, fontWeight: 600 }}>{at.length}</td>
+                    </>
+                  );
+                  if (!junto) {
+                    const t = g.turmas[0];
+                    return (
+                      <tr key={g.chave}>
+                        <td style={{ ...td, fontWeight: 600 }}>{t}</td>
+                        <td style={{ ...td, color: COLORS.slate }}>{escalaoDaTurma(t, niveis)}</td>
+                        {contagem(atG)}
+                        <td style={td}>{celCap}</td>
+                        <td style={{ ...td, minWidth: 140 }}>{celOcup}</td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <React.Fragment key={g.chave}>
+                      <tr style={{ background: COLORS.paperSunken }}>
+                        <td style={{ ...td, fontWeight: 700 }}>
+                          {g.turmas.join(" + ")}
+                          <div style={{ fontSize: 11, fontWeight: 500, color: COLORS.slate }}>
+                            treinam juntas · {g.horarios} {g.horarios === 1 ? "horário" : "horários"} nos espaços
+                          </div>
+                        </td>
+                        <td style={{ ...td, color: COLORS.slate }}>{[...new Set(g.turmas.map((t) => escalaoDaTurma(t, niveis)))].join(" / ")}</td>
+                        {contagem(atG)}
+                        <td style={td}>{celCap}</td>
+                        <td style={{ ...td, minWidth: 140 }}>{celOcup}</td>
+                      </tr>
+                      {g.turmas.map((t) => {
+                        const at = ativos.filter((a) => a.turma === t);
+                        return (
+                          <tr key={t}>
+                            <td style={{ ...td, paddingLeft: 22, color: COLORS.ink2 }}>{t}</td>
+                            <td style={{ ...td, color: COLORS.slate }}>{escalaoDaTurma(t, niveis)}</td>
+                            {contagem(at)}
+                            <td style={{ ...td, color: COLORS.slate, fontSize: 11.5 }}>no grupo</td>
+                            <td style={td} />
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
             </tbody>
           </table>
+          </>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -11515,7 +12049,41 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                 {lista.slice(0, 400).map((a) => (
                   <tr key={a.id}>
                     <td style={{ ...td, fontWeight: 600 }}>{a.id}</td>
-                    <td style={td}>{a.turma}</td>
+                    <td style={td}>
+                      {onMudarTurma && aEditar === a.id ? (
+                        <select
+                          autoFocus
+                          value={a.turma}
+                          onChange={(e) => {
+                            onMudarTurma(epoca, a.id, e.target.value);
+                            setAEditar(null);
+                          }}
+                          onBlur={() => setAEditar(null)}
+                          aria-label={`Turma do aluno ${a.id}`}
+                          style={{ ...inputStyle, width: "auto", padding: "3px 6px", fontSize: 12.5 }}
+                        >
+                          {[...new Set([a.turma, ...turmasPossiveis])].map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          {a.turma}
+                          {(a.turmaManual || a.mudadoPor) && (
+                            <span title={`Mudado à mão${a.mudadoPor === "operacional" ? " (pelo operacional)" : ""}. No ficheiro: ${a.turmaFicheiro || a.turmaAntes || "—"}`} style={{ fontSize: 10.5, fontWeight: 600, color: COLORS.navySoft }}>
+                              mudado
+                            </span>
+                          )}
+                          {onMudarTurma && (
+                            <button type="button" onClick={() => setAEditar(a.id)} title="Mudar turma / equipa" aria-label={`Mudar a turma do aluno ${a.id}`} style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: COLORS.slate, display: "inline-flex" }}>
+                              <Pencil size={12} />
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </td>
                     <td style={td}>{a.ano || "—"}</td>
                     <td style={td}>{a.genero ? a.genero.toUpperCase() : "—"}</td>
                     <td style={td}>{ROTULO_RUBRICA[a.rubrica] || "—"}</td>
@@ -11541,7 +12109,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   );
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior, gestaoDados }) {
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
   const [gerir, setGerir] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const epocaHoje = epocaDe(isoDe(new Date()));
@@ -11595,7 +12163,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
     const at = al.filter((a) => a.estado === "ativo");
     const ex = Object.values(reg.experiencias || {}).filter((x) => x.escola === e);
     const ts = [...new Set(at.map((a) => a.turma))];
-    const capT = ts.reduce((n, t) => n + (capacidades[`${e}|${t}`] || capacidadeSugerida(t, niveis)), 0);
+    // Turmas que treinam juntas contam uma só lotação.
+    const capT = gruposLotacao(e, ts, espacos, capacidades, niveis).total(ts);
     const bal = balancoSemanal(reg, e, epoca);
     const k = bal.length ? bal[bal.length - 1].k : null;
     const antK = regAnt ? balancoSemanal(regAnt, e, epAnt).find((b) => b.k === k) : null;
@@ -11639,7 +12208,10 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
       const k = escalaoDaTurma(a.turma, niveis);
       if (g[k]) g[k].desist++;
     });
-    Object.values(g).forEach((x) => (x.cap = [...x.turmas].reduce((n, t) => n + (capacidades[t] || capacidadeSugerida(t.split("|")[1], niveis)), 0)));
+    // Lotação por escalão: nas turmas que treinam juntas, cada uma leva a sua parte da lotação do grupo.
+    const lotEsc = {};
+    const lotDe = (esc) => (lotEsc[esc] = lotEsc[esc] || gruposLotacao(esc, ativos.filter((a) => a.escola === esc).map((a) => a.turma), espacos, capacidades, niveis));
+    Object.values(g).forEach((x) => (x.cap = Math.round([...x.turmas].reduce((n, k) => n + lotDe(k.split("|")[0]).parte(k.split("|").slice(1).join("|")), 0))));
     const ordemEsc = (k) => {
       const i = niveis.indexOf(k);
       if (i >= 0) return i;
@@ -12032,7 +12604,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           }}
         />
       )}
-      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} onFechar={() => setEscolaAberta(null)} />}
+      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onFechar={() => setEscolaAberta(null)} />}
       {gerir && <GerirDadosAlunos registoAlunos={registoAlunos} options={options} g={gestaoDados} epocaInicial={epoca} abaInicial={typeof gerir === "string" ? gerir : "apagar"} onFechar={() => setGerir(false)} />}
     </div>
   );
@@ -24109,8 +24681,33 @@ function FontesDoAgente({ fontes = {}, escolhas = {}, onDefinir }) {
   );
 }
 
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte }) {
+// Sugestões do radar que tocam a psicologia: vão à equipa de psicologia perguntar se já se faz e como.
+const ePsicologia = (r) => /psic|saude mental|emocion|ansiedad|burnout|resilienc|autoestima|auto-estima|mindfulness|bem-estar|bem estar|stress/.test(normChave([r.categoria, r.titulo, r.resumo].join(" ")));
+function mailtoPsicologia(email, r) {
+  const linhas = [
+    "Olá,",
+    "",
+    "No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área da psicologia:",
+    "",
+    `«${r.titulo}»`,
+    r.resumo ? `\n${r.resumo}` : "",
+    r.relevancia ? `\nPara a Dragon Force: ${r.relevancia}` : "",
+    r.acao ? `\nPrimeiro passo sugerido: ${r.acao}` : "",
+    (r.fontes || []).length ? `\nFonte: ${(r.fontes || []).map((f) => `${f.titulo}${f.url ? ` (${f.url})` : ""}`).join("; ")}` : "",
+    "",
+    "Gostava de saber:",
+    "1. Já fazemos alguma coisa disto? Se sim, como é feito?",
+    "2. Se não, há interesse em implementar? E como o faríamos?",
+    "",
+    "Obrigado.",
+  ].filter((l) => l !== null);
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Oportunidade · ${r.titulo}`)}&body=${encodeURIComponent(linhas.join("\n"))}`;
+}
+
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, psicologia = {}, onPsicologia }) {
   const itens = (radar && radar.itens) || [];
+  const [emailPsi, setEmailPsi] = useState(psicologia.email || "");
+  const [pedirEmail, setPedirEmail] = useState(null);
   // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
   const ultimaPesquisa = (radar && (radar.pesquisadoEm || (radar.atualizadoEm ? `${radar.atualizadoEm}T00:00:00` : ""))) || "";
   const aPesquisar = !!(pedidoPesquisa && pedidoPesquisa.em && String(pedidoPesquisa.em) > ultimaPesquisa);
@@ -24240,6 +24837,42 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                         </button>
                       )}
                     </div>
+                    {onPsicologia && ePsicologia(r) && (
+                      <div style={{ borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {psicologia.email && pedirEmail !== r.id ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <a
+                              href={mailtoPsicologia(psicologia.email, r)}
+                              onClick={() => onPsicologia({ enviados: { ...(psicologia.enviados || {}), [r.id]: isoDe(new Date()) } })}
+                              style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+                            >
+                              <Mail size={13} /> Perguntar à psicologia
+                            </a>
+                            {(psicologia.enviados || {})[r.id] && <span style={{ fontSize: 11.5, color: COLORS.ok }}>Enviado a {fmt(new Date(psicologia.enviados[r.id] + "T00:00:00"))}</span>}
+                            <button type="button" onClick={() => setPedirEmail(r.id)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11.5, color: COLORS.slate }}>
+                              {psicologia.email}
+                            </button>
+                          </div>
+                        ) : (
+                          <form
+                            onSubmit={(ev) => {
+                              ev.preventDefault();
+                              const v = emailPsi.trim();
+                              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return;
+                              onPsicologia({ email: v });
+                              setPedirEmail(null);
+                            }}
+                            style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}
+                          >
+                            <span style={{ fontSize: 12, color: COLORS.ink2 }}>E-mail da psicologia:</span>
+                            <input type="email" value={emailPsi} onChange={(ev) => setEmailPsi(ev.target.value)} placeholder="psicologia@…" style={{ ...inputStyle, flex: "1 1 160px", padding: "5px 8px", fontSize: 12.5 }} />
+                            <button type="submit" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5 }}>
+                              Guardar
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -24388,6 +25021,8 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
       fontesEscolhas={riscos.radarFontesUtilizador || {}}
+      psicologia={riscos.radarPsicologia || {}}
+      onPsicologia={(patch) => onGuardar({ ...riscos, radarPsicologia: { ...(riscos.radarPsicologia || {}), ...patch } })}
       onDefinirFonte={(dominio, estado) => {
         const atual = { ...(riscos.radarFontesUtilizador || {}) };
         if (estado) atual[dominio] = estado;
@@ -25226,6 +25861,7 @@ function AppPrincipal({ onSair }) {
   const [importarAud, setImportarAud] = useState(false);
   const [areasAud, setAreasAud] = useState(false);
   const [preencherAud, setPreencherAud] = useState(false);
+  const [isoAud, setIsoAud] = useState(false);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
@@ -26174,6 +26810,22 @@ function AppPrincipal({ onSair }) {
     return { mudados, naoEncontrados };
   };
 
+  // Mudança de turma/equipa à mão. Fica marcada e a importação semanal respeita-a enquanto
+  // o ficheiro continuar a trazer a turma antiga; se o ficheiro mudar, vale o ficheiro.
+  const mudarTurmaAluno = (ep, id, turma) => {
+    const reg = registoAlunos[ep];
+    const a = reg && reg.alunos[id];
+    if (!a || !turma || a.turma === turma) return;
+    const doFicheiro = a.turmaFicheiro || a.turmaAntes || a.turma;
+    let novo;
+    if (turma === doFicheiro) {
+      const { turmaManual, turmaFicheiro, mudadoPor, turmaAntes, ...resto } = a; // eslint-disable-line no-unused-vars
+      novo = { ...resto, turma };
+    } else novo = { ...a, turma, turmaManual: true, turmaFicheiro: doFicheiro };
+    gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos: { ...reg.alunos, [id]: novo } }));
+    notificar(`Aluno ${id} passou para ${turma}.`);
+  };
+
   const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
   const updateDesvinc = (id, patch) =>
     persistDesvinc(
@@ -26790,11 +27442,11 @@ function AppPrincipal({ onSair }) {
           transition: opacity 500ms ease;
         }
         .splashOverlay.sair { animation: splashSai 500ms ease forwards; }
-        .splashOverlay svg { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(245,166,35,0.4)); }
+        .splashOverlay img { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(33,150,201,0.45)); }
         .splashChama { transform-origin: center bottom; animation: splashChama 2s ease-in-out infinite; }
         .splashTexto { font-size: 12px; color: #8FA3BF; letter-spacing: 0.14em; text-transform: uppercase; animation: splashTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .splashOverlay svg, .splashChama, .splashTexto { animation: none; opacity: 1; }
+          .splashOverlay img, .splashChama, .splashTexto { animation: none; opacity: 1; }
           .splashOverlay.sair { animation: none; opacity: 0; }
         }
       `}</style>
@@ -26802,59 +27454,7 @@ function AppPrincipal({ onSair }) {
       {/* ---- splash enquanto os dados carregam do Supabase ---- */}
       {loading && (
         <div className="splashOverlay naoImprimir" aria-live="polite" aria-label="A carregar dados…">
-          <svg width="120" height="134" viewBox="0 0 110 124" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              {/* chamas azuis: claro no topo, escuro na base */}
-              <linearGradient id="splChama" x1="55" y1="4" x2="55" y2="56" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#7DD8F8"/>
-                <stop offset="55%" stopColor="#2196C9"/>
-                <stop offset="100%" stopColor="#1260A0"/>
-              </linearGradient>
-              {/* escudo: azul médio no topo, azul escuro na base */}
-              <linearGradient id="splEscudo" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#2678C2"/>
-                <stop offset="100%" stopColor="#0E3D78"/>
-              </linearGradient>
-              {/* brilho interior do escudo (faixa clara ao centro) */}
-              <linearGradient id="splEscudoInt" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#4A9CD6"/>
-                <stop offset="40%" stopColor="#1A5EA8"/>
-                <stop offset="100%" stopColor="#0A2D60"/>
-              </linearGradient>
-              <radialGradient id="splBola" cx="42%" cy="38%" r="58%">
-                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9"/>
-                <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
-              </radialGradient>
-            </defs>
-
-            {/* ---- chamas azuis ---- */}
-            <g className="splashChama">
-              {/* chama esquerda */}
-              <path d="M32 56 C30 46 34 36 31 24 C27 33 21 41 24 52 C20 46 22 35 29 27 C22 39 25 51 27 56Z" fill="url(#splChama)" opacity="0.85"/>
-              {/* chama central (maior) */}
-              <path d="M55 4 C51 16 57 28 53 42 C49 32 51 18 46 8 C42 22 44 38 49 50 C44 42 42 28 47 16 C40 30 43 46 45 56 L65 56 C67 46 70 30 63 16 C68 28 65 42 61 50 C66 38 68 22 64 8 C59 18 61 32 57 42 C53 28 59 16 55 4Z" fill="url(#splChama)"/>
-              {/* chama direita */}
-              <path d="M78 56 C80 50 77 39 79 27 C86 35 88 46 84 52 C87 41 81 33 77 24 C74 36 78 46 78 56Z" fill="url(#splChama)" opacity="0.85"/>
-            </g>
-
-            {/* ---- escudo exterior (borda clara) ---- */}
-            <path d="M55 34 L84 46 L84 74 C84 91 71 103 55 108 C39 103 26 91 26 74 L26 46 Z" fill="#4A9CD6"/>
-            {/* ---- escudo interior (preenchimento) ---- */}
-            <path d="M55 38 L81 49 L81 74 C81 89 69 100 55 105 C41 100 29 89 29 74 L29 49 Z" fill="url(#splEscudo)"/>
-            {/* faixa central vertical mais clara */}
-            <path d="M55 38 L63 42 L63 105 C60 105.8 57 106.2 55 105 C53 106.2 50 105.8 47 105 L47 42 Z" fill="url(#splEscudoInt)" opacity="0.35"/>
-
-            {/* ---- bola ---- */}
-            <circle cx="55" cy="73" r="19" fill="white"/>
-            <circle cx="55" cy="73" r="19" fill="url(#splBola)" opacity="0.2"/>
-            {/* padrão da bola (pentágono central + hexágonos) */}
-            <path d="M55 63 L61 67 L59 74 L51 74 L49 67 Z" fill="#1a2e50"/>
-            <path d="M55 63 L61 67 L65 63 L62 57 L56 56 Z" fill="#243a62" opacity="0.75"/>
-            <path d="M55 63 L49 67 L45 63 L48 57 L54 56 Z" fill="#243a62" opacity="0.75"/>
-            <path d="M59 74 L65 74 L67 80 L63 84 L59 81 Z" fill="#243a62" opacity="0.75"/>
-            <path d="M51 74 L45 74 L43 80 L47 84 L51 81 Z" fill="#243a62" opacity="0.75"/>
-
-          </svg>
+          <img src={SIMBOLO_DF} alt="" width="110" height="129" />
           <span className="splashTexto">A carregar…</span>
         </div>
       )}
@@ -27131,6 +27731,7 @@ function AppPrincipal({ onSair }) {
             onImportar={() => setImportarAud(true)}
             onAreas={() => setAreasAud(true)}
             onPreencher={() => setPreencherAud(true)}
+            onIso={() => setIsoAud(true)}
             onOpenAudit={(a) => setViewingAudit(a)}
             schoolOptions={options.schools}
             areaOptions={options.auditAreas}
@@ -27209,6 +27810,7 @@ function AppPrincipal({ onSair }) {
             registoAlunos={registoAlunos}
             onImportarInscritos={importarInscritos}
             onCapacidade={definirCapacidade}
+            onMudarTurma={mudarTurmaAluno}
             gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, renomearTurma: renomearTurmaLivre, turmasAtuais: turmasAlunos, distintas: marcarTurmasDistintas, renomearEscola: renomearEscolaEpoca, estadoEscola: definirEstadoEscola, epocas: epocasComDados, escolasComDados }}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
@@ -27616,6 +28218,21 @@ function AppPrincipal({ onSair }) {
         />
       )}
 
+      {isoAud && (
+        <AssociarISO
+          itens={audits
+            .slice()
+            .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+            .flatMap((a) => (a.findings || []).filter((f) => !f.iso).map((f) => ({ auditId: a.id, f, rotulo: `${a.school} · ${dataAud(a)}` })))}
+          onFechar={() => setIsoAud(false)}
+          onAplicar={(alteracoes) => {
+            updateFindings(alteracoes);
+            setIsoAud(false);
+            notificar(`Requisito ISO associado a ${alteracoes.length} ${alteracoes.length === 1 ? "constatação" : "constatações"}.`);
+          }}
+        />
+      )}
+
       {areasAud && (
         <AreasConstatacoes
           audits={audits}
@@ -27693,6 +28310,7 @@ function AppPrincipal({ onSair }) {
           onUpdateAudit={updateAudit}
           schoolOptions={options.schools}
           onGerirLista={setListaAberta}
+          audits={audits}
         />
       )}
 
@@ -27827,6 +28445,7 @@ function AppPrincipal({ onSair }) {
           onGerirLista={setListaAberta}
           turmas={options.turmas || DEFAULT_TURMAS}
           turmasPorEscola={options.turmasPorEscola || {}}
+          registoAlunos={registoAlunos}
         />
       )}
 
@@ -27859,6 +28478,7 @@ function AppPrincipal({ onSair }) {
           onGerirLista={setListaAberta}
           turmas={options.turmas || DEFAULT_TURMAS}
           turmasPorEscola={options.turmasPorEscola || {}}
+          registoAlunos={registoAlunos}
         />
       )}
     </div>
@@ -27981,13 +28601,13 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         @keyframes dfHalo { 0%, 100% { opacity: 0; r: 52px; } 50% { opacity: 0.18; r: 62px; } }
         @keyframes dfTexto { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
         .dfLoading { display: flex; flex-direction: column; align-items: center; gap: 18px; margin-top: 8px; }
-        .dfLoading svg { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(33, 150, 201, 0.45)); }
+        .dfLoading img { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(33, 150, 201, 0.45)); }
         .dfLoading .chama { transform-origin: center bottom; animation: dfChama 2s ease-in-out infinite; }
         .dfCarregando { font-size: 12px; color: #8FA3BF; letter-spacing: 0.12em; text-transform: uppercase; animation: dfTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
           .entradaLogo, .entradaTitulo, .entradaSub, .entradaForm { animation: none; opacity: 1; }
           .entradaSaida .entrada { animation: none; opacity: 0; }
-          .dfLoading svg, .dfLoading .chama, .dfCarregando { animation: none; opacity: 1; }
+          .dfLoading img, .dfLoading .chama, .dfCarregando { animation: none; opacity: 1; }
         }
       `}</style>
       <div className="entradaFundo" aria-hidden="true">
@@ -28002,33 +28622,7 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         <div className="entradaSub">Dragon Force · acesso reservado</div>
         {aVerificar ? (
           <div className="dfLoading" aria-label="A verificar sessão…">
-            <svg width="110" height="124" viewBox="0 0 110 124" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="dfChama" x1="55" y1="4" x2="55" y2="56" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#7DD8F8"/><stop offset="55%" stopColor="#2196C9"/><stop offset="100%" stopColor="#1260A0"/>
-                </linearGradient>
-                <linearGradient id="dfEscudo" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#2678C2"/><stop offset="100%" stopColor="#0E3D78"/>
-                </linearGradient>
-                <radialGradient id="dfBola" cx="42%" cy="38%" r="58%">
-                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9"/><stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
-                </radialGradient>
-              </defs>
-              <g className="chama">
-                <path d="M32 56 C30 46 34 36 31 24 C27 33 21 41 24 52 C20 46 22 35 29 27 C22 39 25 51 27 56Z" fill="url(#dfChama)" opacity="0.85"/>
-                <path d="M55 4 C51 16 57 28 53 42 C49 32 51 18 46 8 C42 22 44 38 49 50 C44 42 42 28 47 16 C40 30 43 46 45 56 L65 56 C67 46 70 30 63 16 C68 28 65 42 61 50 C66 38 68 22 64 8 C59 18 61 32 57 42 C53 28 59 16 55 4Z" fill="url(#dfChama)"/>
-                <path d="M78 56 C80 50 77 39 79 27 C86 35 88 46 84 52 C87 41 81 33 77 24 C74 36 78 46 78 56Z" fill="url(#dfChama)" opacity="0.85"/>
-              </g>
-              <path d="M55 34 L84 46 L84 74 C84 91 71 103 55 108 C39 103 26 91 26 74 L26 46 Z" fill="#4A9CD6"/>
-              <path d="M55 38 L81 49 L81 74 C81 89 69 100 55 105 C41 100 29 89 29 74 L29 49 Z" fill="url(#dfEscudo)"/>
-              <circle cx="55" cy="73" r="19" fill="white"/>
-              <circle cx="55" cy="73" r="19" fill="url(#dfBola)" opacity="0.2"/>
-              <path d="M55 63 L61 67 L59 74 L51 74 L49 67 Z" fill="#1a2e50"/>
-              <path d="M55 63 L61 67 L65 63 L62 57 L56 56 Z" fill="#243a62" opacity="0.75"/>
-              <path d="M55 63 L49 67 L45 63 L48 57 L54 56 Z" fill="#243a62" opacity="0.75"/>
-              <path d="M59 74 L65 74 L67 80 L63 84 L59 81 Z" fill="#243a62" opacity="0.75"/>
-              <path d="M51 74 L45 74 L43 80 L47 84 L51 81 Z" fill="#243a62" opacity="0.75"/>
-            </svg>
+            <img src={SIMBOLO_DF} alt="" width="100" height="118" />
             <span className="dfCarregando">A carregar…</span>
           </div>
         ) : (
