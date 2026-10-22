@@ -102,6 +102,14 @@ $$;
 
 -- 2b. Resumo para o coordenador geral: escolas a precisar de atenção, escolas em destaque e reclamações
 --     de temas técnicos (os temas escolhe-os o utilizador na app). Só números e textos curtos, nunca nomes.
+-- Escola aberta nesta época: não marcada como encerrada (desta época ou anterior) e com alunos registados.
+create or replace function privado.escola_aberta(p_opc jsonb, p_reg jsonb, p_escola text, p_ep text)
+returns boolean language sql immutable as $$
+  select not (coalesce(p_opc->'estadoEscolas'->p_escola->>'encerrada', '') <> '' and (p_opc->'estadoEscolas'->p_escola->>'encerrada') <= p_ep)
+     and (coalesce(p_reg->'alunos', '{}'::jsonb) = '{}'::jsonb
+          or exists (select 1 from jsonb_each(p_reg->'alunos') a(id, al) where al->>'escola' = p_escola));
+$$;
+
 create or replace function privado.resumo_geral(p_opc jsonb, p_reg jsonb, p_regp jsonb, p_hoje date)
 returns jsonb language plpgsql as $$
 declare
@@ -116,6 +124,7 @@ begin
   select value into v_rec from app_storage where key = 'reclamacoes:registo';
   if v_rec is null or jsonb_typeof(v_rec) <> 'array' then v_rec := '[]'::jsonb; end if;
   for e in select jsonb_array_elements_text(coalesce(p_opc->'schools', '[]'::jsonb)) loop
+    if not privado.escola_aberta(p_opc, p_reg, e, privado.epoca_atual()) then continue; end if;
     select count(*) filter (where al->>'estado' = 'ativo'), count(*) filter (where al->>'estado' = 'desistiu')
       into v_at, v_des
       from jsonb_each(coalesce(p_reg->'alunos', '{}'::jsonb)) a(id, al) where al->>'escola' = e;
@@ -228,6 +237,7 @@ begin
   if v_regs is null or jsonb_typeof(v_regs) <> 'array' then v_regs := '[]'::jsonb; end if;
 
   for e in select jsonb_array_elements_text(coalesce(v_opc->'schools', '[]'::jsonb)) loop
+    if not privado.escola_aberta(v_opc, v_reg, e, v_ep) then continue; end if;
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
     v_em := privado.emails_validos(v_opc->'emailsOperacionais'->e);
     if jsonb_array_length(v_em) > 0 then
