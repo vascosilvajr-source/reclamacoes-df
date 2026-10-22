@@ -5,7 +5,7 @@ import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, ep
 import { lerObjetivosDoExcel, gerarExcelObjetivos, acompanhamento, sugerirFonte, mesesDaFonte, copiarEpocaObjetivos, epocaSeguinteObj, folhaObjetivos, FONTES_OBJ, MODOS_TOTAL, NOMES_MESES_OBJ, lerMeta, metaNumerica, mostrarValor, lerValorEscrito, lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "./sgq";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "./planos";
 import { imprimirBalanco } from "./foto";
-import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais } from "./inscritosAtuais";
+import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAcompanhamento } from "./inscritosAtuais";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
@@ -12291,35 +12291,112 @@ function EscolherDocumentoInscritos({ onEscolher, onFechar }) {
 }
 
 // ---------- Inscritos atualmente: acerta a equipa de cada aluno ----------
-function ListaIdsAviso({ titulo, ids, nota }) {
-  const [copiado, setCopiado] = useState(false);
-  if (!ids.length) return null;
-  const MAX = 300;
+// Casos do mapa "Inscritos atualmente" que pedem decisão, um a um.
+const TIPOS_CASO_INSCR = {
+  desistidosNoMapa: { titulo: ["desistido na app que aparece inscrito no mapa", "desistidos na app que aparecem inscritos no mapa"], acoes: [["manter", "Manter como desistido"], ["reativar", "Reativar com a equipa do mapa"]] },
+  terminados: { titulo: ["com término já passado no mapa", "com término já passado no mapa"], acoes: [["manter", "Manter ativo"], ["desistiu", "Dar como desistido na data de término"]] },
+  foraDoMapa: { titulo: ["ativo na app que não consta do mapa", "ativos na app que não constam do mapa"], nota: "Só se contam as escolas que o mapa traz.", acoes: [["manter", "Manter ativo"], ["desistiu", "Dar como desistido hoje"]] },
+  escolaDiferente: { titulo: ["com escola diferente no mapa", "com escola diferente no mapa"], acoes: [["manter", "Manter a escola da app"], ["mudarEscola", "Passar para a escola do mapa"]] },
+  variasTurmas: { titulo: ["em duas equipas no mapa, nenhuma igual à da app", "em duas equipas no mapa, nenhuma igual à da app"], acoes: [["manter", "Manter a equipa da app"], ["turma", "Passar para a equipa escolhida"]] },
+  semRegisto: { titulo: ["no mapa sem registo na app, com início até ao corte", "no mapa sem registo na app, com início até ao corte"], acoes: [["manter", "Não fazer nada"], ["adicionar", "Adicionar como ativo"]] },
+};
+const ACOES_COM_TURMA = ["reativar", "mudarEscola", "turma", "adicionar"];
+
+function escolaAlvoCaso(c, d) {
+  if (d.acao === "adicionar") return d.escola || c.escolaMapa || "";
+  if (d.acao === "mudarEscola") return c.escolaMapa || "";
+  if (d.acao === "reativar") return c.escolaMapa || c.escolaApp;
+  return c.escolaApp;
+}
+
+function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, escolas }) {
+  const [mais, setMais] = useState(false);
+  const meta = TIPOS_CASO_INSCR[tipo];
+  if (!casos.length) return null;
+  const visiveis = mais ? casos : casos.slice(0, 25);
+  const decisao = (c) => decisoes[c.id] || { acao: "manter" };
+  const turmaPadrao = (c) => (c.turmas && c.turmas[0] ? c.turmas[0].alvo || c.turmas[0].proposta : c.turmaApp || "");
+  const definir = (c, patch) =>
+    setDecisoes((d) => {
+      const atual = d[c.id] || { acao: "manter" };
+      const novo = { ...atual, ...patch };
+      if (patch.acao && ACOES_COM_TURMA.includes(patch.acao) && !atual.turma) novo.turma = turmaPadrao(c);
+      return { ...d, [c.id]: novo };
+    });
+  const todos = (acao) => setDecisoes((d) => ({ ...d, ...Object.fromEntries(casos.map((c) => [c.id, { ...(d[c.id] || {}), acao, ...(ACOES_COM_TURMA.includes(acao) && !(d[c.id] || {}).turma ? { turma: turmaPadrao(c) } : {}) }])) }));
+  const nAlterar = casos.filter((c) => decisao(c).acao !== "manter").length;
   return (
-    <details style={{ marginTop: 8, fontSize: 12.5 }}>
-      <summary style={{ cursor: "pointer", color: COLORS.warn, fontWeight: 600 }}>
-        {ids.length} {titulo}
+    <details open={casos.length <= 25} style={{ marginTop: 10, border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: "8px 12px" }}>
+      <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLORS.warn }}>
+        {casos.length} {casos.length === 1 ? "aluno" : "alunos"} {meta.titulo[casos.length === 1 ? 0 : 1]}
+        {nAlterar > 0 && <span style={{ color: COLORS.navy }}> · {nAlterar} a alterar</span>}
       </summary>
-      {nota && <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.5 }}>{nota}</div>}
-      <div style={{ marginTop: 6, color: COLORS.ink2, lineHeight: 1.7, wordBreak: "break-word", fontVariantNumeric: "tabular-nums" }}>
-        {ids.slice(0, MAX).join(", ")}
-        {ids.length > MAX ? ` … e mais ${ids.length - MAX}` : ""}
+      {meta.nota && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 6 }}>{meta.nota}</div>}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", margin: "8px 0 4px" }}>
+        {meta.acoes.map(([k, rot]) => (
+          <button key={k} type="button" onClick={() => todos(k)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+            Todos: {rot.toLowerCase()}
+          </button>
+        ))}
       </div>
-      <button
-        type="button"
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(ids.join("\n"));
-            setCopiado(true);
-            setTimeout(() => setCopiado(false), 1500);
-          } catch (e) {
-            /* sem permissão para copiar */
-          }
-        }}
-        style={{ ...linkBtnStyle, marginTop: 6, fontSize: 12 }}
-      >
-        {copiado ? "Copiado" : "Copiar os códigos"}
-      </button>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {visiveis.map((c) => {
+          const d = decisao(c);
+          const escolaAlvo = escolaAlvoCaso(c, d);
+          const opcoesTurma = [...new Set([...(c.turmas || []).map((t) => t.alvo || t.proposta), ...[...(turmasDe[escolaAlvo] || [])].sort()])].filter(Boolean);
+          const indisponivel = (k) => (k === "mudarEscola" && !c.escolaMapa) || (k === "adicionar" && c.ativo === false);
+          return (
+            <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: `1px solid ${COLORS.ruleSoft || COLORS.rule}`, fontSize: 12.5 }}>
+              <div style={{ flex: "1 1 260px", minWidth: 0, lineHeight: 1.5 }}>
+                <div style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.id}</div>
+                {c.escolaApp && (
+                  <div style={{ color: COLORS.ink2 }}>
+                    App: {c.escolaApp} · {c.turmaApp || "sem turma"}
+                    {c.estado === "desistiu" ? ` · desistiu${c.saida ? ` a ${fmt(new Date(c.saida + "T00:00:00"))}` : ""}` : ""}
+                  </div>
+                )}
+                {(c.centro || (c.turmas || []).length > 0 || c.termino) && (
+                  <div style={{ color: COLORS.slate }}>
+                    Mapa: {[c.centro, (c.turmas || []).map((t) => t.turmaFicheiro).join(" + "), c.inicio ? `início ${fmt(new Date(c.inicio + "T00:00:00"))}` : null, c.termino ? `término ${fmt(new Date(c.termino + "T00:00:00"))}` : null].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+              <select value={d.acao} onChange={(e) => definir(c, { acao: e.target.value })} style={{ ...inputStyle, width: 230, fontSize: 12.5 }}>
+                {meta.acoes.map(([k, rot]) => (
+                  <option key={k} value={k} disabled={indisponivel(k)}>
+                    {rot}
+                  </option>
+                ))}
+              </select>
+              {d.acao === "adicionar" && !c.escolaMapa && (
+                <select value={d.escola || ""} onChange={(e) => definir(c, { escola: e.target.value })} style={{ ...inputStyle, width: 190, fontSize: 12.5 }}>
+                  <option value="">Escola…</option>
+                  {escolas.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {ACOES_COM_TURMA.includes(d.acao) && (
+                <select value={d.turma || ""} onChange={(e) => definir(c, { turma: e.target.value })} style={{ ...inputStyle, width: 190, fontSize: 12.5 }}>
+                  <option value="">Equipa…</option>
+                  {[...new Set([d.turma, ...opcoesTurma])].filter(Boolean).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {casos.length > 25 && (
+        <button type="button" onClick={() => setMais((v) => !v)} style={{ ...linkBtnStyle, fontSize: 12 }}>
+          {mais ? "Mostrar menos" : `Mostrar os ${casos.length}`}
+        </button>
+      )}
     </details>
   );
 }
@@ -12328,6 +12405,8 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
   const [lido, setLido] = useState(null);
   const [epoca, setEpoca] = useState("");
   const [assoc, setAssoc] = useState({});
+  const [decisoes, setDecisoes] = useState({});
+  const [corteManual, setCorteManual] = useState("");
   const [aLer, setALer] = useState(false);
   const [erro, setErro] = useState("");
   const hoje = isoDe(new Date());
@@ -12347,10 +12426,11 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
         if (m && m.registos.length && (!achado || m.registos.length > achado.registos.length)) achado = m;
       }
       if (!achado) throw new Error("não encontrei as colunas Centro, Numero e Turma");
-      const ep = epocaDoMapa(achado.registos, epocaDe(hoje));
       setLido({ nome: f.name, registos: achado.registos });
-      setEpoca(ep);
+      setEpoca(epocaDoMapa(achado.registos, epocaDe(hoje)));
       setAssoc({});
+      setDecisoes({});
+      setCorteManual("");
     } catch (err) {
       setErro(`Não consegui ler o ficheiro: ${err?.message || err}.`);
     } finally {
@@ -12359,6 +12439,8 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
   };
 
   const reg = epoca ? registoAlunos[epoca] : null;
+  const corteAuto = useMemo(() => corteDoAcompanhamento(reg), [reg]);
+  const corte = corteManual || corteAuto;
   const resultado = useMemo(() => {
     if (!lido || !reg) return null;
     return compararInscritosAtuais({
@@ -12370,8 +12452,9 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
       associacoes: assoc,
       nomeProposto: (t) => nomeTurmaProposto(t, niveis),
       hoje,
+      corte,
     });
-  }, [lido, reg, assoc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lido, reg, assoc, corte]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const turmasDe = useMemo(() => {
     const m = {};
@@ -12379,24 +12462,35 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
     return m;
   }, [reg]);
 
+  // Decisões dos casos que mexem nos dados (as "manter" ficam de fora).
+  const acoes = useMemo(() => {
+    if (!resultado) return [];
+    return resultado.casos
+      .map((c) => {
+        const d = decisoes[c.id];
+        if (!d || d.acao === "manter") return null;
+        const escola = escolaAlvoCaso(c, d);
+        if (ACOES_COM_TURMA.includes(d.acao) && (!d.turma || !escola)) return null;
+        return { id: c.id, acao: d.acao, escola, turma: d.turma || null, saida: d.acao === "desistiu" ? (c.tipo === "terminados" && c.termino ? c.termino : hoje) : null, entrada: c.inicio || null, motivo: c.tipo === "terminados" ? "Término no mapa de inscritos" : "Saiu sem registo (não consta do mapa de inscritos)" };
+      })
+      .filter(Boolean);
+  }, [resultado, decisoes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const incompletas = resultado ? resultado.casos.filter((c) => decisoes[c.id] && ACOES_COM_TURMA.includes(decisoes[c.id].acao) && (!decisoes[c.id].turma || !escolaAlvoCaso(c, decisoes[c.id]))).length : 0;
+
   const aplicar = () => {
     const mapaTurmas = {};
     Object.entries(assoc).forEach(([k, v]) => {
       if (!v || v === "__skip__") return;
       mapaTurmas[normChave(k.split("|").slice(1).join("|"))] = v;
     });
-    // Alunos cujas turmas foram associadas a mão entram nas mudanças (a comparação já as usa).
-    onAplicar(epoca, resultado.mudar, mapaTurmas);
+    onAplicar(epoca, resultado.mudar, mapaTurmas, acoes);
   };
 
-  const avisos = resultado
-    ? resultado.desistidosNoMapa.length + resultado.terminados.length + resultado.escolaDiferente.length + resultado.variasTurmas.length + resultado.semRegisto.length + resultado.foraDoMapa.length
-    : 0;
-  const nAplicar = resultado ? resultado.mudar.length : 0;
+  const nAplicar = resultado ? resultado.mudar.length + acoes.length : 0;
 
   return (
     <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={onFechar}>
-      <div className="sheet" style={{ width: "min(760px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+      <div className="sheet" style={{ width: "min(860px, 100%)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
           <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>Inscritos atualmente</h2>
           <button onClick={onFechar} style={iconBtnStyle} aria-label="Fechar">
@@ -12404,7 +12498,7 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
           </button>
         </div>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55, marginBottom: 14 }}>
-          Compara a turma de cada aluno (pelo código) com o que a app já tem e acerta só a <strong>equipa</strong>. Escola, rubrica, entrada e o resto não mudam. Quem já saiu ou não bate certo fica em aviso, só com o código.
+          Compara a equipa de cada aluno (pelo código) com o que a app já tem e acerta-a. Os casos que não batem certo ficam em baixo para decidires um a um. Nada muda sem carregares em aplicar.
         </div>
 
         <label style={{ ...secondaryBtnStyle, width: "auto", display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", cursor: "pointer" }}>
@@ -12415,8 +12509,8 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
         {erro && <div style={{ marginTop: 10, fontSize: 12.5, color: COLORS.warn }}>{erro}</div>}
 
         {lido && (
-          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ fontSize: 12.5, color: COLORS.ink2 }}>Época</label>
+          <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5, color: COLORS.ink2 }}>
+            <label>Época</label>
             <select value={epoca} onChange={(e) => setEpoca(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
               {[...new Set([epoca, ...epocasReg])].filter(Boolean).map((e) => (
                 <option key={e} value={e}>
@@ -12424,6 +12518,12 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
                 </option>
               ))}
             </select>
+            {reg && (
+              <>
+                <label style={{ marginLeft: 8 }}>Último acompanhamento cobre inscrições até</label>
+                <input type="date" value={corte || ""} onChange={(e) => setCorteManual(e.target.value)} style={{ ...inputStyle, width: "auto" }} />
+              </>
+            )}
           </div>
         )}
 
@@ -12439,14 +12539,18 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
               <strong>{resultado.ids}</strong> alunos no mapa ({resultado.linhas} linhas) · <strong>{resultado.iguais}</strong> já na equipa certa · <strong style={{ color: COLORS.navy }}>{resultado.mudar.length}</strong> mudam de equipa
               {resultado.porAssociar.length > 0 && <> · {resultado.semAssociacao} à espera de associação de turma</>}
               {resultado.ignorados > 0 && <> · {resultado.ignorados} deixados como estão</>}
+              {resultado.casos.length > 0 && <> · <strong style={{ color: COLORS.warn }}>{resultado.casos.length}</strong> casos para rever</>}
+              {resultado.recentes.length > 0 && (
+                <div style={{ color: COLORS.slate, fontSize: 12.5 }}>
+                  {resultado.recentes.length} inscritos depois de {corte ? fmt(new Date(corte + "T00:00:00")) : "o último acompanhamento"}: é normal ainda não estarem na app, entram com o próximo mapa de acompanhamento.
+                </div>
+              )}
             </div>
 
             {resultado.porAssociar.length > 0 && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.navy, flex: 1, minWidth: 220 }}>
-                    {resultado.porAssociar.length} turmas do mapa que a app não reconhece
-                  </div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.navy, flex: 1, minWidth: 220 }}>{resultado.porAssociar.length} turmas do mapa que a app não reconhece</div>
                   <button
                     type="button"
                     onClick={() => setAssoc((a) => ({ ...a, ...Object.fromEntries(resultado.porAssociar.map((x) => [x.chave, nomeTurmaProposto(x.turmaFicheiro, niveis) || x.turmaFicheiro])) }))}
@@ -12490,7 +12594,7 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
 
             {resultado.mudar.length > 0 && (
               <details style={{ marginTop: 12, fontSize: 12.5 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 600, color: COLORS.navy }}>Ver as {resultado.mudar.length} mudanças</summary>
+                <summary style={{ cursor: "pointer", fontWeight: 600, color: COLORS.navy }}>Ver as {resultado.mudar.length} mudanças de equipa</summary>
                 <div style={{ marginTop: 6, maxHeight: 220, overflowY: "auto", lineHeight: 1.7, fontVariantNumeric: "tabular-nums", color: COLORS.ink2 }}>
                   {resultado.mudar.slice(0, 400).map((m) => (
                     <div key={m.id}>
@@ -12502,33 +12606,31 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
               </details>
             )}
 
-            {avisos > 0 && (
-              <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${COLORS.rule}` }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.navy }}>Avisos (códigos de aluno)</div>
-                <ListaIdsAviso titulo="alunos que a app tem como desistidos mas aparecem como inscritos no mapa" ids={resultado.desistidosNoMapa} />
-                <ListaIdsAviso titulo="alunos com término já passado no mapa" ids={resultado.terminados} nota="Todas as linhas destes alunos têm a data de término anterior a hoje." />
-                <ListaIdsAviso titulo="alunos ativos na app que não constam do mapa" ids={resultado.foraDoMapa} nota="Só se contam as escolas que o mapa traz. Podem ter saído." />
-                <ListaIdsAviso titulo="alunos com escola diferente no mapa (não alterados)" ids={resultado.escolaDiferente.map((x) => `${x.id} (app: ${x.escolaApp} · mapa: ${x.centro})`)} />
-                <ListaIdsAviso titulo="alunos em duas equipas no mapa, sem nenhuma igual à da app (não alterados)" ids={resultado.variasTurmas.map((x) => `${x.id} (${x.turmas.join(" + ")})`)} />
-                <ListaIdsAviso titulo="códigos do mapa que a app não conhece" ids={resultado.semRegisto} />
+            {resultado.casos.length > 0 && (
+              <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${COLORS.rule}` }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.navy }}>Casos para rever</div>
+                <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2 }}>Só códigos, turmas e datas. Por defeito fica tudo como está.</div>
+                {Object.keys(TIPOS_CASO_INSCR).map((t) => (
+                  <GrupoCasosInscritos key={t} tipo={t} casos={resultado[t]} decisoes={decisoes} setDecisoes={setDecisoes} turmasDe={turmasDe} escolas={escolas} />
+                ))}
               </div>
             )}
           </>
         )}
 
+        {incompletas > 0 && <div style={{ marginTop: 12, fontSize: 12.5, color: COLORS.warn }}>{incompletas} casos sem equipa ou escola escolhida: ficam como estão.</div>}
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
           <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: 1 }}>
             Cancelar
           </button>
           <button onClick={aplicar} disabled={!resultado || !nAplicar} style={{ ...primaryBtnStyle, flex: 2, opacity: !resultado || !nAplicar ? 0.5 : 1 }}>
-            {nAplicar ? `Mudar ${nAplicar} alunos de equipa` : "Sem mudanças a aplicar"}
+            {nAplicar ? `Aplicar ${nAplicar} ${nAplicar === 1 ? "alteração" : "alterações"}` : "Sem alterações a aplicar"}
           </button>
         </div>
       </div>
     </div>
   );
 }
-
 
 function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
   const [gerir, setGerir] = useState(false);
@@ -13028,8 +13130,8 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           niveis={niveis}
           options={options}
           onFechar={() => setImportarAtuais(false)}
-          onAplicar={(ep, mudancas, mapaTurmas) => {
-            onAplicarAtuais(ep, mudancas, mapaTurmas);
+          onAplicar={(ep, mudancas, mapaTurmas, acoes) => {
+            onAplicarAtuais(ep, mudancas, mapaTurmas, acoes);
             setEpoca(ep);
             setImportarAtuais(false);
           }}
@@ -25128,13 +25230,29 @@ function FontesDoAgente({ fontes = {}, escolhas = {}, onDefinir }) {
   );
 }
 
-// Sugestões do radar que tocam a psicologia: vão à equipa de psicologia perguntar se já se faz e como.
-const ePsicologia = (r) => /psic|saude mental|emocion|ansiedad|burnout|resilienc|autoestima|auto-estima|mindfulness|bem-estar|bem estar|stress/.test(normChave([r.categoria, r.titulo, r.resumo].join(" ")));
-function mailtoPsicologia(email, r) {
+// Departamentos a quem se pergunta pelas sugestões do radar. A área é proposta pelo tema e pode mudar-se.
+const DEPARTAMENTOS_RADAR = [
+  { k: "psicologia", nome: "Psicologia", re: /psic|saude mental|emocion|ansiedad|burnout|resilienc|autoestima|auto-estima|mindfulness|bem-estar|bem estar|stress/ },
+  { k: "nutricao", nome: "Nutrição", re: /nutri|aliment|dieta|hidrata|refeic|suplement|composicao corporal/ },
+  { k: "saude", nome: "Saúde", re: /saude|medic|lesao|lesoes|fisio|primeiros socorros|desfibril|concuss|cardi|enfermag|rastreio|recuperacao fisica/ },
+  { k: "eventos", nome: "Eventos", re: /evento|torneio|campus|cerimonia|gala|open day|festival|jornada|convivio/ },
+  { k: "internacional", nome: "Internacional", re: /internacion|estrangeir|intercambio|no exterior|outros paises|europe|world|global/ },
+];
+const departamentoRadar = (r) => {
+  const t = normChave([r.categoria, r.titulo, r.resumo].join(" "));
+  const d = DEPARTAMENTOS_RADAR.find((x) => x.re.test(t));
+  return d ? d.k : "";
+};
+const emailsDe = (txt) =>
+  String(txt || "")
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+function mailtoDepartamento(emails, nomeDep, r) {
   const linhas = [
     "Olá,",
     "",
-    "No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área da psicologia:",
+    `No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área de ${nomeDep.toLowerCase()}:`,
     "",
     `«${r.titulo}»`,
     r.resumo ? `\n${r.resumo}` : "",
@@ -25147,14 +25265,56 @@ function mailtoPsicologia(email, r) {
     "2. Se não, há interesse em implementar? E como o faríamos?",
     "",
     "Obrigado.",
-  ].filter((l) => l !== null);
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Oportunidade · ${r.titulo}`)}&body=${encodeURIComponent(linhas.join("\n"))}`;
+  ];
+  return `mailto:${emails.map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(`Oportunidade · ${r.titulo}`)}&body=${encodeURIComponent(linhas.join("\n"))}`;
 }
 
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, psicologia = {}, onPsicologia }) {
+// E-mails dos departamentos, definidos uma vez no topo do radar.
+function ContactosDepartamentos({ contactos, onGuardar }) {
+  const [rasc, setRasc] = useState(contactos);
+  const [guardado, setGuardado] = useState(false);
+  useEffect(() => setRasc(contactos), [contactos]);
+  const mudou = DEPARTAMENTOS_RADAR.some((d) => (rasc[d.k] || "") !== (contactos[d.k] || ""));
+  const invalidos = DEPARTAMENTOS_RADAR.filter((d) => String(rasc[d.k] || "").trim() && !emailsDe(rasc[d.k]).length);
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {DEPARTAMENTOS_RADAR.map((d) => (
+        <label key={d.k} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+          <span style={{ width: 110, color: COLORS.ink2, fontWeight: 600 }}>{d.nome}</span>
+          <input
+            type="text"
+            value={rasc[d.k] || ""}
+            onChange={(e) => setRasc((x) => ({ ...x, [d.k]: e.target.value }))}
+            placeholder="e-mail (vários separados por vírgula)"
+            style={{ ...inputStyle, flex: "1 1 240px", padding: "6px 9px", fontSize: 12.5 }}
+          />
+        </label>
+      ))}
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        {invalidos.length > 0 && <span style={{ fontSize: 12, color: COLORS.warn }}>E-mail inválido em {invalidos.map((d) => d.nome).join(", ")}.</span>}
+        <span style={{ flex: 1 }} />
+        {guardado && !mudou && <span style={{ fontSize: 12, color: COLORS.ok }}>Guardado</span>}
+        <button
+          type="button"
+          disabled={!mudou || invalidos.length > 0}
+          onClick={() => {
+            onGuardar(Object.fromEntries(DEPARTAMENTOS_RADAR.map((d) => [d.k, emailsDe(rasc[d.k]).join(", ")])));
+            setGuardado(true);
+          }}
+          style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 14px", fontSize: 12.5, opacity: !mudou || invalidos.length ? 0.5 : 1 }}
+        >
+          Guardar e-mails
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, contactos = {}, enviados = {}, onContactos, onEnviado }) {
   const itens = (radar && radar.itens) || [];
-  const [emailPsi, setEmailPsi] = useState(psicologia.email || "");
-  const [pedirEmail, setPedirEmail] = useState(null);
+  const [verContactos, setVerContactos] = useState(false);
+  const [depEscolhido, setDepEscolhido] = useState({});
+  const nContactos = DEPARTAMENTOS_RADAR.filter((d) => emailsDe(contactos[d.k]).length).length;
   // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
   const ultimaPesquisa = (radar && (radar.pesquisadoEm || (radar.atualizadoEm ? `${radar.atualizadoEm}T00:00:00` : ""))) || "";
   const aPesquisar = !!(pedidoPesquisa && pedidoPesquisa.em && String(pedidoPesquisa.em) > ultimaPesquisa);
@@ -25208,12 +25368,23 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
             <label style={{ fontSize: 12, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
               <input type="checkbox" checked={verTodas} onChange={(e) => setVerTodas(e.target.checked)} /> Mostrar também as já tratadas
             </label>
+            {onContactos && (
+              <button onClick={() => setVerContactos((v) => !v)} aria-expanded={verContactos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <Mail size={12} /> {verContactos ? "Esconder e-mails" : `E-mails dos departamentos (${nContactos} de ${DEPARTAMENTOS_RADAR.length})`}
+              </button>
+            )}
             {onDefinirFonte && (
               <button onClick={() => setVerFontes((v) => !v)} aria-expanded={verFontes} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
                 {verFontes ? "Esconder fontes" : `Fontes do agente${nFontes ? ` (${nFontes})` : ""}`}
               </button>
             )}
           </div>
+          {verContactos && onContactos && (
+            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, background: COLORS.paperSunken }}>
+              <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 10 }}>Para onde vão as perguntas sobre as sugestões. Cada sugestão propõe o departamento pelo tema; podes mudar antes de enviar.</div>
+              <ContactosDepartamentos contactos={contactos} onGuardar={onContactos} />
+            </div>
+          )}
           {verFontes && onDefinirFonte && (
             <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "10px 14px", marginBottom: 12, background: COLORS.paperSunken }}>
               <FontesDoAgente fontes={(radar && radar.fontes) || {}} escolhas={fontesEscolhas} onDefinir={onDefinirFonte} />
@@ -25284,42 +25455,51 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                         </button>
                       )}
                     </div>
-                    {onPsicologia && ePsicologia(r) && (
-                      <div style={{ borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                        {psicologia.email && pedirEmail !== r.id ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    {onContactos && (() => {
+                      const dep = depEscolhido[r.id] !== undefined ? depEscolhido[r.id] : departamentoRadar(r);
+                      const meta = DEPARTAMENTOS_RADAR.find((d) => d.k === dep);
+                      const emails = emailsDe(contactos[dep]);
+                      const env = enviados[r.id];
+                      return (
+                        <div style={{ borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <select value={dep} onChange={(ev) => setDepEscolhido((x) => ({ ...x, [r.id]: ev.target.value }))} aria-label="Departamento" style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 12.5 }}>
+                            <option value="">Departamento…</option>
+                            {DEPARTAMENTOS_RADAR.map((d) => (
+                              <option key={d.k} value={d.k}>
+                                {d.nome}
+                              </option>
+                            ))}
+                          </select>
+                          {meta && emails.length ? (
                             <a
-                              href={mailtoPsicologia(psicologia.email, r)}
-                              onClick={() => onPsicologia({ enviados: { ...(psicologia.enviados || {}), [r.id]: isoDe(new Date()) } })}
+                              href={mailtoDepartamento(emails, meta.nome, r)}
+                              onClick={() => onEnviado(r.id, dep)}
                               style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
                             >
-                              <Mail size={13} /> Perguntar à psicologia
+                              <Mail size={13} /> Enviar e-mail
                             </a>
-                            {(psicologia.enviados || {})[r.id] && <span style={{ fontSize: 11.5, color: COLORS.ok }}>Enviado a {fmt(new Date(psicologia.enviados[r.id] + "T00:00:00"))}</span>}
-                            <button type="button" onClick={() => setPedirEmail(r.id)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 11.5, color: COLORS.slate }}>
-                              {psicologia.email}
-                            </button>
-                          </div>
-                        ) : (
-                          <form
-                            onSubmit={(ev) => {
-                              ev.preventDefault();
-                              const v = emailPsi.trim();
-                              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return;
-                              onPsicologia({ email: v });
-                              setPedirEmail(null);
-                            }}
-                            style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}
-                          >
-                            <span style={{ fontSize: 12, color: COLORS.ink2 }}>E-mail da psicologia:</span>
-                            <input type="email" value={emailPsi} onChange={(ev) => setEmailPsi(ev.target.value)} placeholder="psicologia@…" style={{ ...inputStyle, flex: "1 1 160px", padding: "5px 8px", fontSize: 12.5 }} />
-                            <button type="submit" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12.5 }}>
-                              Guardar
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    )}
+                          ) : (
+                            <span style={{ fontSize: 12, color: COLORS.slate }}>
+                              {meta ? (
+                                <>
+                                  Sem e-mail de {meta.nome.toLowerCase()}.{" "}
+                                  <button type="button" onClick={() => setVerContactos(true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                                    Pôr em cima
+                                  </button>
+                                </>
+                              ) : (
+                                "Escolhe o departamento para enviar."
+                              )}
+                            </span>
+                          )}
+                          {env && (
+                            <span style={{ fontSize: 11.5, color: COLORS.ok }}>
+                              Enviado a {(DEPARTAMENTOS_RADAR.find((d) => d.k === env.dep) || {}).nome || "departamento"} em {fmt(new Date(env.data + "T00:00:00"))}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -25468,8 +25648,10 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
       fontesEscolhas={riscos.radarFontesUtilizador || {}}
-      psicologia={riscos.radarPsicologia || {}}
-      onPsicologia={(patch) => onGuardar({ ...riscos, radarPsicologia: { ...(riscos.radarPsicologia || {}), ...patch } })}
+      contactos={{ ...(riscos.radarPsicologia?.email ? { psicologia: riscos.radarPsicologia.email } : {}), ...(riscos.radarContactos || {}) }}
+      enviados={{ ...Object.fromEntries(Object.entries(riscos.radarPsicologia?.enviados || {}).map(([id, data]) => [id, { data, dep: "psicologia" }])), ...(riscos.radarEnviados || {}) }}
+      onContactos={(c) => onGuardar({ ...riscos, radarContactos: c })}
+      onEnviado={(id, dep) => onGuardar({ ...riscos, radarEnviados: { ...(riscos.radarEnviados || {}), [id]: { data: isoDe(new Date()), dep } } })}
       onDefinirFonte={(dominio, estado) => {
         const atual = { ...(riscos.radarFontesUtilizador || {}) };
         if (estado) atual[dominio] = estado;
@@ -26939,31 +27121,75 @@ function AppPrincipal({ onSair }) {
 
   // "Inscritos atualmente": acerta só a equipa. A mudança fica marcada e a importação semanal
   // respeita-a enquanto o mapa de acompanhamento continuar a trazer a turma antiga.
-  const aplicarInscritosAtuais = (ep, mudancas, mapaTurmas = {}) => {
+  const aplicarInscritosAtuais = (ep, mudancas, mapaTurmas = {}, acoes = []) => {
     const reg = registoAlunos[ep];
-    if (!reg || !mudancas.length) return;
+    if (!reg || (!mudancas.length && !acoes.length)) return;
     const alunos = { ...reg.alunos };
     const tpe = { ...(options.turmasPorEscola || {}) };
     const novasTurmas = [];
-    let n = 0;
+    const motivos = [];
+    const s1 = reg.semana1 || semana1Padrao(ep);
+    const hoje = isoDe(new Date());
+    const conta = { equipa: 0, desistiu: 0, reativar: 0, escola: 0, adicionar: 0 };
+    const registaTurma = (escola, turma) => {
+      const l = tpe[escola] || [];
+      if (!l.includes(turma)) tpe[escola] = [...l, turma];
+      novasTurmas.push(turma);
+    };
+    // Equipa nova marcada: a importação semanal respeita-a enquanto o acompanhamento trouxer a antiga.
+    const comEquipa = (a, escola, turma) =>
+      a.turma === turma && a.escola === escola ? a : { ...a, escola, turma, turmaManual: true, turmaFicheiro: a.turmaFicheiro || a.turmaAntes || a.turma, turmaAntes: a.turma, mudadoPor: "mapa" };
     mudancas.forEach((m) => {
       const a = alunos[m.id];
       if (!a || a.turma === m.para) return;
-      alunos[m.id] = { ...a, turma: m.para, turmaManual: true, turmaFicheiro: a.turmaFicheiro || a.turmaAntes || a.turma, turmaAntes: a.turma, mudadoPor: "mapa" };
-      const l = tpe[a.escola] || [];
-      if (!l.includes(m.para)) tpe[a.escola] = [...l, m.para];
-      novasTurmas.push(m.para);
-      n++;
+      alunos[m.id] = comEquipa(a, a.escola, m.para);
+      registaTurma(a.escola, m.para);
+      conta.equipa++;
+    });
+    acoes.forEach((x) => {
+      const a = alunos[x.id];
+      if (x.acao === "adicionar") {
+        if (a) return;
+        const entrada = x.entrada || hoje;
+        alunos[x.id] = { id: x.id, escola: x.escola, turma: x.turma, ano: null, genero: "", rubrica: "", entrada, semEntrada: semanaDaEpoca(entrada, s1), estado: "ativo", semCodigo: false, saida: null, motivo: null, origem: "mapa" };
+        registaTurma(x.escola, x.turma);
+        conta.adicionar++;
+        return;
+      }
+      if (!a) return;
+      if (x.acao === "desistiu") {
+        alunos[x.id] = { ...a, estado: "desistiu", saida: x.saida || hoje, semSaida: semanaDaEpoca(x.saida || hoje, s1), motivo: x.motivo };
+        motivos.push(x.motivo);
+        conta.desistiu++;
+      } else if (x.acao === "reativar") {
+        const { semSaida: _s, ...resto } = a; // eslint-disable-line no-unused-vars
+        alunos[x.id] = comEquipa({ ...resto, estado: "ativo", saida: null, motivo: null }, x.escola, x.turma);
+        registaTurma(x.escola, x.turma);
+        conta.reativar++;
+      } else if (x.acao === "mudarEscola" || x.acao === "turma") {
+        alunos[x.id] = comEquipa(a, x.escola, x.turma);
+        registaTurma(x.escola, x.turma);
+        conta[x.acao === "mudarEscola" ? "escola" : "equipa"]++;
+      }
     });
     const listaTurmas = options.turmas || DEFAULT_TURMAS;
+    const motivosAtuais = options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA;
     persistOptions({
       ...options,
       turmas: [...listaTurmas, ...[...new Set(novasTurmas)].filter((t) => !listaTurmas.includes(t))],
       turmasPorEscola: tpe,
       mapaTurmasAlunos: { ...(options.mapaTurmasAlunos || {}), ...mapaTurmas },
+      motivosDesistencia: [...motivosAtuais, ...[...new Set(motivos)].filter((m) => m && !motivosAtuais.includes(m))],
     });
     gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos }));
-    notificar(`${n} alunos mudaram de equipa pelo mapa de inscritos atuais.`);
+    const partes = [
+      conta.equipa && `${conta.equipa} mudaram de equipa`,
+      conta.escola && `${conta.escola} mudaram de escola`,
+      conta.desistiu && `${conta.desistiu} dados como desistidos`,
+      conta.reativar && `${conta.reativar} reativados`,
+      conta.adicionar && `${conta.adicionar} adicionados`,
+    ].filter(Boolean);
+    notificar(`Mapa de inscritos atuais: ${partes.join(" · ") || "sem alterações"}.`);
   };
 
   // Apagar dados de forma seletiva. f = { epocas, escola, tipo, turma, id, retirarEscola }.

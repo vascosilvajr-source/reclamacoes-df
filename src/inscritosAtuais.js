@@ -103,7 +103,28 @@ export function epocaDoMapa(registos, hojeEpoca) {
 }
 
 // reg = registo da época ({ alunos: { id: { escola, turma, estado, ... } } }).
-export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurmasGuardado = {}, mapaEscolasGuardado = {}, associacoes = {}, nomeProposto = (t) => t, hoje }) {
+// Data até onde o último mapa de acompanhamento cobre as inscrições: a sexta-feira antes do dia
+// em que foi importado (importado a 19/10 → inscrições até 16/10), ou a entrada mais recente, se for depois.
+export function corteDoAcompanhamento(reg) {
+  const imps = (reg && reg.importacoes) || [];
+  const ult = imps.length ? imps[imps.length - 1].data : null;
+  let corte = null;
+  if (ult) {
+    const d = new Date(ult + "T12:00:00");
+    do d.setDate(d.getDate() - 1);
+    while (d.getDay() !== 5);
+    corte = d.toISOString().slice(0, 10);
+  }
+  const maxEntrada = Object.values((reg && reg.alunos) || {})
+    .map((a) => a.entrada)
+    .filter(Boolean)
+    .sort()
+    .pop();
+  if (maxEntrada && (!corte || maxEntrada > corte)) corte = maxEntrada;
+  return corte;
+}
+
+export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurmasGuardado = {}, mapaEscolasGuardado = {}, associacoes = {}, nomeProposto = (t) => t, hoje, corte = null }) {
   const alunos = (reg && reg.alunos) || {};
   const out = {
     linhas: registos.length,
@@ -111,12 +132,15 @@ export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurma
     iguais: 0,
     mudar: [], // { id, escola, de, para, turmaFicheiro }
     porAssociar: [], // { turmaFicheiro, escola, n }
+    // Casos para rever um a um (cada um com tipo, o que a app tem e o que o mapa traz):
     desistidosNoMapa: [], // app diz que desistiu, mas aparece como inscrito
     terminados: [], // todas as linhas com término já passado
-    escolaDiferente: [], // { id, escolaApp, centro }
-    variasTurmas: [], // { id, turmas }
+    escolaDiferente: [], // escola do mapa diferente da da app
+    variasTurmas: [], // em duas equipas, nenhuma igual à da app
     semRegisto: [], // no mapa, mas a app não conhece o código
     foraDoMapa: [], // ativos na app, ausentes do mapa (escolas que o mapa cobre)
+    recentes: [], // no mapa, sem registo na app, mas entraram depois do último acompanhamento: normal
+    casos: [],
     semAssociacao: 0,
     ignorados: 0,
   };
@@ -171,6 +195,14 @@ export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurma
   const centrosNoMapa = new Set();
   const pendentes = {};
 
+  // Turmas do mapa para um caso: a turma da app que lhe corresponde (se houver) e o nome proposto.
+  const turmasDoCaso = (lista, escola) =>
+    [...new Set(lista.map((r) => r.turma))].map((tf) => {
+      const alvo = escola ? resolverTurma(tf, escola) : null;
+      return { turmaFicheiro: tf, alvo: alvo && alvo !== "__skip__" ? alvo : null, proposta: nomeProposto(tf) || tf };
+    });
+  const app = (a) => ({ escolaApp: a.escola, turmaApp: a.turma, estado: a.estado, saida: a.saida || null });
+
   ids.forEach((id) => {
     const linhasId = porId[id];
     linhasId.forEach((r) => {
@@ -178,21 +210,26 @@ export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurma
       if (e) centrosNoMapa.add(e);
     });
     const a = alunos[id];
-    if (!a) return out.semRegisto.push(id);
     const ativas = linhasId.filter((r) => !r.termino || r.termino >= hoje);
+    const base = ativas.length ? ativas : linhasId;
+    const centro = base[0].centro;
+    const escolaMapa = escolaDoCentro(centro);
+    const inicio = base.map((r) => r.inicio).filter(Boolean).sort()[0] || null;
+    // Entrou depois do último mapa de acompanhamento: é normal ainda não estar na app.
+    if (!a && corte && inicio && inicio > corte) return out.recentes.push(id);
+    if (!a) return out.semRegisto.push({ id, tipo: "semRegisto", centro, escolaMapa, turmas: turmasDoCaso(base, escolaMapa), inicio, ativo: ativas.length > 0 });
     if (a.estado === "desistiu") {
-      if (ativas.length) out.desistidosNoMapa.push(id);
+      if (ativas.length) out.desistidosNoMapa.push({ id, tipo: "desistidosNoMapa", ...app(a), centro, escolaMapa, turmas: turmasDoCaso(ativas, escolaMapa || a.escola), inicio });
       return;
     }
-    if (!ativas.length) return out.terminados.push(id);
+    if (!ativas.length) return out.terminados.push({ id, tipo: "terminados", ...app(a), termino: linhasId.map((r) => r.termino).filter(Boolean).sort().pop() || null });
     const turmasF = [...new Set(ativas.map((r) => r.turma))];
-    const escolaF = escolaDoCentro(ativas[0].centro);
-    if (escolaF && escolaF !== a.escola) return out.escolaDiferente.push({ id, escolaApp: a.escola, centro: ativas[0].centro });
-    // Duas turmas ao mesmo tempo: se uma delas já é a da app, está certo; senão, avisa.
+    if (escolaMapa && escolaMapa !== a.escola) return out.escolaDiferente.push({ id, tipo: "escolaDiferente", ...app(a), centro, escolaMapa, turmas: turmasDoCaso(ativas, escolaMapa) });
+    // Duas turmas ao mesmo tempo: se uma delas já é a da app, está certo; senão, fica para rever.
     if (turmasF.length > 1) {
       const alvos = turmasF.map((t) => resolverTurma(t, a.escola));
       if (alvos.includes(a.turma)) return out.iguais++;
-      return out.variasTurmas.push({ id, turmas: turmasF });
+      return out.variasTurmas.push({ id, tipo: "variasTurmas", ...app(a), turmas: turmasDoCaso(ativas, a.escola) });
     }
     const tf = turmasF[0];
     const alvo = resolverTurma(tf, a.escola);
@@ -211,7 +248,8 @@ export function compararInscritosAtuais({ registos, reg, escolas = [], mapaTurma
   out.porAssociar = Object.values(pendentes).sort((x, y) => y.n - x.n);
   // Alunos ativos na app, de escolas que o mapa cobre, que não aparecem no mapa.
   Object.values(alunos).forEach((a) => {
-    if (a.estado === "ativo" && centrosNoMapa.has(a.escola) && !porId[a.id]) out.foraDoMapa.push(a.id);
+    if (a.estado === "ativo" && centrosNoMapa.has(a.escola) && !porId[a.id]) out.foraDoMapa.push({ id: a.id, tipo: "foraDoMapa", ...app(a) });
   });
+  out.casos = [...out.desistidosNoMapa, ...out.terminados, ...out.foraDoMapa, ...out.escolaDiferente, ...out.variasTurmas, ...out.semRegisto];
   return out;
 }
