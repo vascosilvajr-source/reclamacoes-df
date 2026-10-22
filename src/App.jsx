@@ -26802,40 +26802,58 @@ function AppPrincipal({ onSair }) {
       {/* ---- splash enquanto os dados carregam do Supabase ---- */}
       {loading && (
         <div className="splashOverlay naoImprimir" aria-live="polite" aria-label="A carregar dados…">
-          <svg width="120" height="130" viewBox="0 0 110 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <g className="splashChama">
-              <path d="M30 62 C28 50 35 38 30 26 C26 36 18 44 22 56 C18 50 20 38 28 30 C20 42 24 54 26 62Z" fill="url(#splGradChama)" opacity="0.9"/>
-              <path d="M55 18 C52 28 58 38 54 50 C50 40 52 28 48 20 C44 32 46 46 50 56 C46 48 44 36 48 26 C42 38 44 52 46 62 L64 62 C66 52 68 38 62 26 C66 36 64 48 60 56 C64 46 66 32 60 20 C56 28 58 38 54 50 C50 38 56 28 55 18Z" fill="url(#splGradChama)"/>
-              <path d="M80 62 C82 54 78 42 80 30 C88 38 90 50 86 56 C90 44 82 36 78 26 C83 38 75 50 80 62Z" fill="url(#splGradChama)" opacity="0.9"/>
-            </g>
-            <path d="M55 30 L82 42 L82 68 C82 83 70 93 55 98 C40 93 28 83 28 68 L28 42 Z" fill="url(#splGradEscudo)" stroke="url(#splGradBorda)" strokeWidth="2"/>
-            <path d="M55 34 L78 44 L78 48 C78 48 66 42 55 42 C44 42 32 48 32 48 L32 44 Z" fill="rgba(255,255,255,0.12)"/>
-            <circle cx="55" cy="67" r="17" fill="white"/>
-            <circle cx="55" cy="67" r="17" fill="url(#splGradBola)" opacity="0.15"/>
-            <path d="M55 56 L60 60 L58 66 L52 66 L50 60 Z" fill="#1a1a2e"/>
-            <path d="M55 56 L60 60 L63 57 L61 52 L56 51 Z" fill="#2a2a4e" opacity="0.7"/>
-            <path d="M55 56 L50 60 L47 57 L49 52 L54 51 Z" fill="#2a2a4e" opacity="0.7"/>
-            <path d="M58 66 L63 67 L64 72 L60 75 L57 72 Z" fill="#2a2a4e" opacity="0.7"/>
-            <path d="M52 66 L47 67 L46 72 L50 75 L53 72 Z" fill="#2a2a4e" opacity="0.7"/>
+          <svg width="120" height="134" viewBox="0 0 110 124" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
-              <linearGradient id="splGradChama" x1="55" y1="18" x2="55" y2="62" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#FFD580"/>
-                <stop offset="50%" stopColor="#F5A623"/>
-                <stop offset="100%" stopColor="#C0520A"/>
+              {/* chamas azuis: claro no topo, escuro na base */}
+              <linearGradient id="splChama" x1="55" y1="4" x2="55" y2="56" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#7DD8F8"/>
+                <stop offset="55%" stopColor="#2196C9"/>
+                <stop offset="100%" stopColor="#1260A0"/>
               </linearGradient>
-              <linearGradient id="splGradEscudo" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#1B4F8A"/>
-                <stop offset="100%" stopColor="#0D2E56"/>
+              {/* escudo: azul médio no topo, azul escuro na base */}
+              <linearGradient id="splEscudo" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#2678C2"/>
+                <stop offset="100%" stopColor="#0E3D78"/>
               </linearGradient>
-              <linearGradient id="splGradBorda" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#5B9BD5"/>
-                <stop offset="100%" stopColor="#1B4F8A"/>
+              {/* brilho interior do escudo (faixa clara ao centro) */}
+              <linearGradient id="splEscudoInt" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#4A9CD6"/>
+                <stop offset="40%" stopColor="#1A5EA8"/>
+                <stop offset="100%" stopColor="#0A2D60"/>
               </linearGradient>
-              <radialGradient id="splGradBola" cx="45%" cy="40%" r="60%">
-                <stop offset="0%" stopColor="white" stopOpacity="0.8"/>
-                <stop offset="100%" stopColor="white" stopOpacity="0"/>
+              <radialGradient id="splBola" cx="42%" cy="38%" r="58%">
+                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9"/>
+                <stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
               </radialGradient>
             </defs>
+
+            {/* ---- chamas azuis ---- */}
+            <g className="splashChama">
+              {/* chama esquerda */}
+              <path d="M32 56 C30 46 34 36 31 24 C27 33 21 41 24 52 C20 46 22 35 29 27 C22 39 25 51 27 56Z" fill="url(#splChama)" opacity="0.85"/>
+              {/* chama central (maior) */}
+              <path d="M55 4 C51 16 57 28 53 42 C49 32 51 18 46 8 C42 22 44 38 49 50 C44 42 42 28 47 16 C40 30 43 46 45 56 L65 56 C67 46 70 30 63 16 C68 28 65 42 61 50 C66 38 68 22 64 8 C59 18 61 32 57 42 C53 28 59 16 55 4Z" fill="url(#splChama)"/>
+              {/* chama direita */}
+              <path d="M78 56 C80 50 77 39 79 27 C86 35 88 46 84 52 C87 41 81 33 77 24 C74 36 78 46 78 56Z" fill="url(#splChama)" opacity="0.85"/>
+            </g>
+
+            {/* ---- escudo exterior (borda clara) ---- */}
+            <path d="M55 34 L84 46 L84 74 C84 91 71 103 55 108 C39 103 26 91 26 74 L26 46 Z" fill="#4A9CD6"/>
+            {/* ---- escudo interior (preenchimento) ---- */}
+            <path d="M55 38 L81 49 L81 74 C81 89 69 100 55 105 C41 100 29 89 29 74 L29 49 Z" fill="url(#splEscudo)"/>
+            {/* faixa central vertical mais clara */}
+            <path d="M55 38 L63 42 L63 105 C60 105.8 57 106.2 55 105 C53 106.2 50 105.8 47 105 L47 42 Z" fill="url(#splEscudoInt)" opacity="0.35"/>
+
+            {/* ---- bola ---- */}
+            <circle cx="55" cy="73" r="19" fill="white"/>
+            <circle cx="55" cy="73" r="19" fill="url(#splBola)" opacity="0.2"/>
+            {/* padrão da bola (pentágono central + hexágonos) */}
+            <path d="M55 63 L61 67 L59 74 L51 74 L49 67 Z" fill="#1a2e50"/>
+            <path d="M55 63 L61 67 L65 63 L62 57 L56 56 Z" fill="#243a62" opacity="0.75"/>
+            <path d="M55 63 L49 67 L45 63 L48 57 L54 56 Z" fill="#243a62" opacity="0.75"/>
+            <path d="M59 74 L65 74 L67 80 L63 84 L59 81 Z" fill="#243a62" opacity="0.75"/>
+            <path d="M51 74 L45 74 L43 80 L47 84 L51 81 Z" fill="#243a62" opacity="0.75"/>
+
           </svg>
           <span className="splashTexto">A carregar…</span>
         </div>
@@ -27963,7 +27981,7 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         @keyframes dfHalo { 0%, 100% { opacity: 0; r: 52px; } 50% { opacity: 0.18; r: 62px; } }
         @keyframes dfTexto { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
         .dfLoading { display: flex; flex-direction: column; align-items: center; gap: 18px; margin-top: 8px; }
-        .dfLoading svg { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(245, 166, 35, 0.35)); }
+        .dfLoading svg { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(33, 150, 201, 0.45)); }
         .dfLoading .chama { transform-origin: center bottom; animation: dfChama 2s ease-in-out infinite; }
         .dfCarregando { font-size: 12px; color: #8FA3BF; letter-spacing: 0.12em; text-transform: uppercase; animation: dfTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
@@ -27984,51 +28002,32 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         <div className="entradaSub">Dragon Force · acesso reservado</div>
         {aVerificar ? (
           <div className="dfLoading" aria-label="A verificar sessão…">
-            <svg width="110" height="120" viewBox="0 0 110 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Halo pulsante atrás */}
-              <circle cx="55" cy="72" r="52" fill="rgba(245,166,35,0.10)" style={{animation:"dfHalo 2s ease-in-out infinite"}} />
-              {/* Chamas */}
-              <g className="chama">
-                {/* chama esquerda */}
-                <path d="M30 62 C28 50 35 38 30 26 C26 36 18 44 22 56 C18 50 20 38 28 30 C20 42 24 54 26 62Z" fill="url(#gradChama)" opacity="0.9"/>
-                {/* chama central */}
-                <path d="M55 18 C52 28 58 38 54 50 C50 40 52 28 48 20 C44 32 46 46 50 56 C46 48 44 36 48 26 C42 38 44 52 46 62 L64 62 C66 52 68 38 62 26 C66 36 64 48 60 56 C64 46 66 32 60 20 C56 28 58 38 54 50 C50 38 56 28 55 18Z" fill="url(#gradChama)"/>
-                {/* chama direita */}
-                <path d="M80 62 C82 54 78 42 80 30 C88 38 90 50 86 56 C90 44 82 36 78 26 C83 38 75 50 80 62Z" fill="url(#gradChama)" opacity="0.9"/>
-              </g>
-              {/* Escudo */}
-              <path d="M55 30 L82 42 L82 68 C82 83 70 93 55 98 C40 93 28 83 28 68 L28 42 Z" fill="url(#gradEscudo)" stroke="url(#gradBorda)" strokeWidth="2"/>
-              {/* Reflexo no escudo */}
-              <path d="M55 34 L78 44 L78 48 C78 48 66 42 55 42 C44 42 32 48 32 48 L32 44 Z" fill="rgba(255,255,255,0.12)"/>
-              {/* Bola de futebol */}
-              <circle cx="55" cy="67" r="17" fill="white"/>
-              <circle cx="55" cy="67" r="17" fill="url(#gradBola)" opacity="0.15"/>
-              {/* Pentágono central */}
-              <path d="M55 56 L60 60 L58 66 L52 66 L50 60 Z" fill="#1a1a2e"/>
-              {/* Hexágonos laterais */}
-              <path d="M55 56 L60 60 L63 57 L61 52 L56 51 Z" fill="#2a2a4e" opacity="0.7"/>
-              <path d="M55 56 L50 60 L47 57 L49 52 L54 51 Z" fill="#2a2a4e" opacity="0.7"/>
-              <path d="M58 66 L63 67 L64 72 L60 75 L57 72 Z" fill="#2a2a4e" opacity="0.7"/>
-              <path d="M52 66 L47 67 L46 72 L50 75 L53 72 Z" fill="#2a2a4e" opacity="0.7"/>
+            <svg width="110" height="124" viewBox="0 0 110 124" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
-                <linearGradient id="gradChama" x1="55" y1="18" x2="55" y2="62" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#FFD580"/>
-                  <stop offset="50%" stopColor="#F5A623"/>
-                  <stop offset="100%" stopColor="#C0520A"/>
+                <linearGradient id="dfChama" x1="55" y1="4" x2="55" y2="56" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#7DD8F8"/><stop offset="55%" stopColor="#2196C9"/><stop offset="100%" stopColor="#1260A0"/>
                 </linearGradient>
-                <linearGradient id="gradEscudo" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#1B4F8A"/>
-                  <stop offset="100%" stopColor="#0D2E56"/>
+                <linearGradient id="dfEscudo" x1="55" y1="34" x2="55" y2="106" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#2678C2"/><stop offset="100%" stopColor="#0E3D78"/>
                 </linearGradient>
-                <linearGradient id="gradBorda" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#5B9BD5"/>
-                  <stop offset="100%" stopColor="#1B4F8A"/>
-                </linearGradient>
-                <radialGradient id="gradBola" cx="45%" cy="40%" r="60%">
-                  <stop offset="0%" stopColor="white" stopOpacity="0.8"/>
-                  <stop offset="100%" stopColor="white" stopOpacity="0"/>
+                <radialGradient id="dfBola" cx="42%" cy="38%" r="58%">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9"/><stop offset="100%" stopColor="#ffffff" stopOpacity="0"/>
                 </radialGradient>
               </defs>
+              <g className="chama">
+                <path d="M32 56 C30 46 34 36 31 24 C27 33 21 41 24 52 C20 46 22 35 29 27 C22 39 25 51 27 56Z" fill="url(#dfChama)" opacity="0.85"/>
+                <path d="M55 4 C51 16 57 28 53 42 C49 32 51 18 46 8 C42 22 44 38 49 50 C44 42 42 28 47 16 C40 30 43 46 45 56 L65 56 C67 46 70 30 63 16 C68 28 65 42 61 50 C66 38 68 22 64 8 C59 18 61 32 57 42 C53 28 59 16 55 4Z" fill="url(#dfChama)"/>
+                <path d="M78 56 C80 50 77 39 79 27 C86 35 88 46 84 52 C87 41 81 33 77 24 C74 36 78 46 78 56Z" fill="url(#dfChama)" opacity="0.85"/>
+              </g>
+              <path d="M55 34 L84 46 L84 74 C84 91 71 103 55 108 C39 103 26 91 26 74 L26 46 Z" fill="#4A9CD6"/>
+              <path d="M55 38 L81 49 L81 74 C81 89 69 100 55 105 C41 100 29 89 29 74 L29 49 Z" fill="url(#dfEscudo)"/>
+              <circle cx="55" cy="73" r="19" fill="white"/>
+              <circle cx="55" cy="73" r="19" fill="url(#dfBola)" opacity="0.2"/>
+              <path d="M55 63 L61 67 L59 74 L51 74 L49 67 Z" fill="#1a2e50"/>
+              <path d="M55 63 L61 67 L65 63 L62 57 L56 56 Z" fill="#243a62" opacity="0.75"/>
+              <path d="M55 63 L49 67 L45 63 L48 57 L54 56 Z" fill="#243a62" opacity="0.75"/>
+              <path d="M59 74 L65 74 L67 80 L63 84 L59 81 Z" fill="#243a62" opacity="0.75"/>
+              <path d="M51 74 L45 74 L43 80 L47 84 L51 81 Z" fill="#243a62" opacity="0.75"/>
             </svg>
             <span className="dfCarregando">A carregar…</span>
           </div>
