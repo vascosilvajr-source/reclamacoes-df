@@ -2,6 +2,7 @@
 -- E-mails aos operacionais, ao coordenador técnico e ao coordenador geral (Dragon Force)
 -- + pedidos de avaliação de eficácia de reclamações
 -- Colar tudo no Supabase → SQL Editor → Run. Pode correr-se mais de uma vez.
+-- Requer o supabase/seguranca.sql corrido antes (cria a lista da equipa e a função e_equipa).
 -- Não apaga nem altera dados existentes: só acrescenta tabelas e funções.
 -- =====================================================================
 
@@ -27,12 +28,12 @@ alter table public.pedidos_operacionais add column if not exists contactado_em t
 alter table public.pedidos_operacionais enable row level security;
 -- Só quem entra na app (com conta) vê e atualiza os pedidos. O link do e-mail não dá acesso à tabela.
 drop policy if exists "app autenticada vê pedidos" on public.pedidos_operacionais;
-create policy "app autenticada vê pedidos" on public.pedidos_operacionais for select to authenticated using (true);
+create policy "app autenticada vê pedidos" on public.pedidos_operacionais for select to authenticated using ((select public.e_equipa()));
 drop policy if exists "app autenticada atualiza pedidos" on public.pedidos_operacionais;
-create policy "app autenticada atualiza pedidos" on public.pedidos_operacionais for update to authenticated using (true) with check (true);
+create policy "app autenticada atualiza pedidos" on public.pedidos_operacionais for update to authenticated using ((select public.e_equipa())) with check ((select public.e_equipa()));
 -- A app (com conta) cria os pedidos de avaliação de eficácia; o agente envia-os na hora seguinte.
 drop policy if exists "app autenticada cria pedidos" on public.pedidos_operacionais;
-create policy "app autenticada cria pedidos" on public.pedidos_operacionais for insert to authenticated with check (true);
+create policy "app autenticada cria pedidos" on public.pedidos_operacionais for insert to authenticated with check ((select public.e_equipa()));
 
 -- 1b. Fila de e-mails: o Supabase prepara, o agente do Google envia e confirma cada um.
 --     Um envio que falhe (ex.: limite diário do Gmail) fica na fila e volta a ser tentado.
@@ -52,7 +53,7 @@ create table if not exists public.emails_fila (
 );
 alter table public.emails_fila enable row level security;
 drop policy if exists "app autenticada vê fila" on public.emails_fila;
-create policy "app autenticada vê fila" on public.emails_fila for select to authenticated using (true);
+create policy "app autenticada vê fila" on public.emails_fila for select to authenticated using ((select public.e_equipa()));
 create index if not exists emails_fila_pendentes on public.emails_fila (id) where enviado_em is null;
 
 -- 2. Ajudas internas (esquema privado, não exposto).
@@ -597,7 +598,7 @@ create or replace function public.op_enviar_oportunidade(p_emails jsonb, p_dados
 returns bigint language plpgsql security definer set search_path to 'public','privado' as $$
 declare v_em jsonb := privado.emails_validos(p_emails); v_opc jsonb; v_id bigint;
 begin
-  if auth.uid() is null then raise exception 'sem sessão'; end if;
+  if not public.e_equipa() then raise exception 'sem permissão'; end if;
   if jsonb_array_length(v_em) = 0 then raise exception 'sem e-mails válidos'; end if;
   if jsonb_array_length(v_em) > 10 or length(p_dados::text) > 20000 then raise exception 'pedido demasiado grande'; end if;
   select value into v_opc from app_storage where key = 'reclamacoes:opcoes';
