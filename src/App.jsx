@@ -3002,6 +3002,102 @@ function AuditForm({ schoolOptions, onCancel, onSave, onGerirLista }) {
   );
 }
 
+// ---------- PDF da auditoria: documento próprio para papel (não é uma cópia do ecrã) ----------
+function htmlAuditoria(audit, rep) {
+  const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const data = (iso) => (iso ? fmt(new Date(iso + "T00:00:00")) : "");
+  const TIPOS = {
+    NCM: { cor: "#C2570C", fundo: "#FDF0E6", nome: "Não conformidade maior", plural: "Não conformidades maiores" },
+    NC: { cor: "#A66A00", fundo: "#FBF3DF", nome: "Não conformidade", plural: "Não conformidades" },
+    AS: { cor: "#6B4FA0", fundo: "#F1ECF8", nome: "Área sensível", plural: "Áreas sensíveis" },
+    OM: { cor: "#1D4F9A", fundo: "#E8F0FB", nome: "Oportunidade de melhoria", plural: "Oportunidades de melhoria" },
+  };
+  const ordem = ["NCM", "NC", "AS", "OM"];
+  const lista = [...(audit.findings || [])].sort((a, b) => {
+    const ia = ordem.indexOf(a.classification);
+    const ib = ordem.indexOf(b.classification);
+    return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib);
+  });
+  const hoje = isoDe(new Date());
+  const resolvidas = lista.filter((f) => f.resolvida).length;
+  const nRep = lista.filter((f) => rep && rep.mapa && rep.mapa[f.id]).length;
+  const porTipo = ordem.map((t) => [t, lista.filter((f) => f.classification === t).length]).filter(([, n]) => n);
+  const semTipo = lista.filter((f) => !TIPOS[f.classification]).length;
+
+  const cartao = (valor, rotulo) => `<div class="au-k"><div class="au-kn">${valor}</div><div class="au-kl">${rotulo}</div></div>`;
+  const resumo = `
+    <div class="au-resumo">
+      ${cartao(lista.length, lista.length === 1 ? "constatação" : "constatações")}
+      ${cartao(resolvidas, resolvidas === 1 ? "resolvida" : "resolvidas")}
+      ${cartao(lista.length - resolvidas, "por resolver")}
+      ${nRep ? cartao(nRep, nRep === 1 ? "repetida da anterior" : "repetidas da anterior") : ""}
+    </div>
+    <div class="au-tipos">${porTipo
+      .map(([t, n]) => `<span class="au-chip" style="color:${TIPOS[t].cor};background:${TIPOS[t].fundo}"><b>${n}</b> ${esc(n > 1 ? TIPOS[t].plural : TIPOS[t].nome)}</span>`)
+      .join("")}${semTipo ? `<span class="au-chip" style="color:#5B6577;background:#EEF1F6"><b>${semTipo}</b> sem tipo</span>` : ""}</div>`;
+
+  const linha = (rotulo, valor) => (valor ? `<div class="au-l"><span>${rotulo}</span><div>${esc(valor)}</div></div>` : "");
+  const blocos = lista
+    .map((f, i) => {
+      const t = TIPOS[f.classification] || { cor: "#5B6577", fundo: "#EEF1F6", nome: "Sem tipo" };
+      const r = rep && rep.mapa ? rep.mapa[f.id] : null;
+      const ef = EFICACIA_ACAO_META[f.eficacia];
+      const foraPrazo = f.prazo && (f.resolvidaEm ? f.resolvidaEm > f.prazo : !f.resolvida && f.prazo < hoje);
+      const prazo = f.prazo ? `${data(f.prazo)}${f.prazoTexto ? ` (${f.prazoTexto})` : ""}` : f.prazoTexto || "";
+      const fecho = f.fechoEpoca ? `Fim da época ${epocaAud(audit) || ""}` : data(f.resolvidaEm);
+      const estado = f.resolvida ? `<span class="au-est" style="color:#1F7A4D;background:#E6F4EC">Resolvida</span>` : `<span class="au-est" style="color:#5B6577;background:#EEF1F6">Por resolver</span>`;
+      return `
+      <div class="au-f" style="border-left-color:${t.cor}">
+        <div class="au-fh">
+          <span class="au-n">${i + 1}</span>
+          <span class="au-tipo" style="color:${t.cor};background:${t.fundo}">${esc(f.classification || "—")} · ${esc(t.nome)}</span>
+          ${r ? `<span class="au-tipo" style="color:#A66A00;background:#FBF3DF">Repetida</span>` : ""}
+          <span class="au-sp"></span>
+          ${estado}
+        </div>
+        ${[f.area, f.category].filter(Boolean).length ? `<div class="au-ctx">${esc([f.area, f.category].filter(Boolean).join(" · "))}</div>` : ""}
+        ${f.iso ? `<div class="au-ctx">ISO 9001:2015 · ${esc(rotuloISO(f.iso))}</div>` : ""}
+        <div class="au-d">${esc(f.description || "(sem descrição)")}</div>
+        ${r ? `<div class="au-rep">Já constava na auditoria de ${esc(dataAud(r.audit))}: «${esc(r.f.description)}»${r.f.resolvida ? " · tinha sido dada como resolvida" : " · ainda por resolver"}</div>` : ""}
+        <div class="au-ls">
+          ${linha("Análise de causas", f.analiseCausas)}
+          ${linha("Causa raiz", f.causaRaiz)}
+          ${linha("Ação corretiva", f.acao)}
+          ${linha("Responsável", f.responsavel)}
+          ${linha("Prazo", prazo ? prazo + (foraPrazo ? " · fora do prazo" : "") : "")}
+          ${linha("Fecho", fecho)}
+          ${linha("Eficácia", ef ? ef.label : "")}
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  const css = `<style>
+    #folhaBalanco .au-resumo { display: flex; gap: 10px; margin-bottom: 10px; }
+    #folhaBalanco .au-k { flex: 1; border: 1px solid #D5DBE5; border-radius: 6px; padding: 10px 12px; background: #F7F9FC; }
+    #folhaBalanco .au-kn { font-size: 24px; font-weight: 700; color: #0B2A5B; line-height: 1.1; }
+    #folhaBalanco .au-kl { font-size: 11px; color: #5B6577; margin-top: 3px; }
+    #folhaBalanco .au-tipos { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+    #folhaBalanco .au-chip { font-size: 11px; padding: 3px 9px; border-radius: 20px; }
+    #folhaBalanco .au-f { border: 1px solid #D5DBE5; border-left: 4px solid #5B6577; border-radius: 4px; padding: 11px 14px 12px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+    #folhaBalanco .au-fh { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+    #folhaBalanco .au-n { font-size: 11px; font-weight: 700; color: #8A94A6; min-width: 16px; }
+    #folhaBalanco .au-tipo { font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 2px 8px; border-radius: 4px; }
+    #folhaBalanco .au-sp { flex: 1; }
+    #folhaBalanco .au-est { font-size: 10.5px; font-weight: 600; padding: 2px 9px; border-radius: 20px; }
+    #folhaBalanco .au-ctx { font-size: 11px; color: #5B6577; margin-bottom: 2px; }
+    #folhaBalanco .au-d { font-size: 13px; line-height: 1.5; color: #0F1B2D; margin-top: 5px; white-space: pre-wrap; }
+    #folhaBalanco .au-rep { font-size: 11px; color: #A66A00; margin-top: 6px; line-height: 1.45; }
+    #folhaBalanco .au-ls { margin-top: 8px; border-top: 1px solid #E6EAF0; }
+    #folhaBalanco .au-l { display: flex; gap: 12px; padding: 5px 0; border-bottom: 1px solid #EEF1F6; font-size: 11.5px; line-height: 1.45; }
+    #folhaBalanco .au-l:last-child { border-bottom: none; }
+    #folhaBalanco .au-l > span { flex: none; width: 112px; color: #6B7A90; }
+    #folhaBalanco .au-l > div { flex: 1; color: #0F1B2D; white-space: pre-wrap; }
+    #folhaBalanco .au-vazio { font-size: 13px; color: #5B6577; padding: 20px 0; }
+  </style>`;
+  return css + resumo + (lista.length ? blocos : `<div class="au-vazio">Sem constatações registadas.</div>`);
+}
+
 // ---------- Audit detail: findings management ----------
 function AuditDetail({
   audit,
@@ -3072,7 +3168,7 @@ function AuditDetail({
             {dataAud(audit)} · Época {epocaAud(audit) || "—"}
           </div>
           <div className="semFoto" style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <BotaoFoto alvo={fotoRef} vertical rotulo="PDF" titulo={`Auditoria · ${audit.school}`} subtitulo={`${dataAud(audit)} · Época ${epocaAud(audit) || "—"}`} nome={`Auditoria ${audit.school} ${audit.date || isoDe(new Date())}`} />
+            <BotaoFoto alvo={fotoRef} vertical rotulo="PDF" tipo="Auditoria" conteudo={() => htmlAuditoria(audit, rep)} titulo={`Auditoria · ${audit.school}`} subtitulo={`${dataAud(audit)} · Época ${epocaAud(audit) || "—"}`} nome={`Auditoria ${audit.school} ${audit.date || isoDe(new Date())}`} />
             <button title="Eliminar auditoria" onClick={() => onRemoveAudit(audit.id)} style={iconBtnStyle}>
               <Trash2 size={16} color={COLORS.danger} />
             </button>
@@ -23615,7 +23711,7 @@ function DocumentosPage({ dados, onGuardar, notificar }) {
 }
 
 // Botão "Foto": imagem do balanço que está à vista (o elemento de alvo), com cabeçalho e data.
-function BotaoFoto({ alvo, titulo, subtitulo, nome, vertical, rotulo }) {
+function BotaoFoto({ alvo, titulo, subtitulo, nome, vertical, rotulo, conteudo, tipo }) {
   const [aTirar, setATirar] = useState(false);
   return (
     <button
@@ -23626,7 +23722,7 @@ function BotaoFoto({ alvo, titulo, subtitulo, nome, vertical, rotulo }) {
       onClick={() => {
         setATirar(true);
         try {
-          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, vertical, logo: LOGO_BRANCO });
+          imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, vertical, logo: LOGO_BRANCO, html: conteudo ? conteudo() : "", tipo });
         } finally {
           setTimeout(() => setATirar(false), 800);
         }

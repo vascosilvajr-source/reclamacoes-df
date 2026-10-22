@@ -42,8 +42,8 @@ export async function tirarFoto(no, { titulo, subtitulo, fundo = "#ffffff", tint
 // PDF do balanço: copia o que está à vista para uma folha própria e abre a impressão
 // ("Guardar como PDF"). Margem zero na folha (o browser deixa de imprimir data e endereço);
 // a moldura (faixa azul, título e rodapé em todas as páginas) é feita aqui. O texto fica nítido.
-export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", vertical = false, logo = "" }) {
-  if (!no) return;
+export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", vertical = false, logo = "", html = "", tipo = "Balanço" }) {
+  if (!no && !html) return;
   const AZUL = "#0B2A5B";
   const AZUL2 = "#1D4F9A";
   const TINTA = "#0F1B2D";
@@ -52,14 +52,15 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
   const pagina = vertical ? 794 : 1123; // largura A4 em px (96 dpi)
   const margem = 40;
   const util = pagina - margem * 2;
-  const largura = Math.max(no.scrollWidth, no.offsetWidth, 600);
+  // Com html próprio (ex.: auditorias) o conteúdo já é feito para papel: sem cópia do ecrã nem escala.
+  const largura = html ? util : Math.max(no.scrollWidth, no.offsetWidth, 600);
   const escala = Math.min(1, util / largura);
   const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
   const txt = (t) => String(t || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   const folha = document.createElement("div");
   folha.id = "folhaBalanco";
-  folha.style.cssText = `background:#fff;color:${TINTA};width:${pagina}px;font-family:${getComputedStyle(no).fontFamily};`;
+  folha.style.cssText = `background:#fff;color:${TINTA};width:${pagina}px;font-family:${no ? getComputedStyle(no).fontFamily : "system-ui, sans-serif"};`;
   folha.innerHTML = `
     <table class="fbPag">
       <thead><tr><td><div class="fbEspaco"></div></td></tr></thead>
@@ -68,7 +69,7 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
         <div class="fbFaixa">
           ${logo ? `<span class="fbLogo" style="-webkit-mask-image:url(${logo});mask-image:url(${logo})"></span>` : ""}
           <div class="fbMarca">FC Porto · Dragon Force<div>Gestão da Qualidade</div></div>
-          <div class="fbTipo">Balanço</div>
+          <div class="fbTipo">${txt(tipo)}</div>
         </div>
         <div class="fbCapa">
           <h1>${txt(titulo)}</h1>
@@ -79,24 +80,30 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
     </table>`;
   const caixa = folha.querySelector(".fbConteudo");
   caixa.style.cssText = `zoom:${escala};width:${largura}px;`;
-  const copia = no.cloneNode(true);
-  // Os menus e campos passam a texto (a cópia não guarda o valor escolhido).
-  const origSel = no.querySelectorAll("select, input, textarea");
-  copia.querySelectorAll("select, input, textarea").forEach((el, i) => {
-    const o = origSel[i];
-    const v = o ? (o.tagName === "SELECT" ? (o.options[o.selectedIndex] || {}).text || "" : o.type === "checkbox" || o.type === "radio" ? "" : o.value) : "";
-    if (!v) return el.remove();
-    const span = document.createElement("span");
-    span.textContent = v;
-    span.className = "fbCampo";
-    el.replaceWith(span);
-  });
-  copia.querySelectorAll(".semFoto").forEach((el) => el.remove());
-  copia.querySelectorAll('[style*="overflow"]').forEach((el) => {
-    el.style.overflow = "visible";
-    el.style.maxHeight = "none";
-  });
-  caixa.appendChild(copia);
+  if (html) {
+    caixa.style.cssText = `width:${util}px;`;
+    caixa.innerHTML = html;
+  }
+  const copia = html ? null : no.cloneNode(true);
+  if (copia) {
+    // Os menus e campos passam a texto (a cópia não guarda o valor escolhido).
+    const origSel = no.querySelectorAll("select, input, textarea");
+    copia.querySelectorAll("select, input, textarea").forEach((el, i) => {
+      const o = origSel[i];
+      const v = o ? (o.tagName === "SELECT" ? (o.options[o.selectedIndex] || {}).text || "" : o.type === "checkbox" || o.type === "radio" ? "" : o.value) : "";
+      if (!v) return el.remove();
+      const span = document.createElement("span");
+      span.textContent = v;
+      span.className = "fbCampo";
+      el.replaceWith(span);
+    });
+    copia.querySelectorAll(".semFoto").forEach((el) => el.remove());
+    copia.querySelectorAll('[style*="overflow"]').forEach((el) => {
+      el.style.overflow = "visible";
+      el.style.maxHeight = "none";
+    });
+    caixa.appendChild(copia);
+  }
 
   const estilo = document.createElement("style");
   estilo.textContent = `
