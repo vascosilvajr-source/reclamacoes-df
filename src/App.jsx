@@ -2123,7 +2123,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
       }));
       const { error } = await supabase.from("pedidos_operacionais").insert(linhas);
       if (error) throw error;
-      notificar && notificar("Pedido feito. O agente envia o e-mail na próxima hora.", "ok", 7000);
+      notificar && notificar("Pedido feito. O e-mail sai nos próximos 10 minutos.", "ok", 7000);
       setResumo("");
       await carregar();
     } catch (e) {
@@ -2174,7 +2174,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
                     {p.respostas.nota ? <span style={{ color: COLORS.ink2 }}> · {p.respostas.nota}</span> : null}
                   </>
                 ) : !p.enviado_em ? (
-                  <span style={{ color: COLORS.slate }}>a enviar na próxima hora</span>
+                  <span style={{ color: COLORS.slate }}>a enviar nos próximos 10 minutos</span>
                 ) : p.expira < agora ? (
                   <span style={{ color: COLORS.slate }}>expirou sem resposta</span>
                 ) : (
@@ -7054,7 +7054,16 @@ function PainelEmailsEscolas({ op, escolas }) {
   const [envio, setEnvio] = useState(null);
   const [aAplicar, setAAplicar] = useState(null);
   const [verTodos, setVerTodos] = useState(false);
+  const [fila, setFila] = useState(null);
   const carregar = useCallback(async () => {
+    // Fila de e-mails (só tipo, escola e estado): o que ainda não saiu e o que falhou.
+    try {
+      const desde = new Date(Date.now() - 14 * 86400000).toISOString();
+      const { data, error } = await supabase.from("emails_fila").select("id,tipo,escola,criado,enviado_em,tentativas,erro,proxima").gte("criado", desde).order("id", { ascending: false }).limit(300);
+      setFila(error ? null : data || []);
+    } catch (e) {
+      setFila(null);
+    }
     try {
       const { data } = await supabase.from("pedidos_operacionais").select("*").order("criado", { ascending: false }).limit(80);
       setPedidos(data || []);
@@ -7104,7 +7113,7 @@ function PainelEmailsEscolas({ op, escolas }) {
           Contactos das escolas
         </button>
         {pendente ? (
-          <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai na próxima hora</span>
+          <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai nos próximos 10 minutos</span>
         ) : (
           <button onClick={op.onPedirEnvio} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
             Enviar agora
@@ -7115,6 +7124,25 @@ function PainelEmailsEscolas({ op, escolas }) {
         À segunda-feira, às escolas com situações: experiências com mais de 2 semanas por decidir e turmas do plano sem alunos. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
         {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
       </div>
+      {fila && fila.some((f) => !f.enviado_em) && (() => {
+        const porEnviar = fila.filter((f) => !f.enviado_em);
+        const desistidos = porEnviar.filter((f) => f.tentativas >= 6);
+        const comErro = porEnviar.filter((f) => f.erro && f.tentativas < 6);
+        const tipoNome = { operacional: "operacionais", coordenador: "coordenador técnico", geral: "coordenador geral", eficacia: "avaliação de eficácia" };
+        return (
+          <div style={{ border: `1px solid ${desistidos.length ? COLORS.warn : COLORS.rule}`, borderRadius: 10, padding: "9px 12px", marginBottom: 10, fontSize: 12.5, lineHeight: 1.55 }}>
+            <strong>{porEnviar.length - desistidos.length}</strong> e-mails na fila
+            {comErro.length > 0 && <> · {comErro.length} voltam a ser tentados (quota diária do Gmail ou erro)</>}
+            {desistidos.length > 0 && <strong style={{ color: COLORS.warn }}> · {desistidos.length} falharam 6 vezes e não vão sair</strong>}
+            {[...desistidos, ...comErro].slice(0, 8).map((f) => (
+              <div key={f.id} style={{ color: COLORS.slate, fontSize: 12 }}>
+                {tipoNome[f.tipo] || f.tipo}
+                {f.escola ? ` · ${f.escola}` : ""} · {f.erro}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Códigos dos alunos para confirmar</div>
@@ -28454,7 +28482,7 @@ function AppPrincipal({ onSair }) {
               onAbrirContactos: () => setContactosAbertos(true),
               onPedirEnvio: () => {
                 persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString() } });
-                notificar("Pedido feito. O agente envia os e-mails na próxima hora.", "ok", 7000);
+                notificar("Pedido feito. Os e-mails saem nos próximos 10 minutos.", "ok", 7000);
               },
               onAplicarIds: aplicarIdsOperacional,
               onMotivo: motivoExperiencia,

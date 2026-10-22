@@ -2,7 +2,7 @@
 -- E-mails aos operacionais, ao coordenador técnico e ao coordenador geral (Dragon Force)
 -- + pedidos de avaliação de eficácia de reclamações
 -- Colar tudo no Supabase → SQL Editor → Run. Pode correr-se mais de uma vez.
--- Não apaga nem altera dados existentes: só acrescenta uma tabela e funções.
+-- Não apaga nem altera dados existentes: só acrescenta tabelas e funções.
 -- =====================================================================
 
 -- 1. Pedidos enviados às escolas (um por escola e por envio).
@@ -28,6 +28,27 @@ create policy "app autenticada atualiza pedidos" on public.pedidos_operacionais 
 -- A app (com conta) cria os pedidos de avaliação de eficácia; o agente envia-os na hora seguinte.
 drop policy if exists "app autenticada cria pedidos" on public.pedidos_operacionais;
 create policy "app autenticada cria pedidos" on public.pedidos_operacionais for insert to authenticated with check (true);
+
+-- 1b. Fila de e-mails: o Supabase prepara, o agente do Google envia e confirma cada um.
+--     Um envio que falhe (ex.: limite diário do Gmail) fica na fila e volta a ser tentado.
+create table if not exists public.emails_fila (
+  id bigserial primary key,
+  criado timestamptz not null default now(),
+  tipo text not null,                 -- operacional | coordenador | geral | eficacia
+  escola text,
+  emails jsonb not null default '[]'::jsonb,
+  responder text,
+  dados jsonb not null default '{}'::jsonb,
+  tentativas int not null default 0,
+  proxima timestamptz not null default now(),
+  reservado_em timestamptz,
+  enviado_em timestamptz,
+  erro text
+);
+alter table public.emails_fila enable row level security;
+drop policy if exists "app autenticada vê fila" on public.emails_fila;
+create policy "app autenticada vê fila" on public.emails_fila for select to authenticated using (true);
+create index if not exists emails_fila_pendentes on public.emails_fila (id) where enviado_em is null;
 
 -- 2. Ajudas internas (esquema privado, não exposto).
 create or replace function privado.emails_validos(v jsonb) returns jsonb language sql immutable as $$
@@ -299,7 +320,15 @@ begin
                                                 'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado));
   insert into app_storage (key, value, updated_at) values ('reclamacoes:operacionais-envio', v_env, now())
   on conflict (key) do update set value = excluded.value, updated_at = now();
-  return jsonb_build_object('enviar', true, 'operacionais', v_ops, 'coordenadores', v_coords, 'geral', v_geral,
+  -- Tudo vai para a fila; o agente envia e confirma. As listas voltam vazias para um agente antigo não enviar em duplicado.
+  insert into emails_fila (tipo, escola, emails, responder, dados)
+  select 'operacional', o->>'escola', o->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, o from jsonb_array_elements(v_ops) o
+  union all
+  select 'coordenador', c->>'escola', c->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, c from jsonb_array_elements(v_coords) c
+  union all
+  select 'geral', null, v_geral->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, v_geral where v_geral is not null;
+  return jsonb_build_object('enviar', true, 'fila', jsonb_array_length(v_ops) + jsonb_array_length(v_coords) + case when v_geral is null then 0 else 1 end,
+                            'operacionais', '[]'::jsonb, 'coordenadores', '[]'::jsonb, 'geral', null,
                             'responderPara', privado.emails_validos(v_opc->'emailResponderOperacionais'));
 end $$;
 revoke all on function public.op_preparar(text) from public;
@@ -437,22 +466,74 @@ grant execute on function public.op_responder(text, jsonb) to anon, authenticate
 --    que ainda não foram enviados (um por papel: operacional e coordenador) e marca-os como enviados.
 create or replace function public.op_eficacia_pendentes(p_token text)
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
-declare v_res jsonb; v_opc jsonb;
+declare v_res jsonb; v_opc jsonb; v_n int;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
   select value into v_opc from app_storage where key = 'reclamacoes:opcoes';
+  -- Os pedidos passam para a fila de e-mails (o agente envia e confirma); a lista volta vazia.
   with p as (
     update pedidos_operacionais set enviado_em = now()
      where enviado_em is null and itens->>'tipo' = 'eficacia' and expira > now()
        and jsonb_array_length(privado.emails_validos(emails)) > 0
     returning token, escola, emails, itens)
-  select coalesce(jsonb_agg(jsonb_build_object('token', token, 'escola', escola, 'emails', privado.emails_validos(emails),
-           'papel', itens->>'papel', 'numero', itens->>'numero', 'tema', itens->>'tema', 'recebida', itens->>'recebida',
-           'concluida', itens->>'concluida', 'resumo', itens->>'resumo')), '[]'::jsonb)
-    into v_res from p;
-  return jsonb_build_object('pedidos', v_res, 'responderPara', privado.emails_validos(coalesce(v_opc, '{}'::jsonb)->'emailResponderOperacionais'));
+  insert into emails_fila (tipo, escola, emails, responder, dados)
+  select 'eficacia', escola, privado.emails_validos(emails), privado.emails_validos(coalesce(v_opc, '{}'::jsonb)->'emailResponderOperacionais')->>0,
+         jsonb_build_object('token', token, 'escola', escola, 'papel', itens->>'papel', 'numero', itens->>'numero', 'tema', itens->>'tema',
+           'recebida', itens->>'recebida', 'concluida', itens->>'concluida', 'resumo', itens->>'resumo')
+    from p;
+  get diagnostics v_n = row_count;
+  return jsonb_build_object('pedidos', '[]'::jsonb, 'fila', v_n, 'responderPara', privado.emails_validos(coalesce(v_opc, '{}'::jsonb)->'emailResponderOperacionais'));
 end $$;
 revoke all on function public.op_eficacia_pendentes(text) from public;
 grant execute on function public.op_eficacia_pendentes(text) to anon, authenticated;
+
+
+-- 7. Fila de e-mails: o agente pede os próximos (até p_max), envia-os e confirma um a um.
+--    Cada pedido fica reservado 20 minutos; se não for confirmado, volta a estar disponível.
+create or replace function public.op_fila_proximos(p_token text, p_max int default 40)
+returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
+declare v_res jsonb;
+begin
+  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+    raise exception 'token inválido';
+  end if;
+  with c as (
+    select id from emails_fila
+     where enviado_em is null and tentativas < 6 and proxima <= now()
+       and (reservado_em is null or reservado_em < now() - interval '20 minutes')
+     order by id limit greatest(1, least(coalesce(p_max, 40), 100))
+     for update skip locked),
+  u as (update emails_fila f set reservado_em = now() from c where f.id = c.id
+        returning f.id, f.tipo, f.escola, f.emails, f.responder, f.dados, f.tentativas)
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'tipo', tipo, 'escola', escola, 'emails', emails, 'responder', responder,
+           'dados', dados, 'tentativas', tentativas) order by id), '[]'::jsonb) into v_res from u;
+  return jsonb_build_object('itens', v_res,
+    'pendentes', (select count(*) from emails_fila where enviado_em is null and tentativas < 6),
+    'desistidos', (select count(*) from emails_fila where enviado_em is null and tentativas >= 6 and criado > now() - interval '14 days'));
+end $$;
+revoke all on function public.op_fila_proximos(text, int) from public;
+grant execute on function public.op_fila_proximos(text, int) to anon, authenticated;
+
+-- p_ok = true: enviado. p_ok = false: volta a tentar mais tarde (30 min, 1 h, 1h30…), até 6 tentativas.
+-- p_adiar = true: não falhou, só não havia quota; volta a tentar daqui a 1 hora sem contar como tentativa.
+create or replace function public.op_fila_confirmar(p_token text, p_id bigint, p_ok boolean, p_erro text default null, p_adiar boolean default false)
+returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
+begin
+  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+    raise exception 'token inválido';
+  end if;
+  if p_ok then
+    update emails_fila set enviado_em = now(), reservado_em = null, erro = null where id = p_id;
+  elsif p_adiar then
+    update emails_fila set reservado_em = null, proxima = now() + interval '1 hour', erro = left(coalesce(p_erro, 'sem quota'), 500) where id = p_id;
+  else
+    update emails_fila set reservado_em = null, tentativas = tentativas + 1,
+           proxima = now() + (interval '30 minutes' * (tentativas + 1)), erro = left(coalesce(p_erro, ''), 500)
+     where id = p_id;
+  end if;
+  return jsonb_build_object('ok', true);
+end $$;
+revoke all on function public.op_fila_confirmar(text, bigint, boolean, text, boolean) from public;
+grant execute on function public.op_fila_confirmar(text, bigint, boolean, text, boolean) to anon, authenticated;
