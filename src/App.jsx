@@ -4797,15 +4797,33 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onI
     let novasVisitas = 0;
     let juntas = 0;
     let repetidas = 0;
+    let atualizadas = 0;
     lista.forEach((vis) => {
       const existe = audits.find((a) => a.school === vis.escola && (vis.data ? a.date === vis.data : !a.date && epocaAud(a) === vis.epoca));
       if (existe) {
         const ja = new Set((existe.findings || []).map(assinatura));
         const antes = vis.findings.length;
-        vis.findings = vis.findings.filter((f) => !ja.has(assinatura(f)));
-        repetidas += antes - vis.findings.length;
+        // Constatações de uma importação anterior sem descrição (tinham só o assunto): preenche-se a descrição em vez de duplicar.
+        const sig2 = (f) => [f.classification, normChave(f.category), f.resolvidaEm || "", normChave(f.responsavel || "")].join("|");
+        const semDesc = (existe.findings || []).filter((x) => x.origem === "importacao" && (!x.description || x.description === x.category || x.description === "(sem assunto)"));
+        const usadas = new Set();
+        vis.atualizar = [];
+        vis.findings = vis.findings.filter((f) => {
+          if (ja.has(assinatura(f))) return false;
+          if (f.description && f.description !== f.category && f.description !== "(sem assunto)") {
+            const alvo = semDesc.find((x) => !usadas.has(x.id) && sig2(x) === sig2(f));
+            if (alvo) {
+              usadas.add(alvo.id);
+              vis.atualizar.push({ id: alvo.id, description: f.description });
+              return false;
+            }
+          }
+          return true;
+        });
+        atualizadas += vis.atualizar.length;
+        repetidas += antes - vis.findings.length - vis.atualizar.length;
         vis.existente = existe.id;
-        if (vis.findings.length) juntas++;
+        if (vis.findings.length || vis.atualizar.length) juntas++;
       } else novasVisitas++;
     });
     const total = lista.reduce((n, x) => n + x.findings.length, 0);
@@ -4816,7 +4834,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onI
       porEpoca[ep].visitas++;
       porEpoca[ep].constat += x.findings.length;
     });
-    return { lista, problemas, novasVisitas, juntas, repetidas, total, porEpoca };
+    return { lista, problemas, novasVisitas, juntas, repetidas, atualizadas, total, porEpoca };
   }, [linhas, iCab, mapa, mapaEscola, mapaEficacia, audits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const faltam = COLUNAS_AUDIT_IMP.filter((c) => !c.opcional && mapa[c.chave] === undefined && !(c.chave === "data" && mapa.epoca !== undefined));
@@ -4825,12 +4843,14 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onI
   const importar = () => {
     const novas = [];
     const acrescentos = {};
+    const atualizacoes = {};
     resultado.lista.forEach((vis, i) => {
+      if (vis.existente && vis.atualizar?.length) atualizacoes[vis.existente] = vis.atualizar;
       if (!vis.findings.length) return;
       if (vis.existente) acrescentos[vis.existente] = [...(acrescentos[vis.existente] || []), ...vis.findings];
       else novas.push({ id: `a_imp_${Date.now().toString(36)}_${i}`, school: vis.escola, ambito: vis.ambito || null, date: vis.data, epoca: vis.epoca || null, findings: vis.findings, origem: "importacao" });
     });
-    onImportar(novas, acrescentos, novasEscolas);
+    onImportar(novas, acrescentos, novasEscolas, atualizacoes);
   };
 
   return (
@@ -5051,6 +5071,7 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onI
                     {resultado.novasVisitas} visitas novas
                     {resultado.lista.some((x) => x.ambito) ? ` (das quais ${resultado.lista.filter((x) => x.ambito).length} de eventos ou SGQ, fora das escolas)` : ""}
                     {resultado.juntas ? ` · ${resultado.juntas} visitas que já existiam recebem constatações` : ""}
+                    {resultado.atualizadas ? ` · ${resultado.atualizadas} já existentes recebem a descrição` : ""}
                     {resultado.repetidas ? ` · ${resultado.repetidas} repetidas ignoradas` : ""}
                     <br />
                     {Object.entries(resultado.porEpoca)
@@ -5078,8 +5099,8 @@ function ImportarAuditorias({ audits, escolas, categorias, areas, mapaAreas, onI
               <button onClick={onFechar} style={{ ...secondaryBtnStyle, flex: 1 }}>
                 Cancelar
               </button>
-              <button onClick={importar} disabled={faltam.length > 0 || !resultado || !resultado.total} style={{ ...primaryBtnStyle, flex: 2, opacity: faltam.length > 0 || !resultado || !resultado.total ? 0.5 : 1 }}>
-                Importar {resultado && resultado.total ? `${resultado.total} constatações` : ""}
+              <button onClick={importar} disabled={faltam.length > 0 || !resultado || !(resultado.total || resultado.atualizadas)} style={{ ...primaryBtnStyle, flex: 2, opacity: faltam.length > 0 || !resultado || !(resultado.total || resultado.atualizadas) ? 0.5 : 1 }}>
+                Importar {resultado && resultado.total ? `${resultado.total} constatações` : resultado && resultado.atualizadas ? `(preencher ${resultado.atualizadas} descrições)` : ""}
               </button>
             </div>
           </>
@@ -28271,9 +28292,16 @@ function AppPrincipal({ onSair }) {
           areas={options.auditAreas || []}
           mapaAreas={options.mapaAreasAud || {}}
           onFechar={() => setImportarAud(false)}
-          onImportar={(novas, acrescentos, novasEscolas) => {
+          onImportar={(novas, acrescentos, novasEscolas, atualizacoes = {}) => {
             const n = novas.reduce((t, a) => t + a.findings.length, 0) + Object.values(acrescentos).reduce((t, l) => t + l.length, 0);
-            persistAudits([...audits.map((a) => (acrescentos[a.id] ? { ...a, findings: [...(a.findings || []), ...acrescentos[a.id]] } : a)), ...novas]);
+            persistAudits([
+              ...audits.map((a) => {
+                if (!acrescentos[a.id] && !atualizacoes[a.id]) return a;
+                const desc = Object.fromEntries((atualizacoes[a.id] || []).map((u) => [u.id, u.description]));
+                return { ...a, findings: [...(a.findings || []).map((f) => (desc[f.id] ? { ...f, description: desc[f.id] } : f)), ...(acrescentos[a.id] || [])] };
+              }),
+              ...novas,
+            ]);
             // Os assuntos do Excel passam a fazer parte da lista de categorias.
             const assuntos = [...new Set([...novas.flatMap((a) => a.findings), ...Object.values(acrescentos).flat()].map((f) => f.category).filter(Boolean))];
             persistOptions({
@@ -28282,7 +28310,8 @@ function AppPrincipal({ onSair }) {
               auditCategories: [...(options.auditCategories || []), ...assuntos.filter((x) => !(options.auditCategories || []).includes(x))],
             });
             setImportarAud(false);
-            notificar(`${n} constatações importadas em ${novas.length} visitas novas${Object.keys(acrescentos).length ? ` e ${Object.keys(acrescentos).length} já existentes` : ""}.`);
+            const nAtual = Object.values(atualizacoes).reduce((t, l) => t + l.length, 0);
+            notificar(`${n} constatações importadas em ${novas.length} visitas novas${Object.keys(acrescentos).length ? ` e ${Object.keys(acrescentos).length} já existentes` : ""}${nAtual ? ` · ${nAtual} descrições preenchidas` : ""}.`);
           }}
         />
       )}
