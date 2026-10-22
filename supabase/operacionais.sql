@@ -19,6 +19,9 @@ create table if not exists public.pedidos_operacionais (
   ids_aplicados_em timestamptz
 );
 alter table public.pedidos_operacionais add column if not exists enviado_em timestamptz;
+-- Quando o link foi aberto pela primeira vez e quando saiu o lembrete (um só, no dia seguinte).
+alter table public.pedidos_operacionais add column if not exists aberto_em timestamptz;
+alter table public.pedidos_operacionais add column if not exists lembrete_em timestamptz;
 alter table public.pedidos_operacionais enable row level security;
 -- Só quem entra na app (com conta) vê e atualiza os pedidos. O link do e-mail não dá acesso à tabela.
 drop policy if exists "app autenticada vê pedidos" on public.pedidos_operacionais;
@@ -336,11 +339,17 @@ grant execute on function public.op_preparar(text) to anon, authenticated;
 
 -- 4. A janela do link: devolve só o pedido daquela escola (códigos, turmas e datas; nunca nomes).
 create or replace function public.op_pedido(p_token text)
-returns jsonb language sql security definer set search_path to 'public' as $$
+returns jsonb language plpgsql security definer set search_path to 'public' as $$
+declare v jsonb;
+begin
+  if length(coalesce(p_token, '')) < 32 then return null; end if;
+  -- Primeira abertura do link: deixa de precisar de lembrete.
+  update pedidos_operacionais set aberto_em = now() where token = p_token and aberto_em is null;
   select jsonb_build_object('escola', p.escola, 'itens', p.itens, 'respostas', p.respostas, 'respondido_em', p.respondido_em,
     'expira', p.expira, 'expirado', p.expira < now())
-  from pedidos_operacionais p where p.token = p_token and length(coalesce(p_token,'')) >= 32;
-$$;
+    into v from pedidos_operacionais p where p.token = p_token;
+  return v;
+end $$;
 revoke all on function public.op_pedido(text) from public;
 grant execute on function public.op_pedido(text) to anon, authenticated;
 
@@ -490,6 +499,33 @@ revoke all on function public.op_eficacia_pendentes(text) from public;
 grant execute on function public.op_eficacia_pendentes(text) to anon, authenticated;
 
 
+-- 6b. Lembretes: e-mails com link (operacionais e avaliação de eficácia) enviados há mais de 24 horas
+--     cujo link ainda não foi aberto nem respondido recebem UM lembrete, em dia útil entre as 8h e as 19h.
+--     O e-mail genérico continua a sair só à segunda-feira.
+create or replace function privado.enfileirar_lembretes() returns int language plpgsql as $$
+declare v_lx timestamp := now() at time zone 'Europe/Lisbon'; v_n int;
+begin
+  if extract(isodow from v_lx) > 5 or extract(hour from v_lx) < 8 or extract(hour from v_lx) >= 19 then return 0; end if;
+  with alvo as (
+    select distinct on (p.token) f.tipo, f.escola, f.emails, f.responder, f.dados, p.token
+      from emails_fila f
+      join pedidos_operacionais p on p.token = f.dados->>'token'
+     where f.tipo in ('operacional', 'eficacia')
+       and f.enviado_em is not null
+       and f.enviado_em < now() - interval '24 hours'
+       and f.enviado_em > now() - interval '7 days'
+       and coalesce((f.dados->>'lembrete')::boolean, false) = false
+       and p.aberto_em is null and p.respondido_em is null and p.lembrete_em is null and p.expira > now()
+     order by p.token, f.id
+  ), marca as (
+    update pedidos_operacionais p set lembrete_em = now() from alvo a where p.token = a.token returning p.token
+  )
+  insert into emails_fila (tipo, escola, emails, responder, dados)
+  select a.tipo, a.escola, a.emails, a.responder, a.dados || '{"lembrete": true}'::jsonb from alvo a join marca m on m.token = a.token;
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+
 -- 7. Fila de e-mails: o agente pede os próximos (até p_max), envia-os e confirma um a um.
 --    Cada pedido fica reservado 20 minutos; se não for confirmado, volta a estar disponível.
 create or replace function public.op_fila_proximos(p_token text, p_max int default 40)
@@ -499,6 +535,7 @@ begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
+  perform privado.enfileirar_lembretes();
   with c as (
     select id from emails_fila
      where enviado_em is null and tentativas < 6 and proxima <= now()

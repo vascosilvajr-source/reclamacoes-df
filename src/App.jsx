@@ -7203,7 +7203,14 @@ function PainelEmailsEscolas({ op, escolas }) {
                         {nt ? `${rt} de ${nt} tratadas` : "—"}
                         {(p.respostas?.turmasVazias || []).length > 0 && <div style={{ fontSize: 11.5, color: COLORS.slate }}>sem alunos por agora: {p.respostas.turmasVazias.join(", ")}</div>}
                       </td>
-                      <td style={{ ...tdStyle, color: p.respondido_em ? COLORS.ok : expirado ? COLORS.slate : COLORS.warn, fontWeight: 600, fontSize: 12.5 }}>{p.respondido_em ? `Respondido ${quando(p.respondido_em)}` : expirado ? "Expirou sem resposta" : "À espera"}</td>
+                      <td style={{ ...tdStyle, color: p.respondido_em ? COLORS.ok : expirado ? COLORS.slate : COLORS.warn, fontWeight: 600, fontSize: 12.5 }}>
+                        {p.respondido_em ? `Respondido ${quando(p.respondido_em)}` : expirado ? "Expirou sem resposta" : p.aberto_em ? "Abriu, sem resposta" : "Ainda não abriu o link"}
+                        {!p.respondido_em && (p.aberto_em || p.lembrete_em) && (
+                          <div style={{ fontSize: 11.5, fontWeight: 400, color: COLORS.slate }}>
+                            {[p.aberto_em && `aberto ${quando(p.aberto_em)}`, p.lembrete_em && `lembrete ${quando(p.lembrete_em)}`].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
