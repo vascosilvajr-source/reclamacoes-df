@@ -39,7 +39,7 @@ create policy "app autenticada cria pedidos" on public.pedidos_operacionais for 
 create table if not exists public.emails_fila (
   id bigserial primary key,
   criado timestamptz not null default now(),
-  tipo text not null,                 -- operacional | coordenador | geral | eficacia
+  tipo text not null,                 -- operacional | coordenador | geral | eficacia | oportunidade
   escola text,
   emails jsonb not null default '[]'::jsonb,
   responder text,
@@ -591,3 +591,22 @@ begin
 end $$;
 revoke all on function public.op_fila_confirmar(text, bigint, boolean, text, boolean) from public;
 grant execute on function public.op_fila_confirmar(text, bigint, boolean, text, boolean) to anon, authenticated;
+
+-- 9. Oportunidades do radar: a app (com conta) põe o e-mail na fila e o agente envia-o com o mesmo aspeto dos outros.
+create or replace function public.op_enviar_oportunidade(p_emails jsonb, p_dados jsonb)
+returns bigint language plpgsql security definer set search_path to 'public','privado' as $$
+declare v_em jsonb := privado.emails_validos(p_emails); v_opc jsonb; v_id bigint;
+begin
+  if auth.uid() is null then raise exception 'sem sessão'; end if;
+  if jsonb_array_length(v_em) = 0 then raise exception 'sem e-mails válidos'; end if;
+  if jsonb_array_length(v_em) > 10 or length(p_dados::text) > 20000 then raise exception 'pedido demasiado grande'; end if;
+  select value into v_opc from app_storage where key = 'reclamacoes:opcoes';
+  insert into emails_fila (tipo, escola, emails, responder, dados)
+  values ('oportunidade', null, v_em,
+          privado.emails_validos(coalesce(v_opc, '{}'::jsonb)->'emailResponderOperacionais')->>0,
+          coalesce(p_dados, '{}'::jsonb))
+  returning id into v_id;
+  return v_id;
+end $$;
+revoke all on function public.op_enviar_oportunidade(jsonb, jsonb) from public, anon;
+grant execute on function public.op_enviar_oportunidade(jsonb, jsonb) to authenticated;

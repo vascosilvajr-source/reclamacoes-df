@@ -25324,26 +25324,6 @@ const emailsDe = (txt) =>
     .split(/[\s,;]+/)
     .map((x) => x.trim())
     .filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
-function mailtoDepartamento(emails, nomeDep, r) {
-  const linhas = [
-    "Olá,",
-    "",
-    nomeDep === "Direção executiva" ? "No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão de caráter estratégico:" : `No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área de ${nomeDep.toLowerCase()}:`,
-    "",
-    `«${r.titulo}»`,
-    r.resumo ? `\n${r.resumo}` : "",
-    r.relevancia ? `\nPara a Dragon Force: ${r.relevancia}` : "",
-    r.acao ? `\nPrimeiro passo sugerido: ${r.acao}` : "",
-    (r.fontes || []).length ? `\nFonte: ${(r.fontes || []).map((f) => `${f.titulo}${f.url ? ` (${f.url})` : ""}`).join("; ")}` : "",
-    "",
-    "Gostava de saber:",
-    "1. Já fazemos alguma coisa disto? Se sim, como é feito?",
-    "2. Se não, há interesse em implementar? E como o faríamos?",
-    "",
-    "Obrigado.",
-  ];
-  return `mailto:${emails.map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(`Oportunidade · ${r.titulo}`)}&body=${encodeURIComponent(linhas.join("\n"))}`;
-}
 
 // E-mails dos departamentos, definidos uma vez no topo do radar.
 function ContactosDepartamentos({ contactos, onGuardar }) {
@@ -25386,7 +25366,22 @@ function ContactosDepartamentos({ contactos, onGuardar }) {
   );
 }
 
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, contactos = {}, enviados = {}, onEnviado, onAbrirContactos }) {
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, contactos = {}, enviados = {}, onEnviado, onAbrirContactos, notificar }) {
+  const [aEnviarOp, setAEnviarOp] = useState(null);
+  const enviarOportunidade = async (r, dep, meta, emails) => {
+    setAEnviarOp(r.id);
+    try {
+      const dados = { departamento: meta.nome, titulo: r.titulo, resumo: r.resumo || "", relevancia: r.relevancia || "", acao: r.acao || "", fontes: (r.fontes || []).map((f) => ({ titulo: f.titulo || "", url: f.url || "" })) };
+      const { error } = await supabase.rpc("op_enviar_oportunidade", { p_emails: emails, p_dados: dados });
+      if (error) throw error;
+      onEnviado(r.id, dep);
+      notificar && notificar(`E-mail para ${meta.nome.toLowerCase()} na fila. Sai em poucos minutos.`, "ok", 7000);
+    } catch (e) {
+      notificar && notificar("Não foi possível pôr o e-mail na fila. Confirma que o SQL novo foi corrido no Supabase.", "aviso", 9000);
+    } finally {
+      setAEnviarOp(null);
+    }
+  };
   const itens = (radar && radar.itens) || [];
   const [depEscolhido, setDepEscolhido] = useState({});
   // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
@@ -25534,13 +25529,14 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                             ))}
                           </select>
                           {meta && emails.length ? (
-                            <a
-                              href={mailtoDepartamento(emails, meta.nome, r)}
-                              onClick={() => onEnviado(r.id, dep)}
-                              style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+                            <button
+                              type="button"
+                              disabled={aEnviarOp === r.id}
+                              onClick={() => enviarOportunidade(r, dep, meta, emails)}
+                              style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, opacity: aEnviarOp === r.id ? 0.6 : 1 }}
                             >
-                              <Mail size={13} /> Enviar e-mail
-                            </a>
+                              <Mail size={13} /> {aEnviarOp === r.id ? "A enviar…" : env ? "Enviar outra vez" : "Enviar e-mail"}
+                            </button>
                           ) : (
                             <span style={{ fontSize: 12, color: COLORS.slate }}>
                               {meta ? (
@@ -25719,6 +25715,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       contactos={contactosDeps}
       enviados={{ ...Object.fromEntries(Object.entries(riscos.radarPsicologia?.enviados || {}).map(([id, data]) => [id, { data, dep: "psicologia" }])), ...(riscos.radarEnviados || {}) }}
       onAbrirContactos={() => setVerDeps(true)}
+      notificar={notificar}
       onEnviado={(id, dep) => onGuardar({ ...riscos, radarEnviados: { ...(riscos.radarEnviados || {}), [id]: { data: isoDe(new Date()), dep } } })}
       onDefinirFonte={(dominio, estado) => {
         const atual = { ...(riscos.radarFontesUtilizador || {}) };
