@@ -7124,6 +7124,37 @@ function PainelEmailsEscolas({ op, escolas }) {
         À segunda-feira, às escolas com situações: experiências com mais de 2 semanas por decidir e turmas do plano sem alunos. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
         {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
       </div>
+      {(() => {
+        // Controlo: não abriram o e-mail nem o lembrete (enviado há mais de 1 dia). Para ligar e confirmar se receberam.
+        const umDia = new Date(Date.now() - 86400000).toISOString();
+        const semAbrir = (pedidos || []).filter((p) => p.lembrete_em && p.lembrete_em < umDia && !p.aberto_em && !p.respondido_em && !p.contactado_em && p.expira > hojeISO);
+        if (!semAbrir.length) return null;
+        return (
+          <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Controlo de e-mails: {semAbrir.length} sem abrir o e-mail nem o lembrete</div>
+            <div style={{ fontSize: 12, color: COLORS.ink2 }}>Liga a confirmar se receberam (pode estar no lixo eletrónico) e marca quando estiver tratado.</div>
+            {semAbrir.map((p) => (
+              <div key={p.token} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5, borderTop: `1px solid ${COLORS.rule}`, paddingTop: 6 }}>
+                <div style={{ flex: "1 1 260px", minWidth: 0, lineHeight: 1.5 }}>
+                  <strong>{p.escola}</strong> · {p.itens?.tipo === "eficacia" ? `avaliação de eficácia da reclamação nº ${String(p.itens.numero || "").padStart(4, "0")} (${p.itens.papel === "coordenador" ? "coordenador" : "operacional"})` : "pedido semanal (experiências e turmas)"}
+                  <div style={{ color: COLORS.slate, fontSize: 12 }}>
+                    {(p.emails || []).join(", ") || "sem e-mail"} · enviado {quando(p.enviado_em || p.criado)} · lembrete {quando(p.lembrete_em)}
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    await supabase.from("pedidos_operacionais").update({ contactado_em: new Date().toISOString() }).eq("token", p.token);
+                    carregar();
+                  }}
+                  style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "4px 10px", fontSize: 12 }}
+                >
+                  Já contactei
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       {fila && fila.some((f) => !f.enviado_em) && (() => {
         const porEnviar = fila.filter((f) => !f.enviado_em);
         const desistidos = porEnviar.filter((f) => f.tentativas >= 6);
@@ -25345,11 +25376,9 @@ function ContactosDepartamentos({ contactos, onGuardar }) {
   );
 }
 
-function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, contactos = {}, enviados = {}, onContactos, onEnviado }) {
+function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnorar, pedidoPesquisa = null, onPedirPesquisa, fontesEscolhas = {}, onDefinirFonte, contactos = {}, enviados = {}, onEnviado, onAbrirContactos }) {
   const itens = (radar && radar.itens) || [];
-  const [verContactos, setVerContactos] = useState(false);
   const [depEscolhido, setDepEscolhido] = useState({});
-  const nContactos = DEPARTAMENTOS_RADAR.filter((d) => emailsDe(contactos[d.k]).length).length;
   // Pedido de nova pesquisa pendente: feito depois da última pesquisa do radar.
   const ultimaPesquisa = (radar && (radar.pesquisadoEm || (radar.atualizadoEm ? `${radar.atualizadoEm}T00:00:00` : ""))) || "";
   const aPesquisar = !!(pedidoPesquisa && pedidoPesquisa.em && String(pedidoPesquisa.em) > ultimaPesquisa);
@@ -25403,23 +25432,12 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
             <label style={{ fontSize: 12, color: COLORS.ink2, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
               <input type="checkbox" checked={verTodas} onChange={(e) => setVerTodas(e.target.checked)} /> Mostrar também as já tratadas
             </label>
-            {onContactos && (
-              <button onClick={() => setVerContactos((v) => !v)} aria-expanded={verContactos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <Mail size={12} /> {verContactos ? "Esconder e-mails" : `E-mails dos departamentos (${nContactos} de ${DEPARTAMENTOS_RADAR.length})`}
-              </button>
-            )}
             {onDefinirFonte && (
               <button onClick={() => setVerFontes((v) => !v)} aria-expanded={verFontes} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
                 {verFontes ? "Esconder fontes" : `Fontes do agente${nFontes ? ` (${nFontes})` : ""}`}
               </button>
             )}
           </div>
-          {verContactos && onContactos && (
-            <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, background: COLORS.paperSunken }}>
-              <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 10 }}>Para onde vão as perguntas sobre as sugestões. Cada sugestão propõe o departamento pelo tema; podes mudar antes de enviar.</div>
-              <ContactosDepartamentos contactos={contactos} onGuardar={onContactos} />
-            </div>
-          )}
           {verFontes && onDefinirFonte && (
             <div style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 12, padding: "10px 14px", marginBottom: 12, background: COLORS.paperSunken }}>
               <FontesDoAgente fontes={(radar && radar.fontes) || {}} escolhas={fontesEscolhas} onDefinir={onDefinirFonte} />
@@ -25490,7 +25508,7 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                         </button>
                       )}
                     </div>
-                    {onContactos && (() => {
+                    {onEnviado && (() => {
                       const dep = depEscolhido[r.id] !== undefined ? depEscolhido[r.id] : departamentoRadar(r);
                       const meta = DEPARTAMENTOS_RADAR.find((d) => d.k === dep);
                       const emails = emailsDe(contactos[dep]);
@@ -25518,9 +25536,11 @@ function RadarOportunidades({ radar, jaNaLista, ignorados, onAdicionar, onIgnora
                               {meta ? (
                                 <>
                                   Sem e-mail de {meta.nome.toLowerCase()}.{" "}
-                                  <button type="button" onClick={() => setVerContactos(true)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
-                                    Pôr em cima
-                                  </button>
+                                  {onAbrirContactos && (
+                                    <button type="button" onClick={onAbrirContactos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                                      Definir e-mails
+                                    </button>
+                                  )}
                                 </>
                               ) : (
                                 "Escolhe o departamento para enviar."
@@ -25563,6 +25583,7 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
   const [aGerar, setAGerar] = useState(false);
   const [verIgnorados, setVerIgnorados] = useState(false);
   const [importado, setImportado] = useState(null);
+  const [verDeps, setVerDeps] = useState(false);
 
   const ignorados = (riscos.ignorados || {})[epSel] || [];
   const deteccoes = deteccoesDe(epSel, itens, ignorados);
@@ -25675,6 +25696,8 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
 
   const radarNaLista = new Set(Object.values(riscos.epocas || {}).flatMap((e) => (e.itens || []).map((i) => i.radar).filter(Boolean)));
   const radarIgnorados = riscos.radarIgnorados || [];
+  const contactosDeps = { ...(riscos.radarPsicologia?.email ? { psicologia: riscos.radarPsicologia.email } : {}), ...(riscos.radarContactos || {}) };
+  const nDeps = DEPARTAMENTOS_RADAR.filter((d) => emailsDe(contactosDeps[d.k]).length).length;
   const painelRadar = (
     <RadarOportunidades
       radar={radar}
@@ -25683,9 +25706,9 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
       onIgnorar={(id, sim) => onGuardar({ ...riscos, radarIgnorados: sim ? [...new Set([...radarIgnorados, id])] : radarIgnorados.filter((x) => x !== id) })}
       pedidoPesquisa={riscos.radarPedidoPesquisa || null}
       fontesEscolhas={riscos.radarFontesUtilizador || {}}
-      contactos={{ ...(riscos.radarPsicologia?.email ? { psicologia: riscos.radarPsicologia.email } : {}), ...(riscos.radarContactos || {}) }}
+      contactos={contactosDeps}
       enviados={{ ...Object.fromEntries(Object.entries(riscos.radarPsicologia?.enviados || {}).map(([id, data]) => [id, { data, dep: "psicologia" }])), ...(riscos.radarEnviados || {}) }}
-      onContactos={(c) => onGuardar({ ...riscos, radarContactos: c })}
+      onAbrirContactos={() => setVerDeps(true)}
       onEnviado={(id, dep) => onGuardar({ ...riscos, radarEnviados: { ...(riscos.radarEnviados || {}), [id]: { data: isoDe(new Date()), dep } } })}
       onDefinirFonte={(dominio, estado) => {
         const atual = { ...(riscos.radarFontesUtilizador || {}) };
@@ -25786,6 +25809,30 @@ function RiscosPage({ riscos, onGuardar, deteccoesDe, notificar, ocorrencias = [
   );
   const botoes = (
     <>
+      <button className="press" onClick={() => setVerDeps(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <Mail size={14} /> E-mails dos departamentos{nDeps < DEPARTAMENTOS_RADAR.length ? ` (${nDeps} de ${DEPARTAMENTOS_RADAR.length})` : ""}
+      </button>
+      {verDeps && (
+        <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={() => setVerDeps(false)}>
+          <div className="sheet" style={{ width: "min(560px, 100%)", background: COLORS.paperRaised, borderRadius: 14, padding: "22px 22px 24px", border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: COLORS.navy }}>E-mails dos departamentos</h2>
+              <button onClick={() => setVerDeps(false)} style={iconBtnStyle} aria-label="Fechar">
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 14, lineHeight: 1.5 }}>Para onde vão as perguntas sobre as sugestões do radar. Cada sugestão propõe o departamento pelo tema e tem só o botão para enviar.</div>
+            <ContactosDepartamentos
+              contactos={contactosDeps}
+              onGuardar={(c) => {
+                onGuardar({ ...riscos, radarContactos: c });
+                setVerDeps(false);
+                notificar("E-mails dos departamentos guardados.", "ok");
+              }}
+            />
+          </div>
+        </div>
+      )}
       <label className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
         <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
         <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />

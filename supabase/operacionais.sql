@@ -22,6 +22,8 @@ alter table public.pedidos_operacionais add column if not exists enviado_em time
 -- Quando o link foi aberto pela primeira vez e quando saiu o lembrete (um só, no dia seguinte).
 alter table public.pedidos_operacionais add column if not exists aberto_em timestamptz;
 alter table public.pedidos_operacionais add column if not exists lembrete_em timestamptz;
+-- Quando foi contactada (por telefone) a escola que não abriu o e-mail nem o lembrete (marcado na app).
+alter table public.pedidos_operacionais add column if not exists contactado_em timestamptz;
 alter table public.pedidos_operacionais enable row level security;
 -- Só quem entra na app (com conta) vê e atualiza os pedidos. O link do e-mail não dá acesso à tabela.
 drop policy if exists "app autenticada vê pedidos" on public.pedidos_operacionais;
