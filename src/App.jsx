@@ -26776,7 +26776,70 @@ function AppPrincipal({ onSair }) {
           .appEcra, .appConteudo { height: auto !important; overflow: visible !important; display: block !important; }
           * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
+
+        /* ---- splash de arranque (enquanto os dados carregam) ---- */
+        @keyframes splashSai { from { opacity: 1; } to { opacity: 0; pointer-events: none; } }
+        @keyframes splashPulso { 0%, 100% { opacity: 0.6; transform: scale(0.97); } 50% { opacity: 1; transform: scale(1.03); } }
+        @keyframes splashChama { 0%, 100% { transform: scaleY(1) translateY(0); } 40% { transform: scaleY(1.08) translateY(-2px); } 70% { transform: scaleY(0.96) translateY(1px); } }
+        @keyframes splashTexto { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+        .splashOverlay {
+          position: fixed; inset: 0; z-index: 200;
+          background: #07142A;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+          font-family: 'Inter', system-ui, sans-serif;
+          transition: opacity 500ms ease;
+        }
+        .splashOverlay.sair { animation: splashSai 500ms ease forwards; }
+        .splashOverlay svg { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(245,166,35,0.4)); }
+        .splashChama { transform-origin: center bottom; animation: splashChama 2s ease-in-out infinite; }
+        .splashTexto { font-size: 12px; color: #8FA3BF; letter-spacing: 0.14em; text-transform: uppercase; animation: splashTexto 2s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .splashOverlay svg, .splashChama, .splashTexto { animation: none; opacity: 1; }
+          .splashOverlay.sair { animation: none; opacity: 0; }
+        }
       `}</style>
+
+      {/* ---- splash enquanto os dados carregam do Supabase ---- */}
+      {loading && (
+        <div className="splashOverlay naoImprimir" aria-live="polite" aria-label="A carregar dados…">
+          <svg width="120" height="130" viewBox="0 0 110 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <g className="splashChama">
+              <path d="M30 62 C28 50 35 38 30 26 C26 36 18 44 22 56 C18 50 20 38 28 30 C20 42 24 54 26 62Z" fill="url(#splGradChama)" opacity="0.9"/>
+              <path d="M55 18 C52 28 58 38 54 50 C50 40 52 28 48 20 C44 32 46 46 50 56 C46 48 44 36 48 26 C42 38 44 52 46 62 L64 62 C66 52 68 38 62 26 C66 36 64 48 60 56 C64 46 66 32 60 20 C56 28 58 38 54 50 C50 38 56 28 55 18Z" fill="url(#splGradChama)"/>
+              <path d="M80 62 C82 54 78 42 80 30 C88 38 90 50 86 56 C90 44 82 36 78 26 C83 38 75 50 80 62Z" fill="url(#splGradChama)" opacity="0.9"/>
+            </g>
+            <path d="M55 30 L82 42 L82 68 C82 83 70 93 55 98 C40 93 28 83 28 68 L28 42 Z" fill="url(#splGradEscudo)" stroke="url(#splGradBorda)" strokeWidth="2"/>
+            <path d="M55 34 L78 44 L78 48 C78 48 66 42 55 42 C44 42 32 48 32 48 L32 44 Z" fill="rgba(255,255,255,0.12)"/>
+            <circle cx="55" cy="67" r="17" fill="white"/>
+            <circle cx="55" cy="67" r="17" fill="url(#splGradBola)" opacity="0.15"/>
+            <path d="M55 56 L60 60 L58 66 L52 66 L50 60 Z" fill="#1a1a2e"/>
+            <path d="M55 56 L60 60 L63 57 L61 52 L56 51 Z" fill="#2a2a4e" opacity="0.7"/>
+            <path d="M55 56 L50 60 L47 57 L49 52 L54 51 Z" fill="#2a2a4e" opacity="0.7"/>
+            <path d="M58 66 L63 67 L64 72 L60 75 L57 72 Z" fill="#2a2a4e" opacity="0.7"/>
+            <path d="M52 66 L47 67 L46 72 L50 75 L53 72 Z" fill="#2a2a4e" opacity="0.7"/>
+            <defs>
+              <linearGradient id="splGradChama" x1="55" y1="18" x2="55" y2="62" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#FFD580"/>
+                <stop offset="50%" stopColor="#F5A623"/>
+                <stop offset="100%" stopColor="#C0520A"/>
+              </linearGradient>
+              <linearGradient id="splGradEscudo" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#1B4F8A"/>
+                <stop offset="100%" stopColor="#0D2E56"/>
+              </linearGradient>
+              <linearGradient id="splGradBorda" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#5B9BD5"/>
+                <stop offset="100%" stopColor="#1B4F8A"/>
+              </linearGradient>
+              <radialGradient id="splGradBola" cx="45%" cy="40%" r="60%">
+                <stop offset="0%" stopColor="white" stopOpacity="0.8"/>
+                <stop offset="100%" stopColor="white" stopOpacity="0"/>
+              </radialGradient>
+            </defs>
+          </svg>
+          <span className="splashTexto">A carregar…</span>
+        </div>
+      )}
 
       {/* ---------- barra lateral ---------- */}
       <div
