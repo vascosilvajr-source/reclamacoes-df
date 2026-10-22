@@ -25302,6 +25302,8 @@ const DEPARTAMENTOS_RADAR = [
   { k: "nutricao", nome: "Nutrição", re: /nutri|aliment|dieta|hidrata|refeic|suplement|composicao corporal/ },
   { k: "saude", nome: "Saúde", re: /saude|medic|lesao|lesoes|fisio|primeiros socorros|desfibril|concuss|cardi|enfermag|rastreio|recuperacao fisica/ },
   { k: "eventos", nome: "Eventos", re: /evento|torneio|campus|cerimonia|gala|open day|festival|jornada|convivio/ },
+  // Estratégico (financiamento, parcerias, expansão…): direção executiva, antes de internacional.
+  { k: "direcao", nome: "Direção executiva", re: /estrateg|financiamento|fundos|candidatura|parceria|patrocin|investiment|receita|modelo de negocio|expans|novas escolas|franquia|governan|marca|reputac|transformacao digital|plano de negocio|sustentabilidade financeira/ },
   { k: "internacional", nome: "Internacional", re: /internacion|estrangeir|intercambio|no exterior|outros paises|europe|world|global/ },
 ];
 const departamentoRadar = (r) => {
@@ -25318,7 +25320,7 @@ function mailtoDepartamento(emails, nomeDep, r) {
   const linhas = [
     "Olá,",
     "",
-    `No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área de ${nomeDep.toLowerCase()}:`,
+    nomeDep === "Direção executiva" ? "No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão de caráter estratégico:" : `No radar de oportunidades da Gestão da Qualidade apareceu esta sugestão na área de ${nomeDep.toLowerCase()}:`,
     "",
     `«${r.titulo}»`,
     r.resumo ? `\n${r.resumo}` : "",
