@@ -24902,7 +24902,7 @@ const RISCO_COR = {
   medio: { fg: "#7A5A00", bg: "#FFF6BF" },
   alto: { fg: "#A6470B", bg: "#FBE2CF" },
 };
-const ESTADOS_RISCO = ["Em análise", "Implementada", "Implementação contínua.", "Finalizado"];
+const ESTADOS_RISCO = ["Em análise", "Em implementação", "Implementação contínua", "Concluída"];
 const epocaSeguinte = (ep) => `${Number(ep.slice(0, 4)) + 1}/${String(Number(ep.slice(0, 4)) + 2).slice(2)}`;
 const novoIdRisco = () => `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -24930,6 +24930,7 @@ function TipoRisco({ tipo }) {
 function EditorRisco({ inicial, processos, responsaveis, deteccoes, ocorrenciasLigadas = [], onGuardar, onApagar, onFechar }) {
   const [it, setIt] = useState(() => ({ ...inicial }));
   const muda = (k, v) => setIt((x) => ({ ...x, [k]: v }));
+  const [estadoLivre, setEstadoLivre] = useState(false);
   const nr = nivelRisco(it);
   const sug = aceitacaoSugerida(nr);
   const minhas = deteccoes.filter((d) => d.cobertoPor.includes(it.id) || (it.detetores || []).includes(d.id));
@@ -25125,12 +25126,36 @@ function EditorRisco({ inicial, processos, responsaveis, deteccoes, ocorrenciasL
             ))}
           </datalist>
           {campo("data", "Data")}
-          {campo("estado", "Estado", { list: "riscos-estados" })}
-          <datalist id="riscos-estados">
-            {ESTADOS_RISCO.map((e) => (
-              <option key={e} value={e} />
-            ))}
-          </datalist>
+          <div>
+            <label style={{ ...labelStyle, marginTop: 0 }}>Estado</label>
+            {estadoLivre ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <input autoFocus value={it.estado ?? ""} onChange={(e) => muda("estado", e.target.value)} placeholder="Escreve o estado" style={{ ...inputStyle, flex: 1 }} />
+                <button type="button" onClick={() => setEstadoLivre(false)} title="Voltar à lista" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 10px", fontSize: 12 }}>
+                  Lista
+                </button>
+              </div>
+            ) : (
+              <select
+                value={it.estado || ""}
+                onChange={(e) => {
+                  if (e.target.value === "__outro") {
+                    setEstadoLivre(true);
+                    muda("estado", "");
+                  } else muda("estado", e.target.value);
+                }}
+                style={inputStyle}
+              >
+                <option value="">—</option>
+                {[...new Set([...ESTADOS_RISCO, it.estado].filter(Boolean))].map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+                <option value="__outro">Outro (escrever)…</option>
+              </select>
+            )}
+          </div>
         </div>
         <div style={{ marginTop: 10 }}>{area("observacoes", "Observações", 2)}</div>
 
