@@ -27893,9 +27893,20 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         /* Depois de entrar: o ecrã de login desvanece por cima da app. */
         @keyframes entradaSai { from { opacity: 1; } to { opacity: 0; transform: scale(1.02); } }
         .entradaSaida .entrada { pointer-events: none; animation: entradaSai 600ms cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+        /* Animação de loading enquanto verifica sessão */
+        @keyframes dfPulso { 0%, 100% { opacity: 0.55; transform: scale(0.97); } 50% { opacity: 1; transform: scale(1.03); } }
+        @keyframes dfBrilho { 0% { stop-color: #F5A623; stop-opacity: 0.6; } 50% { stop-color: #FFD580; stop-opacity: 1; } 100% { stop-color: #F5A623; stop-opacity: 0.6; } }
+        @keyframes dfChama { 0%, 100% { transform: scaleY(1) translateY(0); } 40% { transform: scaleY(1.08) translateY(-2px); } 70% { transform: scaleY(0.96) translateY(1px); } }
+        @keyframes dfHalo { 0%, 100% { opacity: 0; r: 52px; } 50% { opacity: 0.18; r: 62px; } }
+        @keyframes dfTexto { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+        .dfLoading { display: flex; flex-direction: column; align-items: center; gap: 18px; margin-top: 8px; }
+        .dfLoading svg { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(245, 166, 35, 0.35)); }
+        .dfLoading .chama { transform-origin: center bottom; animation: dfChama 2s ease-in-out infinite; }
+        .dfCarregando { font-size: 12px; color: #8FA3BF; letter-spacing: 0.12em; text-transform: uppercase; animation: dfTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
           .entradaLogo, .entradaTitulo, .entradaSub, .entradaForm { animation: none; opacity: 1; }
           .entradaSaida .entrada { animation: none; opacity: 0; }
+          .dfLoading svg, .dfLoading .chama, .dfCarregando { animation: none; opacity: 1; }
         }
       `}</style>
       <div className="entradaFundo" aria-hidden="true">
@@ -27908,7 +27919,57 @@ function EcraEntrada({ onEntrar, aVerificar }) {
         </div>
         <h1 className="entradaTitulo">Auditoria e Gestão de Qualidade</h1>
         <div className="entradaSub">Dragon Force · acesso reservado</div>
-        {aVerificar ? null : (
+        {aVerificar ? (
+          <div className="dfLoading" aria-label="A verificar sessão…">
+            <svg width="110" height="120" viewBox="0 0 110 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {/* Halo pulsante atrás */}
+              <circle cx="55" cy="72" r="52" fill="rgba(245,166,35,0.10)" style={{animation:"dfHalo 2s ease-in-out infinite"}} />
+              {/* Chamas */}
+              <g className="chama">
+                {/* chama esquerda */}
+                <path d="M30 62 C28 50 35 38 30 26 C26 36 18 44 22 56 C18 50 20 38 28 30 C20 42 24 54 26 62Z" fill="url(#gradChama)" opacity="0.9"/>
+                {/* chama central */}
+                <path d="M55 18 C52 28 58 38 54 50 C50 40 52 28 48 20 C44 32 46 46 50 56 C46 48 44 36 48 26 C42 38 44 52 46 62 L64 62 C66 52 68 38 62 26 C66 36 64 48 60 56 C64 46 66 32 60 20 C56 28 58 38 54 50 C50 38 56 28 55 18Z" fill="url(#gradChama)"/>
+                {/* chama direita */}
+                <path d="M80 62 C82 54 78 42 80 30 C88 38 90 50 86 56 C90 44 82 36 78 26 C83 38 75 50 80 62Z" fill="url(#gradChama)" opacity="0.9"/>
+              </g>
+              {/* Escudo */}
+              <path d="M55 30 L82 42 L82 68 C82 83 70 93 55 98 C40 93 28 83 28 68 L28 42 Z" fill="url(#gradEscudo)" stroke="url(#gradBorda)" strokeWidth="2"/>
+              {/* Reflexo no escudo */}
+              <path d="M55 34 L78 44 L78 48 C78 48 66 42 55 42 C44 42 32 48 32 48 L32 44 Z" fill="rgba(255,255,255,0.12)"/>
+              {/* Bola de futebol */}
+              <circle cx="55" cy="67" r="17" fill="white"/>
+              <circle cx="55" cy="67" r="17" fill="url(#gradBola)" opacity="0.15"/>
+              {/* Pentágono central */}
+              <path d="M55 56 L60 60 L58 66 L52 66 L50 60 Z" fill="#1a1a2e"/>
+              {/* Hexágonos laterais */}
+              <path d="M55 56 L60 60 L63 57 L61 52 L56 51 Z" fill="#2a2a4e" opacity="0.7"/>
+              <path d="M55 56 L50 60 L47 57 L49 52 L54 51 Z" fill="#2a2a4e" opacity="0.7"/>
+              <path d="M58 66 L63 67 L64 72 L60 75 L57 72 Z" fill="#2a2a4e" opacity="0.7"/>
+              <path d="M52 66 L47 67 L46 72 L50 75 L53 72 Z" fill="#2a2a4e" opacity="0.7"/>
+              <defs>
+                <linearGradient id="gradChama" x1="55" y1="18" x2="55" y2="62" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#FFD580"/>
+                  <stop offset="50%" stopColor="#F5A623"/>
+                  <stop offset="100%" stopColor="#C0520A"/>
+                </linearGradient>
+                <linearGradient id="gradEscudo" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#1B4F8A"/>
+                  <stop offset="100%" stopColor="#0D2E56"/>
+                </linearGradient>
+                <linearGradient id="gradBorda" x1="55" y1="30" x2="55" y2="98" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#5B9BD5"/>
+                  <stop offset="100%" stopColor="#1B4F8A"/>
+                </linearGradient>
+                <radialGradient id="gradBola" cx="45%" cy="40%" r="60%">
+                  <stop offset="0%" stopColor="white" stopOpacity="0.8"/>
+                  <stop offset="100%" stopColor="white" stopOpacity="0"/>
+                </radialGradient>
+              </defs>
+            </svg>
+            <span className="dfCarregando">A carregar…</span>
+          </div>
+        ) : (
           <form className="entradaForm" onSubmit={entrar}>
             {outroEmail && (
               <input className="entradaInput" type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
