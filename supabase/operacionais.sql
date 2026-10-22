@@ -53,6 +53,27 @@ begin
   return v_tok;
 end $$;
 
+-- 2c. Resumo das reclamações de origem técnica de uma escola na época: quantas, quantas em aberto
+--     e os temas mais mencionados. Técnica = categoria "Técnico" ou um dos temas técnicos escolhidos na app.
+create or replace function privado.resumo_tecnicas(p_rec jsonb, p_tem jsonb, p_escola text, p_desde date)
+returns jsonb language sql stable as $$
+  with t as (
+    select x from jsonb_array_elements(coalesce(p_rec, '[]'::jsonb)) x
+     where x->>'school' = p_escola
+       and left(coalesce(x->>'receivedDate', ''), 10) >= p_desde::text
+       and (coalesce(p_tem, '[]'::jsonb) ? coalesce(x->>'tema', '') or coalesce(x->>'categoria', '') ~* 't[eé]cnic')
+  ), temas as (
+    select coalesce(nullif(x->>'tema', ''), 'Sem tema') tema, count(*) n from t group by 1 order by 2 desc, 1 limit 3
+  )
+  select jsonb_build_object(
+    'total', (select count(*) from t),
+    'abertas', (select count(*) from t where x->>'status' <> 'concluido'),
+    'temas', coalesce((select jsonb_agg(jsonb_build_object('tema', tema, 'n', n) order by n desc, tema) from temas), '[]'::jsonb))
+$$;
+create or replace function privado.inicio_epoca(p_hoje date) returns date language sql immutable as $$
+  select make_date(case when extract(month from p_hoje) >= 8 then extract(year from p_hoje)::int else extract(year from p_hoje)::int - 1 end, 8, 1)
+$$;
+
 -- 2b. Resumo para o coordenador geral: escolas a precisar de atenção, escolas em destaque e reclamações
 --     de temas técnicos (os temas escolhe-os o utilizador na app). Só números e textos curtos, nunca nomes.
 create or replace function privado.resumo_geral(p_opc jsonb, p_reg jsonb, p_regp jsonb, p_hoje date)
@@ -63,6 +84,7 @@ declare
   v_at int; v_ant int; v_des int; v_conv int; v_nao int; v_tecab int;
   v_var numeric; v_taxa numeric; v_cv numeric; v_tx jsonb;
   v_atencao jsonb := '[]'::jsonb; v_destaque jsonb := '[]'::jsonb; v_tecnicas jsonb := '[]'::jsonb;
+  v_resumos jsonb := '[]'::jsonb; v_rt jsonb; v_ini date := privado.inicio_epoca(p_hoje);
   t_at int := 0; t_ant int := 0; t_des int := 0; t_conv int := 0; t_nao int := 0;
 begin
   select value into v_rec from app_storage where key = 'reclamacoes:registo';
@@ -89,9 +111,10 @@ begin
 
     if v_ant >= 20 then
       v_var := (v_at - v_ant)::numeric / v_ant * 100;
-      if v_var <= -10 then
+      -- diferenças pequenas não entram: pelo menos 10% e 10 alunos
+      if v_var <= -10 and v_ant - v_at >= 10 then
         v_atencao := v_atencao || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s inscritos, %s%% abaixo do mesmo dia da época passada (%s)', v_at, replace(abs(round(v_var, 1))::text, '.', ','), v_ant)));
-      elsif v_var >= 15 then
+      elsif v_var >= 15 and v_at - v_ant >= 10 then
         v_destaque := v_destaque || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s inscritos, %s%% acima do mesmo dia da época passada (%s)', v_at, replace(round(v_var, 1)::text, '.', ','), v_ant)));
       end if;
     end if;
@@ -113,21 +136,23 @@ begin
       v_atencao := v_atencao || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s %s de tema técnico em aberto', v_tecab, case when v_tecab = 1 then 'reclamação' else 'reclamações' end)));
     end if;
 
-    -- reclamações de temas técnicos: em aberto ou recebidas nos últimos 90 dias
+    -- reclamações de temas técnicos ainda em aberto (as concluídas já não entram)
     select coalesce(jsonb_agg(jsonb_build_object('escola', e, 'numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
-             'estado', case when x->>'status' = 'concluido' then 'concluída' else 'em aberto' end,
-             'token', privado.link_reclamacao(e, x)) order by x->>'receivedDate' desc), '[]'::jsonb)
+             'estado', 'em aberto', 'token', privado.link_reclamacao(e, x)) order by x->>'receivedDate' desc), '[]'::jsonb)
       into v_tx
       from jsonb_array_elements(v_rec) x
-     where x->>'school' = e and v_tem ? coalesce(x->>'tema', '')
-       and (x->>'status' <> 'concluido' or left(coalesce(x->>'receivedDate', ''), 10) >= (p_hoje - 90)::text);
+     where x->>'school' = e and v_tem ? coalesce(x->>'tema', '') and x->>'status' <> 'concluido';
     v_tecnicas := v_tecnicas || v_tx;
+    -- resumo da época: reclamações de origem técnica e temas mais mencionados
+    v_rt := privado.resumo_tecnicas(v_rec, v_tem, e, v_ini);
+    if (v_rt->>'total')::int > 0 then v_resumos := v_resumos || jsonb_build_array(jsonb_build_object('escola', e) || v_rt); end if;
   end loop;
 
   return jsonb_build_object(
     'rede', jsonb_build_object('inscritos', t_at, 'anterior', t_ant, 'desistencias', t_des,
         'convertidas', t_conv, 'naoConvertidas', t_nao),
     'atencao', v_atencao, 'destaque', v_destaque, 'tecnicas', v_tecnicas,
+    'resumoTecnicas', coalesce((select jsonb_agg(r order by (r->>'total')::int desc, r->>'escola') from jsonb_array_elements(v_resumos) r), '[]'::jsonb),
     'temasTecnicos', v_tem);
 end $$;
 
@@ -233,21 +258,22 @@ begin
          group by 1) q
        where nao >= 3 and nao * 2 >= dec
          and coalesce(v_avisos->>(e || '|' || turma), '') < (v_hoje - 28)::text;
-      -- reclamações de temas técnicos (em aberto ou dos últimos 90 dias) que ainda não foram enviadas, cada uma com link para a página
+      -- reclamações de temas técnicos em aberto que ainda não foram enviadas, cada uma com link para a página (as concluídas não entram)
       with t as (
         select x from jsonb_array_elements(v_regs) x
          where x->>'school' = e and coalesce(v_opc->'temasTecnicos', '[]'::jsonb) ? coalesce(x->>'tema', '')
-           and (x->>'status' <> 'concluido' or left(coalesce(x->>'receivedDate', ''), 10) >= (v_hoje - 90)::text)
+           and x->>'status' <> 'concluido'
            and not (v_recAv ? coalesce(x->>'id', ''))
       )
       select coalesce(jsonb_agg(jsonb_build_object('numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
-                      'estado', case when x->>'status' = 'concluido' then 'concluída' else 'em aberto' end, 'token', privado.link_reclamacao(e, x))
+                      'estado', 'em aberto', 'token', privado.link_reclamacao(e, x))
                       order by x->>'receivedDate' desc), '[]'::jsonb),
              coalesce(jsonb_object_agg(x->>'id', v_hoje::text), '{}'::jsonb)
         into v_rc, v_marc from t;
       if jsonb_array_length(v_te) > 0 or jsonb_array_length(v_inc) > 0 or jsonb_array_length(v_rc) > 0 then
         v_recAv := v_recAv || v_marc;
-        v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc, 'reclamacoes', v_rc));
+        v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc, 'reclamacoes', v_rc,
+                      'resumoTecnicas', privado.resumo_tecnicas(v_regs, coalesce(v_opc->'temasTecnicos', '[]'::jsonb), e, privado.inicio_epoca(v_hoje))));
         if coalesce(array_length(v_avisados, 1), 0) > 0 then
           update app_storage s set value = (
             select jsonb_agg(case when x->>'id' = any(v_avisados) then x || '{"coordAvisado": true}'::jsonb else x end order by o)
