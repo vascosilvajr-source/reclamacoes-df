@@ -50,24 +50,31 @@ Claude-Session: https://claude.ai/code/session_01Tj5HwVs4WGxkiC96R9RioF
 # Arquitetura e ficheiros
 | Ficheiro | O que contém |
 |---|---|
-| `src/App.jsx` | App principal (~28k linhas): painéis, componentes e lógica. Para localizar algo, usar `grep -n "function Nome"` e ler só o troço. |
+| `src/App.jsx` | Casca da app (~5k linhas): entrada, menu, estado global, gravação, página "Hoje" e a lista de reclamações |
+| `src/nucleo.jsx` | O que é preciso logo ao abrir e partilhado: cores, estilos, utilitários, componentes base. Também os "embrulhos" das páginas carregadas à medida (`CARREGAR_PAGINA`, `aMedida`) |
+| `src/partilhado.jsx` | Partilhado entre páginas mas não preciso para abrir (gráficos, fichas, importações): descarrega com a 1.ª página que o usa |
+| `src/paginas/*.jsx` | Uma por área (inscritos, auditorias, reclamacoes, riscos, emails…): só descarregam quando abertas e ficam pré-carregadas 2,5 s depois de a app abrir |
 | `src/operacional.jsx` | Janela pública `?op=<token>` para operacionais e coordenadores (sem login) |
 | `src/main.jsx` | Entry point: escolhe entre App e Operacional |
 | `src/foto.js` | `imprimirBalanco()`: PDF via impressão (A4, `vertical` opcional) |
 | `src/imagens.js` | `LOGO_BRANCO`, `FOTO_ESTADIO` |
 | `src/sgq.js` | Lógica de qualidade: estados, metas, derivações |
-| `supabase/` | SQL das migrações (`operacionais.sql` tem as RPCs dos e-mails) |
+| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `notebooklm.sql` (resumo anonimizado para o NotebookLM) |
 | `wrangler.jsonc` | Config do deploy Cloudflare (serve `dist/`, modo SPA) |
 
+- **Encontrar código:** `grep -rn "function Nome" src`. Uma página nova ou componente grande vai para `src/paginas/<area>.jsx` e entra em `CARREGAR_PAGINA` + `aMedida` no `nucleo.jsx`. O que é usado por várias páginas vai para `partilhado.jsx` (ou `nucleo.jsx` se o App/Hoje também usa). `nucleo.jsx` nunca importa de `App.jsx` nem das páginas.
+- **Variáveis `let` reatribuídas** (estilos do tema, `CAUSAS_ATUAIS`…) só se mudam no ficheiro onde estão declaradas (um `import` não pode ser reatribuído): usar as funções `definir…`.
 - **PDFs:** usar `BotaoFoto` + `useRef` no nó a exportar. Botões e menus levam a classe `semFoto` para ficarem fora do PDF.
+- **Acesso:** só contas em `privado.equipa` leem e escrevem (`public.e_equipa()` nas políticas; ver `supabase/seguranca.sql`). Conta nova: inserir o `user_id` nessa tabela.
 - **Supabase:** todas as chamadas são RPCs `SECURITY DEFINER`. Chave pública (publishable) em `sb_publishable_KLx3medCXPqV-JZC9NXW-Q_K62OUHCu`. Variáveis de build: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. O token interno é verificado contra `privado.segredos.radar_token`.
 - **Pedidos operacionais:** tabela `pedidos_operacionais`; tipos pelo `itens.tipo`: semanal (sem tipo), `eficacia`, `reclamacao` (só leitura).
 - **Reclamações:** `reclamacoes:registo` em `app_storage`. O nome de quem reclama nunca sai da app.
 
 # Agentes externos (fora do repo)
 Correm no Google Apps Script, não nesta app. Não fazer pesquisa web aqui.
-- **Emails_Escolas.gs:** corre de hora a hora numa conta Gmail separada, chama `op_preparar` e envia e-mails a operacionais, coordenadores técnicos e coordenador geral. `replyTo` aponta para o @fcporto.pt. Tem o `TOKEN_APP`, por isso **nunca vai para o repo**. `URL_APP` tem de coincidir com o endereço de produção.
+- **Emails_Escolas.gs:** corre de 5 em 5 minutos numa conta Gmail separada, chama `op_preparar` e envia e-mails a operacionais, coordenadores técnicos e coordenador geral. `replyTo` aponta para o @fcporto.pt. Tem o `TOKEN_APP`, por isso **nunca vai para o repo**. `URL_APP` tem de coincidir com o endereço de produção.
 - **Radar_Gemini.gs:** Gemini + Tavily para o radar de mercado.
+- **NotebookLM_Fonte.gs:** na conta do NotebookLM; todos os dias às 7h chama `nlm_resumo` e reescreve o Google Doc usado como fonte. Também tem o `TOKEN_APP`.
 
 # Ao mudar o endereço de produção
 Atualizar: Supabase Auth (Site URL e Redirect URLs), `URL_APP` no `.gs` e este ficheiro.
