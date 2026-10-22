@@ -2123,7 +2123,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
       }));
       const { error } = await supabase.from("pedidos_operacionais").insert(linhas);
       if (error) throw error;
-      notificar && notificar("Pedido feito. O e-mail sai nos próximos 10 minutos.", "ok", 7000);
+      notificar && notificar("Pedido feito. O e-mail sai em poucos minutos.", "ok", 7000);
       setResumo("");
       await carregar();
     } catch (e) {
@@ -7113,7 +7113,7 @@ function PainelEmailsEscolas({ op, escolas }) {
           Contactos das escolas
         </button>
         {pendente ? (
-          <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai nos próximos 10 minutos</span>
+          <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai em poucos minutos</span>
         ) : (
           <button onClick={op.onPedirEnvio} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
             Enviar agora

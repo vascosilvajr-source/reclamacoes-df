@@ -110,7 +110,7 @@ declare
   v_at int; v_ant int; v_des int; v_conv int; v_nao int; v_tecab int;
   v_var numeric; v_taxa numeric; v_cv numeric; v_tx jsonb;
   v_atencao jsonb := '[]'::jsonb; v_destaque jsonb := '[]'::jsonb; v_tecnicas jsonb := '[]'::jsonb;
-  v_resumos jsonb := '[]'::jsonb; v_rt jsonb; v_ini date := privado.inicio_epoca(p_hoje);
+  v_resumos jsonb := '[]'::jsonb; v_desl jsonb := '[]'::jsonb; v_rt jsonb; v_ini date := privado.inicio_epoca(p_hoje);
   t_at int := 0; t_ant int := 0; t_des int := 0; t_conv int := 0; t_nao int := 0;
 begin
   select value into v_rec from app_storage where key = 'reclamacoes:registo';
@@ -143,6 +143,10 @@ begin
       elsif v_var >= 15 and v_at - v_ant >= 10 then
         v_destaque := v_destaque || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s inscritos, %s%% acima do mesmo dia da época passada (%s)', v_at, replace(round(v_var, 1)::text, '.', ','), v_ant)));
       end if;
+    end if;
+    if v_des > 0 then
+      v_desl := v_desl || jsonb_build_array(jsonb_build_object('escola', e, 'n', v_des,
+        'taxa', replace(round(v_des::numeric / nullif(v_at + v_des, 0) * 100, 1)::text, '.', ',')));
     end if;
     if v_des >= 5 and v_at + v_des > 0 then
       v_taxa := v_des::numeric / (v_at + v_des) * 100;
@@ -178,6 +182,7 @@ begin
     'rede', jsonb_build_object('inscritos', t_at, 'anterior', t_ant, 'desistencias', t_des,
         'convertidas', t_conv, 'naoConvertidas', t_nao),
     'atencao', v_atencao, 'destaque', v_destaque, 'tecnicas', v_tecnicas,
+    'desistencias', coalesce((select jsonb_agg(r order by (r->>'n')::int desc, r->>'escola') from (select r from jsonb_array_elements(v_desl) r order by (r->>'n')::int desc limit 5) q(r)), '[]'::jsonb),
     'resumoTecnicas', coalesce((select jsonb_agg(r order by (r->>'total')::int desc, r->>'escola') from jsonb_array_elements(v_resumos) r), '[]'::jsonb),
     'temasTecnicos', v_tem);
 end $$;
