@@ -7,7 +7,7 @@ import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTu
 import { imprimirBalanco } from "./foto";
 import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAcompanhamento } from "./inscritosAtuais";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
-import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia } from "./riscos";
+import { lerRiscosDoExcel, gerarExcelRiscos, detetarRiscos, nivelRisco, faixaRisco, aceitacaoSugerida, ACEITACAO, PO_ROTULOS, GR_ROTULOS, PO_DESCRICAO, GR_DESCRICAO, PROCESSOS_PADRAO, DETETORES, codigoProcesso, folhaDaEpoca, riscosParaOcorrencia, idRecorrencia } from "./riscos";
 import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Printer, Sun, Target, Paperclip, ExternalLink, Link2, GraduationCap, RotateCcw, Camera } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -2190,7 +2190,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
 }
 
 // ---------- Complaint detail / notes timeline ----------
-function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista, contactosEscola = {}, notificar }) {
+function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista, contactosEscola = {}, notificar, recorrencia = null, onIrRiscos }) {
   const [respostaTipoId, setRespostaTipoId] = useState(entry.respostaTipoId || null);
   const [assuntoSugerido, setAssuntoSugerido] = useState("");
   const [causaRaiz, setCausaRaiz] = useState(entry.causaRaiz || "");
@@ -2270,6 +2270,20 @@ function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen,
           {entry.epoca ? `Época ${entry.epoca} · ` : ""}Receção: {fmt(new Date(entry.receivedDate + "T00:00:00"))} · Prazo: {fmt(new Date(entry.deadline))}
           {entry.resolvedDate && ` · Concluída: ${fmt(new Date(entry.resolvedDate))}`}
         </div>
+
+        {recorrencia && (
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12.5, marginBottom: 14, padding: "8px 12px", borderRadius: 8, background: recorrencia.ligado ? COLORS.paper : COLORS.warnBg, border: `1px solid ${recorrencia.ligado ? COLORS.rule : COLORS.warn}` }}>
+            <span style={{ flex: "1 1 240px", lineHeight: 1.5 }}>
+              <strong>Recorrente:</strong> {recorrencia.n} reclamações de {String(recorrencia.tema).toLowerCase()} em {recorrencia.escola} nesta época.{" "}
+              {recorrencia.ligado ? `Ligada ao risco nº ${recorrencia.ligado}.` : "Ainda sem risco ou ação no registo de riscos."}
+            </span>
+            {onIrRiscos && (
+              <button type="button" onClick={onIrRiscos} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5 }}>
+                {recorrencia.ligado ? "Ver em Riscos" : "Criar risco em Riscos"}
+              </button>
+            )}
+          </div>
+        )}
 
         {/^https?:\/\//i.test(entry.emailLink || "") && (
           <a
@@ -29290,6 +29304,23 @@ function AppPrincipal({ onSair }) {
           historico={withStatus}
           onGerirLista={setListaAberta}
           notificar={notificar}
+          recorrencia={(() => {
+            const e = withStatus.find((x) => x.id === viewingDetail.id) || viewingDetail;
+            const temaDe = (x) => String(x.tema || x.categoria || "").trim();
+            const epDe = (x) => x.epoca || epocaDe(x.receivedDate);
+            const tema = temaDe(e);
+            if (!tema || !e.school) return null;
+            const ep = epDe(e);
+            const n = withStatus.filter((x) => x.school === e.school && temaDe(x) === tema && epDe(x) === ep).length;
+            if (n < 3) return null;
+            const id = idRecorrencia(e.school, tema);
+            const it = (((riscos.epocas || {})[ep] || {}).itens || []).find((i) => (i.detetores || []).includes(id));
+            return { n, tema, escola: e.school, ligado: it ? it.n : null };
+          })()}
+          onIrRiscos={() => {
+            setViewingDetail(null);
+            setPage("riscos");
+          }}
           contactosEscola={{
             op: (options.emailsOperacionais || {})[(withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail).school] || [],
             ct: (options.emailsCoordenadores || {})[(withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail).school] || [],

@@ -707,6 +707,9 @@ const ligadosPor = (ctx, ids) => {
 };
 const escapar = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Identificador do detetor de reclamações recorrentes (escola + tema), usado também na ficha da reclamação.
+export const idRecorrencia = (escola, tema) => `rec:${norm(escola)}:${norm(tema)}`;
+
 // Ocorrências de categorias que nenhum tema acima apanha: um tema por categoria.
 function detetoresDinamicos(ctx, usadas, usadasO) {
   const grupos = {};
@@ -765,6 +768,45 @@ function detetoresDinamicos(ctx, usadas, usadasO) {
       });
     }
   });
+  // Reclamações recorrentes: a mesma escola com 3 ou mais reclamações do mesmo tema na época.
+  // Fica coberto só quando o risco é criado ou ligado a partir daqui (ou fala da escola e do tema).
+  const porEscolaTema = {};
+  (ctx.reclamacoes || [])
+    .filter((r) => r.school && (r.epoca || epocaDeData(r.receivedDate)) === ctx.ep)
+    .forEach((r) => {
+      const tema = String(r.tema || r.categoria || "").trim();
+      if (!tema) return;
+      const k = `${r.school}|${tema}`;
+      (porEscolaTema[k] = porEscolaTema[k] || { escola: r.school, tema, rs: [] }).rs.push(r);
+    });
+  Object.values(porEscolaTema)
+    .filter((g) => g.rs.length >= 3)
+    .forEach((g) => {
+      const rs = [...g.rs].sort((a, b) => String(b.receivedDate).localeCompare(String(a.receivedDate)));
+      const abertas = rs.filter((r) => r.status !== "concluido").length;
+      const altas = rs.filter((r) => r.severity === "alta").length;
+      const esc = norm(g.escola);
+      const temaRe = new RegExp(
+        norm(g.tema)
+          .split(/[^a-z0-9]+/)
+          .filter((w) => w.length >= 4)
+          .map((w) => escapar(w.slice(0, Math.max(4, w.length - 2))))
+          .join("|") || "^$"
+      );
+      lista.push({
+        id: idRecorrencia(g.escola, g.tema),
+        tipo: "R",
+        processo: P1,
+        titulo: `Reclamações recorrentes de ${g.tema.toLowerCase()} em ${g.escola}`,
+        causa: `${rs.length} reclamações do mesmo tema na mesma escola nesta época: o problema repete-se e as respostas pontuais não o resolveram.`,
+        impacto: "Insatisfação dos encarregados de educação, desistências e imagem do FC Porto na escola.",
+        acao: `Analisar a causa comum das reclamações de ${g.tema.toLowerCase()} em ${g.escola} e definir uma ação para a escola.`,
+        gr: altas ? 4 : 3,
+        limiar: 3,
+        cobre: { test: (t) => t.includes(esc) && temaRe.test(t) },
+        medir: () => ({ n: rs.length, detalhe: resumo([[rs.length, `reclamações de ${g.tema.toLowerCase()} em ${g.escola}`], [abertas, "em aberto"], [altas, "de gravidade alta"]]), evidencias: evRecl(rs) }),
+      });
+    });
   return lista;
 }
 
