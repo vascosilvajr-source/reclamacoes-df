@@ -7887,6 +7887,121 @@ function toleranciaTreinadores(n, regras) {
   return r ? Math.max(0, Number(r.tolerancia) || 0) : 0;
 }
 
+// Alertas de turmas: horários acima da lotação (mesmo com a tolerância dos treinadores) e turmas
+// com alunos abaixo do mínimo (percentagem da lotação, ajustável).
+function alertasTurmas({ escolas, turmasAlunos, espacos, capacidades, niveis, regras, minimoPct = 50 }) {
+  const caps = capacidades || {};
+  const acima = [];
+  const abaixo = [];
+  const ord = (a, b) => a.localeCompare(b, "pt", { numeric: true });
+  (escolas || []).forEach((esc) => {
+    const pt = {};
+    (turmasAlunos || [])
+      .filter((t) => t.escola === esc)
+      .forEach((t) => {
+        const x = pt[t.turma] || (pt[t.turma] = { turma: t.turma, total: 0, cap: caps[`${esc}|${t.turma}`] || t.cap || capacidadeSugerida(t.turma, niveis) });
+        x.total += (Number(t.m) || 0) + (Number(t.f) || 0);
+      });
+    const comHorario = new Set();
+    const grupos = {};
+    (espacos || [])
+      .filter((b) => b.escola === esc)
+      .forEach((b) => {
+        const ts = [...new Set(turmasDoBloco(b))].map((n) => pt[n]).filter(Boolean);
+        if (!ts.length) return;
+        ts.forEach((x) => comHorario.add(x.turma));
+        const nomes = ts.map((x) => x.turma).sort(ord);
+        const total = ts.reduce((n, x) => n + x.total, 0);
+        const limite = (nomes.length > 1 && caps[`${esc}|grupo:${nomes.join(" + ")}`]) || Math.min(...ts.map((x) => x.cap));
+        const tol = toleranciaTreinadores(b.treinadores || 1, regras);
+        if (!limite || total <= limite + tol) return;
+        const k = nomes.join(" + ");
+        const g = grupos[k] || (grupos[k] = { escola: esc, turmas: nomes, total, limite, tol, horarios: [] });
+        g.tol = Math.min(g.tol, tol);
+        g.horarios.push(`${String(b.dia || "").slice(0, 3)} ${horaFmt(b.hora)}`.trim());
+      });
+    Object.values(grupos).forEach((g) => acima.push({ ...g, excesso: g.total - g.limite - g.tol }));
+    Object.values(pt).forEach((x) => {
+      if (!comHorario.has(x.turma) && x.cap && x.total > x.cap) acima.push({ escola: esc, turmas: [x.turma], total: x.total, limite: x.cap, tol: 0, horarios: [], excesso: x.total - x.cap });
+      const minimo = Math.ceil((x.cap * minimoPct) / 100);
+      if (x.total > 0 && x.cap && x.total < minimo) abaixo.push({ escola: esc, turma: x.turma, total: x.total, minimo, cap: x.cap });
+    });
+  });
+  acima.sort((a, b) => b.excesso - a.excesso || ord(a.escola, b.escola));
+  abaixo.sort((a, b) => a.total / a.minimo - b.total / b.minimo || ord(a.escola, b.escola));
+  return { acima, abaixo };
+}
+
+function AlertasTurmas({ alertas, minimoPct, onMinimoPct, onVerEspacos }) {
+  const [aberto, setAberto] = useState(false);
+  const [pct, setPct] = useState(String(minimoPct));
+  useEffect(() => setPct(String(minimoPct)), [minimoPct]);
+  const { acima, abaixo } = alertas;
+  if (!acima.length && !abaixo.length) return null;
+  const grave = acima.length > 0;
+  const cor = grave ? COLORS.danger : COLORS.warn;
+  const linha = { display: "grid", gridTemplateColumns: "minmax(110px, 1fr) minmax(120px, 1.4fr) auto", gap: 10, padding: "6px 0", borderTop: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5, alignItems: "baseline" };
+  return (
+    <div style={{ ...panelStyle, marginBottom: 16, borderLeft: `3px solid ${cor}`, padding: "10px 14px" }}>
+      <button type="button" onClick={() => setAberto((x) => !x)} style={{ all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, width: "100%", flexWrap: "wrap" }}>
+        <AlertTriangle size={15} color={cor} />
+        <span style={{ fontWeight: 600, fontSize: 13.5, flex: "1 1 240px" }}>
+          {[acima.length && `${acima.length} ${acima.length === 1 ? "horário ou turma acima" : "horários ou turmas acima"} da capacidade`, abaixo.length && `${abaixo.length} ${abaixo.length === 1 ? "turma abaixo" : "turmas abaixo"} do mínimo`].filter(Boolean).join(" · ")}
+        </span>
+        <span style={{ fontSize: 12, color: COLORS.navySoft, fontWeight: 600 }}>{aberto ? "Esconder" : "Ver"}</span>
+      </button>
+      {aberto && (
+        <div style={{ marginTop: 10 }}>
+          {acima.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.danger, textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>Acima da capacidade</span>
+                {onVerEspacos && (
+                  <button type="button" onClick={onVerEspacos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                    Abrir Espaços
+                  </button>
+                )}
+              </div>
+              {acima.map((a, i) => (
+                <div key={i} style={linha}>
+                  <span style={{ fontWeight: 600 }}>{a.escola}</span>
+                  <span>
+                    {a.turmas.join(" + ")}
+                    <span style={{ color: COLORS.slate }}> · {a.horarios.length ? a.horarios.join(", ") : "sem horário nos Espaços"}</span>
+                  </span>
+                  <span style={{ color: COLORS.danger, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {a.total}/{a.limite}
+                    {a.tol ? ` (+${a.tol} trein.)` : ""} · +{a.excesso}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {abaixo.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.warn, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Abaixo do mínimo</div>
+              {abaixo.map((a, i) => (
+                <div key={i} style={linha}>
+                  <span style={{ fontWeight: 600 }}>{a.escola}</span>
+                  <span>{a.turma}</span>
+                  <span style={{ color: COLORS.warn, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {a.total} {a.total === 1 ? "aluno" : "alunos"} · mínimo {a.minimo}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: 12, color: COLORS.slate, flexWrap: "wrap" }}>
+            <span>Mínimo por turma:</span>
+            <input type="number" min="1" max="100" value={pct} onChange={(e) => setPct(e.target.value)} onBlur={() => { const v = Math.min(100, Math.max(1, Math.round(Number(pct) || 50))); setPct(String(v)); if (v !== minimoPct) onMinimoPct(v); }} aria-label="Mínimo em percentagem da lotação" style={{ ...inputStyle, width: 64, padding: "4px 8px" }} />
+            <span>% da lotação da turma. A capacidade conta com a tolerância dos treinadores de cada horário.</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RegrasTreinadores({ regras, onGuardar, onFechar }) {
   const [linhas, setLinhas] = useState(() => [...regras].sort((a, b) => a.treinadores - b.treinadores).map((r) => ({ ...r })));
   const muda = (i, k, v) => setLinhas((l) => l.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
@@ -11209,6 +11324,7 @@ function InscritosPage({
   onRenomearRecinto,
   onGuardarNormalizacao,
   onGuardarRegrasTreinadores,
+  onGuardarMinimoTurma,
   onSaveEvento,
   onRemoveEvento,
   onUpdateEvento,
@@ -11220,6 +11336,11 @@ function InscritosPage({
   const [view, setView] = useState("registo");
   const escolas = options.schools || [];
   const niveis = options.niveis || DEFAULT_NIVEIS;
+  const minimoPct = Number(options.minimoTurmaPct) || 50;
+  const alertasT = useMemo(
+    () => alertasTurmas({ escolas: escolas.filter((e) => !(options.estadoEscolas || {})[e]?.encerrada), turmasAlunos, espacos, capacidades: options.capacidades, niveis, regras: options.regrasTreinadores, minimoPct }),
+    [escolas, turmasAlunos, espacos, options.capacidades, options.estadoEscolas, niveis, options.regrasTreinadores, minimoPct]
+  );
   // Procura um atleta pelo código: primeiro na época mais recente.
   const procurarAluno = (cod) => {
     if (!cod) return null;
@@ -11267,6 +11388,9 @@ function InscritosPage({
         ])}
       </div>
 
+      {(view === "registo" || view === "espacos") && escolas.length > 0 && (
+        <AlertasTurmas alertas={alertasT} minimoPct={minimoPct} onMinimoPct={(v) => onGuardarMinimoTurma && onGuardarMinimoTurma(v)} onVerEspacos={view === "espacos" ? null : () => setView("espacos")} />
+      )}
       <div key={view} className="pageIn">
       {escolas.length === 0 ? (
         <Vazio
@@ -28618,6 +28742,7 @@ function AppPrincipal({ onSair }) {
               notificar(`"${de}" passa a "${para}".`);
             }}
             onGuardarNormalizacao={(n) => persistOptions({ ...options, planosNormalizacao: n })}
+            onGuardarMinimoTurma={(v) => persistOptions({ ...options, minimoTurmaPct: v })}
             onGuardarRegrasTreinadores={(r) => {
               persistOptions({ ...options, regrasTreinadores: r });
               notificar("Regras dos treinadores guardadas.");
