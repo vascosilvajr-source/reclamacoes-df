@@ -1091,7 +1091,13 @@ export function contasEvento(ev, registoAlunos, niveis) {
   const escolasEv = ev.escolas && ev.escolas.length ? ev.escolas.filter((e) => !excluidas.has(e)) : null;
   const escaloes = ev.escaloes && ev.escaloes.length ? new Set(ev.escaloes) : null;
   const elegivel = (a) => !excluidas.has(a.escola) && (!escolasEv || escolasEv.includes(a.escola)) && (!escaloes || escaloes.has(escalaoDaTurma(a.turma, niveis)));
-  const naData = alunosNaData(reg, ev.data);
+  let naData = alunosNaData(reg, ev.data);
+  // Escolas carregadas depois da data do evento: os alunos têm "entrada" posterior (data da
+  // importação) e ficariam de fora. Se a escola não tem nenhum aluno à data, contam todos os que
+  // lá estão (sem saída marcada antes do evento).
+  const comAlunosNaData = new Set(naData.map((a) => a.escola));
+  const tardios = Object.values((reg && reg.alunos) || {}).filter((a) => !comAlunosNaData.has(a.escola) && (a.estado === "ativo" || !a.saida || a.saida > ev.data));
+  if (tardios.length) naData = [...naData, ...tardios];
   const eleg = naData.filter(elegivel);
   const ids = new Set(((ev.participantes && ev.participantes.ids) || []).map(String));
   const porEscola = {};
