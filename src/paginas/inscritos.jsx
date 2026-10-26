@@ -1024,8 +1024,14 @@ function alertasTurmas({ escolas, turmasAlunos, espacos, capacidades, niveis, re
     Object.values(grupos).forEach((g) => acima.push({ ...g, excesso: g.total - g.limite - g.tol }));
     Object.values(pt).forEach((x) => {
       if (!comHorario.has(x.turma) && x.cap && x.total > x.cap) acima.push({ escola: esc, turmas: [x.turma], total: x.total, limite: x.cap, tol: 0, horarios: [], excesso: x.total - x.cap });
-      const minimo = Math.ceil((x.cap * minimoPct) / 100);
-      if (x.total > 0 && x.cap && x.total < minimo) abaixo.push({ escola: esc, turma: x.turma, total: x.total, minimo, cap: x.cap });
+    });
+    // Mínimo por grupo: turmas que já treinam juntas nos Espaços somam alunos e lotação; as que ainda
+    // não foram juntadas contam sozinhas.
+    const gl = gruposLotacao(esc, Object.keys(pt), espacos, caps, niveis);
+    gl.grupos.forEach((g) => {
+      const total = g.turmas.reduce((n, t) => n + (pt[t] ? pt[t].total : 0), 0);
+      const minimo = Math.ceil((g.cap * minimoPct) / 100);
+      if (total > 0 && g.cap && total < minimo) abaixo.push({ escola: esc, turma: g.turmas.join(" + "), total, minimo, cap: g.cap });
     });
   });
   acima.sort((a, b) => b.excesso - a.excesso || ord(a.escola, b.escola));
