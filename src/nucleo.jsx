@@ -1099,7 +1099,17 @@ export function contasEvento(ev, registoAlunos, niveis) {
   const tardios = Object.values((reg && reg.alunos) || {}).filter((a) => !comAlunosNaData.has(a.escola) && (a.estado === "ativo" || !a.saida || a.saida > ev.data));
   if (tardios.length) naData = [...naData, ...tardios];
   const eleg = naData.filter(elegivel);
-  const ids = new Set(((ev.participantes && ev.participantes.ids) || []).map(String));
+  // Decisões tomadas na revisão dos casos (por código do Excel): corrigir o código, contar numa
+  // escola mesmo fora do público, ou não contar. Valem para as próximas atualizações do Excel.
+  const dec = (ev.participantes && ev.participantes.decisoes) || {};
+  let ignorados = 0;
+  const pares = [];
+  ((ev.participantes && ev.participantes.ids) || []).map(String).forEach((raw) => {
+    const d = dec[raw];
+    if (d && d.acao === "ignorar") return ignorados++;
+    pares.push({ raw, id: d && d.acao === "corrigir" && d.novo ? String(d.novo) : raw, d });
+  });
+  const ids = new Set(pares.map((x) => x.id));
   const porEscola = {};
   const linha = (e) => (porEscola[e] = porEscola[e] || { escola: e, elegiveis: 0, inscritos: 0, fora: 0 });
   (escolasEv || [...new Set(eleg.map((a) => a.escola))]).forEach(linha);
@@ -1112,12 +1122,32 @@ export function contasEvento(ev, registoAlunos, niveis) {
   const porId = Object.fromEntries(naData.map((a) => [String(a.id), a]));
   let semCorrespondencia = 0;
   let foraEscolas = 0;
-  ids.forEach((id) => {
+  let contadosAMao = 0;
+  const casos = [];
+  const vistos = new Set();
+  pares.forEach(({ raw, id, d }) => {
+    if (vistos.has(id)) return;
+    vistos.add(id);
     const a = porId[id] || (reg && reg.alunos && reg.alunos[id]);
-    if (!a) semCorrespondencia++;
-    else if (!elegivel(a)) {
+    if (a && elegivel(a) && porId[id]) return; // já contado nos elegíveis
+    // "Contar na mesma": entra como inscrito (e elegível) na escola escolhida.
+    if (d && d.acao === "contar" && (d.escola || (a && a.escola))) {
+      const l = linha(d.escola || a.escola);
+      l.inscritos++;
+      l.elegiveis++;
+      contadosAMao++;
+      return;
+    }
+    if (!a) {
+      semCorrespondencia++;
+      casos.push({ raw, id, motivo: "sem registo" });
+    } else if (!elegivel(a)) {
       if (porEscola[a.escola]) porEscola[a.escola].fora++;
       else foraEscolas++;
+      casos.push({ raw, id, motivo: porEscola[a.escola] ? "outra turma/equipa" : "escola fora do público", escola: a.escola });
+    } else {
+      semCorrespondencia++; // existe mas não estava ativo na data do evento
+      casos.push({ raw, id, motivo: "não estava ativo na data", escola: a.escola });
     }
   });
   // Excel sem código: contagem por escola (nome do Excel → escola da app), só dos escalões do evento.
@@ -1151,7 +1181,7 @@ export function contasEvento(ev, registoAlunos, niveis) {
   const tot = linhas.filter((l) => l.elegiveis > 0).reduce((t, l) => ({ elegiveis: t.elegiveis + l.elegiveis, inscritos: t.inscritos + l.inscritos, fora: t.fora + l.fora }), { elegiveis: 0, inscritos: 0, fora: 0 });
   const semElegiveis = linhas.filter((l) => !l.elegiveis).reduce((t, l) => t + l.inscritos, 0);
   const lidos = ids.size || Object.values(bruto).reduce((t, x) => t + x.total, 0);
-  return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
+  return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, ignorados, contadosAMao, casos, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
 }
 
 export function normChave(t) {

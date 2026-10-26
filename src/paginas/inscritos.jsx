@@ -2344,6 +2344,70 @@ function lerInscritosEvento(folhas) {
   return contarPorEscola(comEsc);
 }
 
+// Revisão dos códigos do Excel do evento que não batem com os inscritos da app (só códigos, escolas e turmas).
+function RevisaoEvento({ ev, c, escolas, onUpdate }) {
+  const [aberto, setAberto] = useState(false);
+  const [novo, setNovo] = useState({});
+  const dec = (ev.participantes && ev.participantes.decisoes) || {};
+  const grava = (raw, d) => {
+    const decisoes = { ...dec };
+    if (d) decisoes[raw] = d;
+    else delete decisoes[raw];
+    onUpdate({ ...ev, participantes: { ...ev.participantes, decisoes } });
+  };
+  const decididos = Object.entries(dec);
+  return (
+    <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.paperSunken }}>
+      <button onClick={() => setAberto((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 13 }}>
+        {aberto ? "Esconder" : "Rever"} códigos que não batem com a app ({c.casos.length}
+        {c.ignorados ? `, ${c.ignorados} ignorados` : ""}
+        {c.contadosAMao ? `, ${c.contadosAMao} contados à mão` : ""})
+      </button>
+      {aberto && (
+        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+          {c.casos.map((x) => (
+            <div key={x.raw} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12.5 }}>
+              <strong>{x.raw}</strong>
+              <span style={{ color: COLORS.slate }}>
+                {x.motivo}
+                {x.escola ? ` · ${x.escola}` : ""}
+              </span>
+              <input placeholder="código certo" value={novo[x.raw] || ""} onChange={(e) => setNovo({ ...novo, [x.raw]: e.target.value })} style={{ ...inputStyle, width: 120 }} />
+              <button disabled={!(novo[x.raw] || "").trim()} onClick={() => grava(x.raw, { acao: "corrigir", novo: novo[x.raw].trim() })} style={linkBtnStyle}>
+                Corrigir
+              </button>
+              <select value="" onChange={(e) => e.target.value && grava(x.raw, { acao: "contar", escola: e.target.value })} style={{ ...inputStyle, width: 170 }}>
+                <option value="">Contar na escola…</option>
+                {(x.escola ? [x.escola, ...escolas.filter((e) => e !== x.escola)] : escolas).map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              <button onClick={() => grava(x.raw, { acao: "ignorar" })} style={linkBtnStyle}>
+                Não contar
+              </button>
+            </div>
+          ))}
+          {decididos.length > 0 && (
+            <div style={{ fontSize: 12, color: COLORS.slate, borderTop: `1px solid ${COLORS.line}`, paddingTop: 8 }}>
+              Decisões guardadas (valem nas próximas atualizações do Excel):
+              {decididos.map(([raw, d]) => (
+                <div key={raw}>
+                  {raw} → {d.acao === "corrigir" ? `código ${d.novo}` : d.acao === "contar" ? `contado em ${d.escola}` : "não conta"}{" "}
+                  <button onClick={() => grava(raw, null)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                    Desfazer
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onMapaEscola, onSave, onUpdate, onRemove }) {
   const hoje = isoDe(new Date());
   const [nome, setNome] = useState("");
@@ -2439,7 +2503,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
       const r = lerInscritosEvento(lidas);
       if (!r) throw new Error("não encontrei o código do atleta nem a escola dos inscritos");
       let participantes = { ids: [], manual: {} };
-      if (r.modo === "ids") participantes.ids = r.ids;
+      if (r.modo === "ids") participantes = { ids: r.ids, manual: {}, decisoes: (ev.participantes && ev.participantes.decisoes) || {} };
       else {
         // Nome da escola no Excel ("Porto", "CN Gaia") → escola da app.
         // Procura primeiro nas escolas com alunos na época do evento.
@@ -2919,7 +2983,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                   </div>
                 )}
                 {c.foraEscolas > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.foraEscolas} inscritos no evento são de escolas fora do público definido (não contam na adesão).</div>}
-                {c.semCorrespondencia > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.semCorrespondencia} códigos do Excel não estão nos inscritos de {c.ep} (não contam na adesão).</div>}
+                {(c.casos.length > 0 || c.ignorados > 0) && <RevisaoEvento ev={ev} c={c} escolas={[...new Set(Object.values(registoAlunos[c.ep]?.alunos || {}).map((a) => a.escola))].sort()} onUpdate={onUpdate} />}
                 <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Os números da coluna "Inscritos no evento" vêm do Excel; podes corrigi-los à mão.</div>
               </div>
             )}
