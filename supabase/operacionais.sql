@@ -405,6 +405,8 @@ begin
       v_exp := v_exp || jsonb_build_object(k, jsonb_strip_nulls(jsonb_build_object('r', v,
         'motivo', case when v = 'insucesso' then nullif(left(coalesce(r->>'motivo',''), 80), '') end,
         'turma', nullif(left(coalesce(r->>'turma',''), 60), ''),
+        -- turma ou equipa onde o atleta ficou (só quando converteu e só das turmas da escola)
+        'turmaFicou', case when v = 'sucesso' and coalesce(p.itens->'turmasEscola', '[]'::jsonb) ? coalesce(r->>'turmaFicou', '') then r->>'turmaFicou' end,
         'nota', nullif(left(coalesce(r->>'nota',''), 300), ''))));
     end if;
   end loop;
@@ -431,14 +433,16 @@ begin
     if v_r = 'insucesso' and v_mo is null then raise exception 'falta o motivo'; end if;
     if v_r = 'insucesso' and v_mo ~* '^outr' and v_no is null then raise exception 'falta o detalhe do motivo'; end if;
     v_novas := v_novas || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('id', v_id, 'data', v_dt, 'turma', v_tu, 'r', v_r,
-                 'motivo', case when v_r = 'insucesso' then v_mo end, 'nota', v_no)));
+                 'motivo', case when v_r = 'insucesso' then v_mo end, 'nota', v_no,
+                 'turmaFicou', case when v_r = 'sucesso' and coalesce(p.itens->'turmasEscola', '[]'::jsonb) ? coalesce(n->>'turmaFicou', '') then n->>'turmaFicou' end)));
   end loop;
   if jsonb_array_length(v_novas) > 0 then
     -- as que já existem (mesmo atleta, época e escola) são atualizadas
     update app_storage s set value = (
       select coalesce(jsonb_agg(case when x->>'escola' = p.escola and x->>'epoca' = v_ep and exists (select 1 from jsonb_array_elements(v_novas) nn where nn->>'id' = x->>'alunoId')
           then jsonb_strip_nulls(x || (select jsonb_build_object('resultado', nn->>'r', 'manual', (nn->>'r') <> 'pendente', 'decididoPor', 'operacional',
-                 'motivo', nn->>'motivo', 'nota', nn->>'nota', 'turma', coalesce(nullif(x->>'turma', ''), nn->>'turma'))
+                 'motivo', nn->>'motivo', 'nota', nn->>'nota', 'turma', coalesce(nullif(x->>'turma', ''), nn->>'turma'),
+                 'turmaFicou', case when nn->>'r' = 'sucesso' then coalesce(nn->>'turmaFicou', x->>'turmaFicou') end)
                  from jsonb_array_elements(v_novas) nn where nn->>'id' = x->>'alunoId' limit 1))
           else x end order by o), '[]'::jsonb)
         from jsonb_array_elements(s.value) with ordinality t(x, o)), updated_at = now()
@@ -447,7 +451,7 @@ begin
     update app_storage s set value = s.value || coalesce((
       select jsonb_agg(jsonb_strip_nulls(jsonb_build_object('id', 'x_' || v_ep || '_' || (nn->>'id'), 'alunoId', nn->>'id', 'epoca', v_ep, 'escola', p.escola,
                'turma', nn->>'turma', 'n', 1, 'data', nn->>'data', 'resultado', nn->>'r', 'manual', (nn->>'r') <> 'pendente', 'origem', 'operacional',
-               'decididoPor', 'operacional', 'motivo', nn->>'motivo', 'nota', nn->>'nota', 'entraram', 0)))
+               'decididoPor', 'operacional', 'motivo', nn->>'motivo', 'nota', nn->>'nota', 'entraram', 0, 'turmaFicou', nn->>'turmaFicou')))
         from jsonb_array_elements(v_novas) nn
        where not exists (select 1 from jsonb_array_elements(s.value) x where x->>'alunoId' = nn->>'id' and x->>'epoca' = v_ep and x->>'escola' = p.escola)), '[]'::jsonb), updated_at = now()
      where key = 'reclamacoes:experiencias' and jsonb_typeof(value) = 'array';
@@ -464,7 +468,8 @@ begin
                  -- "Ainda a decorrer" não fecha a experiência: volta no e-mail da semana seguinte
                  'manual', (v_exp->(x->>'alunoId')->>'r') <> 'pendente', 'decididoPor', 'operacional',
                  'motivo', v_exp->(x->>'alunoId')->>'motivo', 'nota', v_exp->(x->>'alunoId')->>'nota',
-                 'turma', coalesce(nullif(x->>'turma',''), v_exp->(x->>'alunoId')->>'turma')))
+                 'turma', coalesce(nullif(x->>'turma',''), v_exp->(x->>'alunoId')->>'turma'),
+                 'turmaFicou', case when v_exp->(x->>'alunoId')->>'r' = 'sucesso' then coalesce(v_exp->(x->>'alunoId')->>'turmaFicou', x->>'turmaFicou') end))
           else x end order by o)
         from jsonb_array_elements(s.value) with ordinality t(x, o)), updated_at = now()
      where key = 'reclamacoes:experiencias' and jsonb_typeof(value) = 'array';

@@ -28,7 +28,33 @@ const dataPT = (iso) => (iso ? `${String(iso).slice(8, 10)}/${String(iso).slice(
 const ehOutro = (m) => /^outr/i.test(String(m || ""));
 const ehEquipa = (t) => /^sub[\s-]?\d/i.test(String(t || "")); // equipas de competição: Sub-9, Sub-11 A…
 const ROTULO_RES = { sucesso: "Converteu", pendente: "Ainda a decorrer", insucesso: "Não converteu" };
-const novaVazia = () => ({ k: Math.random().toString(36).slice(2), id: "", data: "", turma: "", r: "", motivo: "", nota: "" });
+const novaVazia = () => ({ k: Math.random().toString(36).slice(2), id: "", data: "", turma: "", turmaFicou: null, r: "", motivo: "", nota: "" });
+
+// Opções de turmas e equipas de competição da escola (para escolher onde o atleta ficou).
+function OpcoesTurmas({ equipas, turmas }) {
+  return (
+    <>
+      {equipas.length > 0 && (
+        <optgroup label="Equipas de competição">
+          {equipas.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {turmas.length > 0 && (
+        <optgroup label="Turmas">
+          {turmas.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+}
 const faltaNova = (n) => {
   if (!/^[0-9A-Za-z-]{1,20}$/.test(n.id.trim())) return "o código do atleta";
   if (!n.data) return "a data";
@@ -119,7 +145,7 @@ export default function Operacional({ token }) {
     if (!respondidas && !comIds && !nVazias && !novasPreenchidas.length && !nota.trim()) return setErro("Ainda não respondeste a nada.");
     setEstado("a enviar");
     const respostas = {
-      novas: novasPreenchidas.map((n) => ({ id: n.id.trim(), data: n.data, turma: n.turma, r: n.r, ...(n.r === "insucesso" ? { motivo: n.motivo } : {}), ...(n.nota.trim() ? { nota: n.nota.trim() } : {}) })),
+      novas: novasPreenchidas.map((n) => ({ id: n.id.trim(), data: n.data, turma: n.turma, r: n.r, ...(n.r === "insucesso" ? { motivo: n.motivo } : {}), ...(n.r === "sucesso" && (n.turmaFicou ?? n.turma) ? { turmaFicou: n.turmaFicou ?? n.turma } : {}), ...(n.nota.trim() ? { nota: n.nota.trim() } : {}) })),
       experiencias: Object.fromEntries(Object.entries(exp).filter(([, v]) => v && v.r)),
       turmas: Object.fromEntries(turmas.filter((t) => !vazias[t.turma]).map((t) => [t.turma, lerIds(ids[t.turma])]).filter(([, l]) => l.length)),
       turmasVazias: turmas.filter((t) => vazias[t.turma]).map((t) => t.turma),
@@ -319,6 +345,17 @@ export default function Operacional({ token }) {
                               </button>
                             ))}
                           </div>
+                          {v.r === "sucesso" && turmasEscola.length > 0 && (
+                            <div className="opDetalhe">
+                              <label className="opLargo">
+                                Turma ou equipa onde ficou
+                                <select value={v.turmaFicou || ""} onChange={(e) => muda(x.id, { turmaFicou: e.target.value })}>
+                                  <option value="">Ainda não sei</option>
+                                  <OpcoesTurmas equipas={equipas} turmas={turmasNormais} />
+                                </select>
+                              </label>
+                            </div>
+                          )}
                           {v.r === "insucesso" && (
                             <div className="opDetalhe">
                               <label>
@@ -467,6 +504,17 @@ export default function Operacional({ token }) {
                             </button>
                           ))}
                         </div>
+                        {n.r === "sucesso" && (
+                          <div className="opDetalhe">
+                            <label className="opLargo">
+                              Turma ou equipa onde ficou
+                              <select value={n.turmaFicou ?? n.turma} onChange={(e) => mudaNova(n.k, { turmaFicou: e.target.value })}>
+                                <option value="">Ainda não sei</option>
+                                <OpcoesTurmas equipas={equipas} turmas={turmasNormais} />
+                              </select>
+                            </label>
+                          </div>
+                        )}
                         {n.r === "insucesso" && (
                           <div className="opDetalhe">
                             <label>

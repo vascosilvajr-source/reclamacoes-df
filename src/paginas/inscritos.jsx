@@ -656,11 +656,20 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
       ) : (
         <div style={panelStyle}>
           <div style={panelTitle}>Registos ({lista.length})</div>
+          {[...new Set(lista.filter((x) => x.resultado === "sucesso").map((x) => x.escola))].map((e) => (
+            <datalist key={e} id={`turmas-ficou-${e}`}>
+              {[...new Set([...turmas.filter((t) => t.escola === e).map((t) => t.turma), ...experiencias.filter((x) => x.escola === e).flatMap((x) => [x.turma, x.turmaFicou])].filter(Boolean))]
+                .sort((a, b) => a.localeCompare(b, "pt", { numeric: true }))
+                .map((t) => (
+                  <option key={t} value={t} />
+                ))}
+            </datalist>
+          ))}
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Data", "Código", "Escola", "Turma", "Resultado", "Motivo", "Avaliar", ""].map((h) => (
+                  {["Data", "Código", "Escola", "Turma da experiência", "Resultado", "Motivo", "Avaliar", ""].map((h) => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -677,6 +686,30 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
                       <td style={tdStyle}>
                         <Tag label={meta.label} color={meta.color} bg={meta.bg} />
                         {x.decididoPor === "operacional" && <div style={{ fontSize: 10.5, color: COLORS.slate, marginTop: 2 }}>pelo operacional</div>}
+                        {x.resultado === "sucesso" && (() => {
+                          const doMapa = x.alunoId && procurarAluno ? procurarAluno(x.alunoId) : null;
+                          const turmaMapa = doMapa && doMapa.escola === x.escola ? doMapa.turma : "";
+                          return (
+                            <div style={{ marginTop: 4 }}>
+                              {op && op.onTurmaFicou ? (
+                                <input
+                                  key={`${x.id}|${x.turmaFicou || ""}`}
+                                  defaultValue={x.turmaFicou || ""}
+                                  list={`turmas-ficou-${x.escola}`}
+                                  placeholder={turmaMapa || "Ficou em…"}
+                                  title="Turma ou equipa em que o atleta ficou"
+                                  aria-label="Turma ou equipa em que ficou"
+                                  onBlur={(e) => e.target.value.trim() !== (x.turmaFicou || "") && op.onTurmaFicou(x.id, e.target.value.trim())}
+                                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                                  style={{ ...inputStyle, width: 150, padding: "3px 6px", fontSize: 12 }}
+                                />
+                              ) : (
+                                x.turmaFicou && <div style={{ fontSize: 11.5 }}>Ficou em {x.turmaFicou}</div>
+                              )}
+                              {!x.turmaFicou && turmaMapa && <div style={{ fontSize: 10.5, color: COLORS.slate, marginTop: 2 }}>no mapa: {turmaMapa}</div>}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>
                         {x.resultado === "insucesso" && op ? (
@@ -1688,6 +1721,9 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const nAcima = estados.filter((e) => e === "acima").length;
   const nTolerados = estados.filter((e) => e === "tolerado").length;
   const nOk = estados.filter((e) => e === "ok").length;
+  // Equipas distintas a treinar (turmas que treinam juntas contam cada uma).
+  const equipasTreino = new Set(doEscola.flatMap((b) => turmasDoBloco(b).map((t) => `${b.escola}|${t}`)));
+  const equipasJuntas = new Set(doEscola.filter((b) => turmasDoBloco(b).length > 1).flatMap((b) => turmasDoBloco(b).map((t) => `${b.escola}|${t}`)));
   const corEstado = { ok: COLORS.ok, tolerado: COLORS.warn, acima: COLORS.danger, sem: COLORS.rule };
   const fundoEstado = { ok: COLORS.paper, tolerado: COLORS.warnBg, acima: COLORS.dangerBg, sem: COLORS.paper };
 
@@ -1763,7 +1799,10 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                         const g = grupo(nomes, b.treinadores || 1, b.escola);
                         return (
                           <div key={b.id} style={{ borderLeft: `3px solid ${corEstado[g.estado]}`, background: fundoEstado[g.estado], borderRadius: 2, padding: "2px 5px", marginBottom: 3, lineHeight: 1.3 }}>
-                            <div style={{ fontWeight: 600 }}>{nomes.join(" + ")}</div>
+                            <div style={{ fontWeight: 600 }}>
+                              {nomes.join(" + ")}
+                              {nomes.length > 1 ? <span style={{ fontWeight: 400, color: COLORS.slate }}> ({nomes.length} equipas)</span> : null}
+                            </div>
                             <div style={{ color: g.estado === "acima" ? COLORS.danger : g.estado === "tolerado" ? COLORS.warn : COLORS.slate }}>
                               {g.limite ? `${g.total}/${g.limite}` : "sem lotação"}
                               {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
@@ -2009,6 +2048,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
 
       {doEscola.length > 0 && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          <StatCard label="Equipas a treinar" value={equipasTreino.size} subtitle={equipasJuntas.size ? `${equipasJuntas.size} treinam juntas com outra` : "todas treinam sozinhas"} />
           <StatCard label="Treinos por semana" value={doEscola.length} subtitle={`${horas.length} ${horas.length === 1 ? "horário" : "horários"} diferentes`} />
           <StatCard label="Dentro da lotação" value={nOk} color={COLORS.ok} />
           <StatCard label="Aceitáveis pelos treinadores" value={nTolerados} color={nTolerados ? COLORS.warn : undefined} subtitle="acima da lotação, dentro da tolerância" />
@@ -2132,7 +2172,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
                                   <span style={{ fontSize: 11, color: COLORS.slate }} title={b.plano ? `Do plano semanal ${b.plano.semana ? `(semana ${b.plano.semana})` : ""}: ${b.plano.nome}` : undefined}>
-                                    {[modoRecinto ? b.escola : null, nomes.length > 1 ? "juntas" : null].filter(Boolean).join(" · ")}
+                                    {[modoRecinto ? b.escola : null, nomes.length > 1 ? `${nomes.length} equipas juntas` : null].filter(Boolean).join(" · ")}
                                     {b.origem === "plano" && <span style={{ marginLeft: 4, color: COLORS.navy }}>●</span>}
                                   </span>
                                   <button title="Remover" onClick={() => onRemove(b.id)} style={{ ...iconBtnStyle, padding: 0 }}>

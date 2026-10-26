@@ -3019,6 +3019,7 @@ function AppPrincipal({ onSair }) {
     }
   };
   const removeExperiencia = (id) => persistExperiencias(experiencias.filter((e) => e.id !== id));
+  const turmaFicouExperiencia = (id, turma) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, turmaFicou: turma || undefined } : e)));
   const motivoExperiencia = (id, motivo) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, motivo: motivo || undefined, manual: true } : e)));
   // Códigos que os operacionais indicaram para as turmas sem alunos: o aluno passa para essa turma (e escola).
   const aplicarIdsOperacional = (pedido) => {
@@ -3440,10 +3441,11 @@ function AppPrincipal({ onSair }) {
     onAbrirContactos: () => setContactosAbertos(true),
     onPedirEnvio: () => {
       persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString() } });
-      notificar("Pedido feito. Os e-mails saem nos próximos 10 minutos.", "ok", 7000);
+      notificar("Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
     },
     onAplicarIds: aplicarIdsOperacional,
     onMotivo: motivoExperiencia,
+    onTurmaFicou: turmaFicouExperiencia,
   };
 
   const secoes = [
