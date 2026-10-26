@@ -290,6 +290,24 @@ export function escalaoDaTurma(t, niveis) {
   const n = (niveis || DEFAULT_NIVEIS).find((x) => String(t).toLowerCase().startsWith(x.toLowerCase()));
   return n || "Competição (outras)";
 }
+// Ordem das turmas/equipas, do mais novo para o mais velho: Raíz, Iniciação, Básico, Intermédio,
+// Avançado, Expert; depois as equipas de competição (Sub-9 … Sub-19); o resto por nome.
+export function ordemTurma(niveis) {
+  const nv = niveisTurmas(niveis).map((n) => n.toLowerCase());
+  const chave = (t) => {
+    const x = String(t || "").toLowerCase();
+    const i = nv.findIndex((n) => x.startsWith(n));
+    if (i >= 0) return [0, i];
+    const m = x.match(/^sub[\s-]*(\d+)/);
+    if (m) return [1, Number(m[1])];
+    return [2, 0];
+  };
+  return (a, b) => {
+    const ka = chave(a);
+    const kb = chave(b);
+    return ka[0] - kb[0] || ka[1] - kb[1] || String(a).localeCompare(String(b), "pt", { numeric: true });
+  };
+}
 // Só os níveis das turmas (Raíz … Expert): um "Sub-…" na lista de níveis não é um nível.
 export const niveisTurmas = (niveis) => (niveis || DEFAULT_NIVEIS).filter((n) => !/^sub/i.test(String(n)));
 export function ehEscolinha(t, niveis) {

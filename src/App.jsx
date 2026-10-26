@@ -3058,6 +3058,15 @@ function AppPrincipal({ onSair }) {
     notificar(`Aluno ${id} passou para ${turma}.`);
   };
 
+  // Género corrigido à mão: a importação semanal respeita-o.
+  const mudarGeneroAluno = (ep, id, genero) => {
+    const reg = registoAlunos[ep];
+    const a = reg && reg.alunos[id];
+    if (!a || (a.genero || "") === genero) return;
+    gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos: { ...reg.alunos, [id]: { ...a, genero, generoManual: true } } }));
+    notificar(`Género do aluno ${id} alterado.`);
+  };
+
   const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
   const updateDesvinc = (id, patch) =>
     persistDesvinc(
@@ -4064,6 +4073,7 @@ function AppPrincipal({ onSair }) {
             onAplicarAtuais={aplicarInscritosAtuais}
             onCapacidade={definirCapacidade}
             onMudarTurma={mudarTurmaAluno}
+            onMudarGenero={mudarGeneroAluno}
             gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, renomearTurma: renomearTurmaLivre, turmasAtuais: turmasAlunos, distintas: marcarTurmasDistintas, renomearEscola: renomearEscolaEpoca, estadoEscola: definirEstadoEscola, epocas: epocasComDados, escolasComDados }}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}

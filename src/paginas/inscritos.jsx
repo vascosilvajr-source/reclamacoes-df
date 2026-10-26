@@ -7,7 +7,7 @@ import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAc
 import { LOGO_BRANCO } from "../imagens";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, Area, ComposedChart, LabelList } from "recharts";
-import { COLORS, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
+import { COLORS, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
 import { BarrasRel, BotaoFoto, ComparacaoEpocas, DicaGrafico, FiltroEpocas, Filtros, JanelaSGQ, MESES_EPOCA, MES_CURTO, QuadrantMatrix, SemDados, TickEixoX, corSatisfacao, dataDeCelula, descarregarXlsx, epocasDisponiveis, fmtNum, lerCSVInq, lerExcelInq, mesDeData, naSelecao, nomeEscolaProposto, selecaoInicial, tdStyle, textoSelecao, thStyle } from "../partilhado.jsx";
 
 const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -1191,7 +1191,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
   const [editarNome, setEditarNome] = useState(null);
   const norm0 = normalizacao || {};
 
-  const turmasDe = (e) => [...new Set(turmas.filter((t) => t.escola === e).map((t) => t.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const turmasDe = (e) => [...new Set(turmas.filter((t) => t.escola === e).map((t) => t.turma))].sort(ordemTurma());
   const alunosDe = (e, t) => turmas.filter((x) => x.escola === e && x.turma === t).reduce((n, x) => n + (x.m || 0) + (x.f || 0), 0);
 
   const ler = async (f) => {
@@ -1670,7 +1670,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const porTurma = porTurmaDe(escola);
   const cachePorTurma = { [escola]: porTurma };
   const turmasDaEscola = (esc) => cachePorTurma[esc] || (cachePorTurma[esc] = porTurmaDe(esc));
-  const listaTurmas = Object.values(porTurma).sort((a, b) => a.turma.localeCompare(b.turma, "pt", { numeric: true }));
+  const listaTurmas = Object.values(porTurma).sort((a, b) => ordemTurma(niveis)(a.turma, b.turma));
   const recintosDaEscola = [...new Set(espacos.filter((s) => s.escola === escola).map((s) => s.recinto).filter(Boolean))];
   const doEscola = modoRecinto ? espacos.filter((s) => s.recinto === recintoSel) : espacos.filter((s) => s.escola === escola && (!fRecinto || (s.recinto || "") === fRecinto));
   // Linhas do mapa: as horas com treinos nesta escola.
@@ -1714,7 +1714,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
       });
     return Object.values(out)
       .map((x) => ({ ...x, visto: vistosSemAlunos[x.k] }))
-      .sort((a, b) => a.escola.localeCompare(b.escola, "pt") || a.turma.localeCompare(b.turma, "pt", { numeric: true }));
+      .sort((a, b) => a.escola.localeCompare(b.escola, "pt") || ordemTurma(niveis)(a.turma, b.turma));
   })();
   const semAlunosPorVer = semAlunos.filter((x) => !x.visto);
   const marcarVisto = (k, sim) => {
@@ -3103,6 +3103,7 @@ export function InscritosPage({
   onAplicarAtuais,
   onCapacidade,
   onMudarTurma,
+  onMudarGenero,
   gestaoDados,
   onGuardarMapaEscaloes,
   notificar,
@@ -3271,6 +3272,7 @@ export function InscritosPage({
           gestaoDados={gestaoDados}
           espacos={espacos}
           onMudarTurma={onMudarTurma}
+          onMudarGenero={onMudarGenero}
         />
       ) : (
         <AnaliseInscritos registoAlunos={registoAlunos} options={options} escolas={escolas} inscritos={inscritos} epocaAnterior={epocaAnterior} experiencias={experiencias} turmasAlunos={turmasAlunos} gestaoDados={gestaoDados} />
@@ -3594,7 +3596,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         turma: manter ? prev.turma : turmaFicheiro,
         ...(manter ? { turmaManual: true, turmaFicheiro, ...(prev.mudadoPor ? { mudadoPor: prev.mudadoPor } : {}) } : {}),
         ano: r.ano || prev?.ano || null,
-        genero: r.genero || prev?.genero || "",
+        genero: prev?.generoManual ? prev.genero || "" : r.genero || prev?.genero || "",
+        ...(prev?.generoManual ? { generoManual: true } : {}),
         rubrica: r.rubrica || prev?.rubrica || "",
         entrada: [prev?.entrada, r.data].filter(Boolean).sort()[0] || semData,
         semEntrada: semanaDaEpoca([prev?.entrada, r.data].filter(Boolean).sort()[0] || semData, s1),
@@ -3934,7 +3937,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
 }
 
 // Escola em detalhe: turmas (lotação) e alunos pelo código.
-function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma }) {
+function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma, onMudarGenero }) {
   const [aEditar, setAEditar] = useState(null);
   const [aba, setAba] = useState("turmas");
   const [procura, setProcura] = useState("");
@@ -3942,18 +3945,18 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   const [fTurma, setFTurma] = useState("todas");
   const alunos = Object.values(reg?.alunos || {}).filter((a) => a.escola === escola);
   const ativos = alunos.filter((a) => a.estado === "ativo");
-  const turmas = [...new Set(alunos.map((a) => a.turma))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const turmas = [...new Set(alunos.map((a) => a.turma))].sort(ordemTurma(niveis));
   // Turmas/equipas para onde se pode mudar um aluno: as da escola e as que aparecem nos espaços.
   const turmasPossiveis = [...new Set([...turmas, ...(espacos || []).filter((b) => normChave(b.escola) === normChave(escola)).flatMap(turmasDoBloco)])]
     .filter((t) => t && t !== "Sem turma")
-    .sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+    .sort(ordemTurma(niveis));
   const lot = gruposLotacao(escola, turmas, espacos, capacidades, niveis);
   const exps = Object.values(reg?.experiencias || {}).filter((x) => x.escola === escola);
   const lista = alunos
     .filter((a) => fEstado === "todos" || a.estado === fEstado || (fEstado === "emFalta" && a.emFalta && a.estado === "ativo"))
     .filter((a) => fTurma === "todas" || a.turma === fTurma)
     .filter((a) => !procura.trim() || String(a.id).includes(procura.trim()))
-    .sort((a, b) => a.turma.localeCompare(b.turma, "pt", { numeric: true }) || String(a.id).localeCompare(String(b.id)));
+    .sort((a, b) => ordemTurma(niveis)(a.turma, b.turma) || String(a.id).localeCompare(String(b.id)));
   const th = { textAlign: "left", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: COLORS.slate, padding: "7px 8px", borderBottom: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" };
   const td = { padding: "7px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5, fontVariantNumeric: "tabular-nums" };
   return (
@@ -4149,7 +4152,19 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                       )}
                     </td>
                     <td style={td}>{a.ano || "—"}</td>
-                    <td style={td}>{a.genero ? a.genero.toUpperCase() : "—"}</td>
+                    <td style={td}>
+                      {onMudarGenero ? (
+                        <select value={a.genero || ""} onChange={(e) => onMudarGenero(epoca, a.id, e.target.value)} aria-label={`Género do aluno ${a.id}`} title={a.generoManual ? "Mudado à mão" : "Mudar género"} style={{ ...inputStyle, width: "auto", padding: "3px 6px", fontSize: 12.5, fontWeight: a.generoManual ? 700 : 400 }}>
+                          <option value="">—</option>
+                          <option value="m">M</option>
+                          <option value="f">F</option>
+                        </select>
+                      ) : a.genero ? (
+                        a.genero.toUpperCase()
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td style={td}>{ROTULO_RUBRICA[a.rubrica] || "—"}</td>
                     <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
                     <td style={{ ...td, color: a.estado === "desistiu" ? COLORS.danger : a.emFalta ? COLORS.warn : COLORS.ok }}>
@@ -4641,7 +4656,7 @@ async function gerarExcelAlunos(reg, epoca, escola, niveis) {
   return todos.length;
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma, onMudarGenero }) {
   const [gerir, setGerir] = useState(false);
   const [aGerarExcel, setAGerarExcel] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
@@ -5183,7 +5198,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           }}
         />
       )}
-      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onFechar={() => setEscolaAberta(null)} />}
+      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onMudarGenero={onMudarGenero} onFechar={() => setEscolaAberta(null)} />}
       {gerir && <GerirDadosAlunos registoAlunos={registoAlunos} options={options} g={gestaoDados} epocaInicial={epoca} abaInicial={typeof gerir === "string" ? gerir : "apagar"} onFechar={() => setGerir(false)} />}
     </div>
   );
@@ -5276,7 +5291,7 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, abaInicial,
       });
     }
   });
-  const nomesTurmas = Object.keys(contagemTurmas).sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const nomesTurmas = Object.keys(contagemTurmas).sort(ordemTurma((options && options.niveis) || undefined));
   const escolasNomes = [...new Set(nEpocas.flatMap((ep) => [...Object.values(registoAlunos[ep]?.alunos || {}).map((a) => a.escola), ...(ep === epHojeN ? (g.turmasAtuais || []).map((t) => t.escola) : [])]))].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt"));
 
   // ---- escolas entre épocas ----
@@ -5310,7 +5325,7 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, abaInicial,
   const [retirar, setRetirar] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const epocasAlvo = fEpoca === "todas" ? g.epocas : [fEpoca];
-  const turmasAlvo = [...new Set(epocasAlvo.flatMap((ep) => Object.values(registoAlunos[ep]?.alunos || {}).filter((a) => !fEscola || a.escola === fEscola).map((a) => a.turma)))].sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const turmasAlvo = [...new Set(epocasAlvo.flatMap((ep) => Object.values(registoAlunos[ep]?.alunos || {}).filter((a) => !fEscola || a.escola === fEscola).map((a) => a.turma)))].sort(ordemTurma((options && options.niveis) || undefined));
   const filtro = { epocas: epocasAlvo, escola: fEscola, tipo: fTipo, turma: fTurma, id: fId, retirarEscola: retirar };
   const incompleto = (fTipo === "turma" && !fTurma) || (fTipo === "aluno" && !fId.trim());
   const conta = incompleto ? null : g.apagar(filtro, true);
@@ -5337,7 +5352,7 @@ function GerirDadosAlunos({ registoAlunos, options, g, epocaInicial, abaInicial,
   };
   const nomesA = epA ? nomesDe(epA) : {};
   const nomesB = epB ? nomesDe(epB) : {};
-  const listaB = Object.keys(nomesB).sort((a, b) => a.localeCompare(b, "pt", { numeric: true }));
+  const listaB = Object.keys(nomesB).sort(ordemTurma((options && options.niveis) || undefined));
   const soEmA = Object.keys(nomesA)
     .filter((t) => !nomesB[t])
     .map((t) => {
