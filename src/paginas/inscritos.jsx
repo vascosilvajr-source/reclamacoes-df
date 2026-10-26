@@ -8,7 +8,7 @@ import { LOGO_BRANCO } from "../imagens";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, Area, ComposedChart, LabelList } from "recharts";
 import { COLORS, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
-import { BarrasRel, BotaoFoto, ComparacaoEpocas, DicaGrafico, FiltroEpocas, Filtros, JanelaSGQ, MESES_EPOCA, MES_CURTO, QuadrantMatrix, SemDados, TickEixoX, corSatisfacao, dataDeCelula, epocasDisponiveis, fmtNum, lerCSVInq, lerExcelInq, mesDeData, naSelecao, nomeEscolaProposto, selecaoInicial, tdStyle, textoSelecao, thStyle } from "../partilhado.jsx";
+import { BarrasRel, BotaoFoto, ComparacaoEpocas, DicaGrafico, FiltroEpocas, Filtros, JanelaSGQ, MESES_EPOCA, MES_CURTO, QuadrantMatrix, SemDados, TickEixoX, corSatisfacao, dataDeCelula, descarregarXlsx, epocasDisponiveis, fmtNum, lerCSVInq, lerExcelInq, mesDeData, naSelecao, nomeEscolaProposto, selecaoInicial, tdStyle, textoSelecao, thStyle } from "../partilhado.jsx";
 
 const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
@@ -4480,8 +4480,100 @@ function ImportarInscritosAtuais({ registoAlunos, escolas, niveis, options, onAp
   );
 }
 
+// Excel com os alunos da época: folha "Todos" + uma folha por escola (ou só a escola escolhida).
+// Leva só códigos, turmas, datas e estados (a app não guarda nomes de alunos).
+async function gerarExcelAlunos(reg, epoca, escola, niveis) {
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Gestão da Qualidade DF";
+  const RUBRICA = { renov: "Renovação", novo: "Nova inscrição", experiencia: "Experiência", extra: "Extra" };
+  const dataPT = (d) => (d && /^\d{4}-\d{2}-\d{2}/.test(d) ? String(d).slice(0, 10).split("-").reverse().join("/") : "");
+  const ord = (a, b) => String(a).localeCompare(String(b), "pt", { numeric: true });
+  const todos = Object.values(reg.alunos || {})
+    .filter((a) => !escola || a.escola === escola)
+    .sort((a, b) => ord(a.escola, b.escola) || ord(a.turma, b.turma) || ord(a.id, b.id));
+  const colunas = [
+    ["Código", "id", 12],
+    ["Escola", "escola", 26],
+    ["Turma / equipa", "turma", 22],
+    ["Escalão", "escalao", 14],
+    ["Ano nasc.", "ano", 10],
+    ["Género", "genero", 9],
+    ["Inscrição", "rubrica", 15],
+    ["Estado", "estado", 11],
+    ["Entrada", "entrada", 11],
+    ["Saída", "saida", 11],
+    ["Motivo da saída", "motivo", 30],
+    ["Notas", "notas", 34],
+  ];
+  const linha = (a) => ({
+    id: a.semCodigo ? "" : a.id,
+    escola: a.escola || "",
+    turma: a.turma || "",
+    escalao: a.turma ? escalaoDaTurma(a.turma, niveis) || "" : "",
+    ano: a.ano || "",
+    genero: a.genero === "F" ? "F" : a.genero === "M" ? "M" : a.genero || "",
+    rubrica: RUBRICA[a.rubrica] || a.rubrica || "",
+    estado: a.estado === "desistiu" ? "Desistiu" : "Ativo",
+    entrada: dataPT(a.entrada),
+    saida: a.estado === "desistiu" ? dataPT(a.saida) : "",
+    motivo: a.estado === "desistiu" ? a.motivo || "" : "",
+    notas: [
+      a.semCodigo ? "sem código no ficheiro" : "",
+      a.turmaManual || a.mudadoPor ? `turma mudada${a.mudadoPor === "operacional" ? " pelo operacional" : a.mudadoPor === "mapa" ? " pelo mapa de inscritos" : " à mão"}${a.turmaFicheiro || a.turmaAntes ? ` (antes: ${a.turmaFicheiro || a.turmaAntes})` : ""}` : "",
+      a.emFalta ? `não consta do último ficheiro (${dataPT(a.emFalta)})` : "",
+    ]
+      .filter(Boolean)
+      .join("; "),
+  });
+  const azul = "FF0B2A5B";
+  const folha = (nome, lista) => {
+    const ws = wb.addWorksheet(nome.replace(/[\\/*?:[\]]/g, " ").slice(0, 31), { views: [{ state: "frozen", ySplit: 1 }] });
+    ws.columns = colunas.map(([h, k, w]) => ({ header: h, key: k, width: w }));
+    lista.forEach((a) => {
+      const r = ws.addRow(linha(a));
+      if (a.estado === "desistiu") r.font = { color: { argb: "FF8A93A3" } };
+    });
+    const cab = ws.getRow(1);
+    cab.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cab.fill = { type: "pattern", pattern: "solid", fgColor: { argb: azul } };
+    cab.alignment = { vertical: "middle" };
+    cab.height = 20;
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: colunas.length } };
+    return ws;
+  };
+  const escolasL = [...new Set(todos.map((a) => a.escola || "Sem escola"))].sort(ord);
+  // Resumo por escola
+  const res = wb.addWorksheet("Resumo", { views: [{ state: "frozen", ySplit: 3 }] });
+  res.getCell("A1").value = `Alunos da época ${epoca}${escola ? ` · ${escola}` : ""}`;
+  res.getCell("A1").font = { bold: true, size: 14, color: { argb: azul } };
+  res.getCell("A2").value = `Gerado a ${dataPT(isoDe(new Date()))} pela app de Gestão da Qualidade DF`;
+  res.getCell("A2").font = { color: { argb: "FF5B6577" }, size: 10 };
+  const cabR = ["Escola", "Ativos", "Feminino (ativos)", "Desistiram", "Total na época", "Turmas / equipas"];
+  res.getRow(3).values = cabR;
+  res.getRow(3).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  res.getRow(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: azul } };
+  [28, 10, 16, 12, 15, 16].forEach((w, i) => (res.getColumn(i + 1).width = w));
+  const tot = [0, 0, 0, 0];
+  escolasL.forEach((e) => {
+    const l = todos.filter((a) => (a.escola || "Sem escola") === e);
+    const at = l.filter((a) => a.estado !== "desistiu");
+    const v = [at.length, at.filter((a) => a.genero === "F").length, l.length - at.length, l.length];
+    v.forEach((x, i) => (tot[i] += x));
+    res.addRow([e, ...v, new Set(at.map((a) => a.turma).filter(Boolean)).size]);
+  });
+  if (escolasL.length > 1) res.addRow(["Total", ...tot, ""]).font = { bold: true };
+  // Folhas de alunos
+  if (!escola) folha("Todos", todos);
+  escolasL.forEach((e) => folha(e, todos.filter((a) => (a.escola || "Sem escola") === e)));
+  const buf = await wb.xlsx.writeBuffer();
+  await descarregarXlsx(buf, `Alunos ${escola || "todas as escolas"} ${epoca.replace("/", "-")} ${isoDe(new Date())}.xlsx`);
+  return todos.length;
+}
+
 function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma }) {
   const [gerir, setGerir] = useState(false);
+  const [aGerarExcel, setAGerarExcel] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
   const epocaHoje = epocaDe(isoDe(new Date()));
   const epocasReg = Object.keys(registoAlunos || {}).sort().reverse();
@@ -4644,6 +4736,26 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           <span style={{ fontSize: 12, color: COLORS.slate }}>{ultima ? `Atualizado a ${fmt(new Date(ultima.data + "T00:00:00"))}` : ""}</span>
         </div>
         <div className="semFoto" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {reg && (
+            <button
+              className="press"
+              disabled={aGerarExcel}
+              title={escolaSel ? `Alunos de ${escolaSel} na época ${epoca}` : `Todos os alunos da época ${epoca}: folha geral e uma folha por escola`}
+              onClick={async () => {
+                setAGerarExcel(true);
+                try {
+                  await gerarExcelAlunos(reg, epoca, escolaSel, niveis);
+                } catch (e) {
+                  alert(`Não foi possível gerar o Excel: ${e?.message || e}`);
+                } finally {
+                  setAGerarExcel(false);
+                }
+              }}
+              style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 6, opacity: aGerarExcel ? 0.6 : 1 }}
+            >
+              <FileText size={14} /> {aGerarExcel ? "A gerar…" : escolaSel ? "Excel da escola" : "Excel de todos os alunos"}
+            </button>
+          )}
           {reg && <BotaoFoto alvo={fotoRef} titulo={`Balanço de inscritos · ${escolaSel || "Todas as escolas"}`} subtitulo={`Época ${epoca}`} nome={`Balanço inscritos ${escolaSel || "geral"} ${isoDe(new Date())}`} />}
           {gestaoDados && (
             <>
