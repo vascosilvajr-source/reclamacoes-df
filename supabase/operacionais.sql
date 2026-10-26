@@ -118,7 +118,7 @@ declare
   v_ref date := (p_hoje - interval '1 year')::date;
   v_at int; v_ant int; v_des int; v_conv int; v_nao int; v_tecab int;
   v_var numeric; v_taxa numeric; v_cv numeric; v_tx jsonb;
-  v_atencao jsonb := '[]'::jsonb; v_destaque jsonb := '[]'::jsonb; v_tecnicas jsonb := '[]'::jsonb;
+  v_atencao jsonb := '[]'::jsonb; v_destaque jsonb := '[]'::jsonb; v_tecnicas jsonb := '[]'::jsonb; v_abertas jsonb := '[]'::jsonb;
   v_resumos jsonb := '[]'::jsonb; v_desl jsonb := '[]'::jsonb; v_rt jsonb; v_ini date := privado.inicio_epoca(p_hoje);
   t_at int := 0; t_ant int := 0; t_des int := 0; t_conv int := 0; t_nao int := 0;
 begin
@@ -176,13 +176,17 @@ begin
       v_atencao := v_atencao || jsonb_build_array(jsonb_build_object('escola', e, 'texto', format('%s %s de tema técnico em aberto', v_tecab, case when v_tecab = 1 then 'reclamação' else 'reclamações' end)));
     end if;
 
-    -- reclamações de temas técnicos ainda em aberto (as concluídas já não entram)
-    select coalesce(jsonb_agg(jsonb_build_object('escola', e, 'numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
-             'estado', 'em aberto', 'token', privado.link_reclamacao(e, x)) order by x->>'receivedDate' desc), '[]'::jsonb)
+    -- todas as reclamações ainda não concluídas (de qualquer tema), com link para a descrição
+    select coalesce(jsonb_agg(jsonb_build_object('escola', e, 'numero', x->>'entryNumber', 'tema', coalesce(nullif(x->>'tema', ''), x->>'categoria', ''),
+             'recebida', x->>'receivedDate', 'prazo', left(coalesce(x->>'deadline', ''), 10), 'tecnica', v_tem ? coalesce(x->>'tema', ''),
+             'estado', case when coalesce(x->>'deadline', '') ~ '^\d{4}-\d{2}-\d{2}' and left(x->>'deadline', 10)::date < p_hoje then 'atrasada'
+                            when x->>'status' = 'em_andamento' then 'em andamento' else 'por iniciar' end,
+             'token', privado.link_reclamacao(e, x)) order by x->>'receivedDate' desc), '[]'::jsonb)
       into v_tx
       from jsonb_array_elements(v_rec) x
-     where x->>'school' = e and v_tem ? coalesce(x->>'tema', '') and x->>'status' <> 'concluido';
-    v_tecnicas := v_tecnicas || v_tx;
+     where x->>'school' = e and coalesce(x->>'status', '') <> 'concluido';
+    v_abertas := v_abertas || v_tx;
+    v_tecnicas := v_tecnicas || coalesce((select jsonb_agg(t) from jsonb_array_elements(v_tx) t where (t->>'tecnica')::boolean), '[]'::jsonb);
     -- resumo da época: reclamações de origem técnica e temas mais mencionados
     v_rt := privado.resumo_tecnicas(v_rec, v_tem, e, v_ini);
     if (v_rt->>'total')::int > 0 then v_resumos := v_resumos || jsonb_build_array(jsonb_build_object('escola', e) || v_rt); end if;
@@ -192,12 +196,14 @@ begin
     'rede', jsonb_build_object('inscritos', t_at, 'anterior', t_ant, 'desistencias', t_des,
         'convertidas', t_conv, 'naoConvertidas', t_nao),
     'atencao', v_atencao, 'destaque', v_destaque, 'tecnicas', v_tecnicas,
+    -- todas as reclamações em andamento (as atrasadas primeiro)
+    'abertas', coalesce((select jsonb_agg(a order by case a->>'estado' when 'atrasada' then 0 when 'em andamento' then 1 else 2 end, a->>'recebida') from jsonb_array_elements(v_abertas) a), '[]'::jsonb),
     'desistencias', coalesce((select jsonb_agg(r order by (r->>'n')::int desc, r->>'escola') from (select r from jsonb_array_elements(v_desl) r order by (r->>'n')::int desc limit 5) q(r)), '[]'::jsonb),
     'resumoTecnicas', coalesce((select jsonb_agg(r order by (r->>'total')::int desc, r->>'escola') from jsonb_array_elements(v_resumos) r), '[]'::jsonb),
     'temasTecnicos', v_tem);
 end $$;
 
--- 3. Chamada de hora a hora pelo agente do Google. Só prepara envios à segunda-feira (a partir das 8h)
+-- 3. Chamada pelo agente do Google. Só prepara envios à terça-feira (a partir das 8h)
 --    ou quando se carrega em "Enviar agora" na app. Devolve ao agente a lista de e-mails a enviar.
 create or replace function public.op_preparar(p_token text)
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
@@ -222,7 +228,8 @@ begin
   v_pedido := v_opc->'pedidoEnvioOperacionais'->>'em';
   v_ultimo := coalesce(v_env->>'ultimo', '');
   v_forcado := v_pedido is not null and v_pedido > v_ultimo;
-  v_semanal := extract(isodow from v_lx) = 1 and extract(hour from v_lx) >= 8
+  -- à terça-feira: à segunda atualizam-se os dados (mapa de acompanhamento) e o resumo ainda não está certo
+  v_semanal := extract(isodow from v_lx) = 2 and extract(hour from v_lx) >= 8
                and (v_ultimo = '' or (v_ultimo::timestamptz at time zone 'Europe/Lisbon')::date < v_hoje);
   if not v_forcado and not v_semanal then return jsonb_build_object('enviar', false); end if;
 
@@ -328,8 +335,12 @@ begin
     end if;
   end loop;
 
-  -- ---- coordenador geral: escolas a precisar de atenção, escolas em destaque e reclamações técnicas ----
-  v_gem := privado.emails_validos(v_opc->'emailsCoordenadorGeral');
+  -- ---- resumo da rede: coordenador geral, responsável de área da auditoria e direção executiva ----
+  --      (escolas a precisar de atenção, escolas em destaque e todas as reclamações em andamento)
+  v_gem := privado.emails_validos(
+             privado.emails_validos(v_opc->'emailsCoordenadorGeral')
+          || privado.emails_validos(v_opc->'emailsResponsavelAuditoria')
+          || privado.emails_validos(v_opc->'emailsDirecaoExecutiva'));
   if jsonb_array_length(v_gem) > 0 then
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
@@ -524,7 +535,7 @@ grant execute on function public.op_eficacia_pendentes(text) to anon, authentica
 
 -- 6b. Lembretes: e-mails com link (operacionais e avaliação de eficácia) enviados há mais de 24 horas
 --     cujo link ainda não foi aberto nem respondido recebem UM lembrete, em dia útil entre as 8h e as 19h.
---     O e-mail genérico continua a sair só à segunda-feira.
+--     O e-mail genérico continua a sair só à terça-feira.
 create or replace function privado.enfileirar_lembretes() returns int language plpgsql as $$
 declare v_lx timestamp := now() at time zone 'Europe/Lisbon'; v_n int;
 begin

@@ -14,9 +14,11 @@ export function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
   const [responder, setResponder] = useState((options.emailResponderOperacionais || []).join(", "));
   const [motivos, setMotivos] = useState((options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO).join("\n"));
   const [geral, setGeral] = useState((options.emailsCoordenadorGeral || []).join("\n"));
+  const [respAud, setRespAud] = useState((options.emailsResponsavelAuditoria || []).join("\n"));
+  const [direcao, setDirecao] = useState((options.emailsDirecaoExecutiva || []).join("\n"));
   const [tecnicos, setTecnicos] = useState(options.temasTecnicos || []);
   const [filtro, setFiltro] = useState("");
-  const invalidos = [...Object.values(ops), ...Object.values(cts), responder, geral]
+  const invalidos = [...Object.values(ops), ...Object.values(cts), responder, geral, respAud, direcao]
     .flatMap((t) => String(t || "").split(/[\s,;]+/).filter(Boolean))
     .filter((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
   const guardar = () => {
@@ -26,6 +28,8 @@ export function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
       emailsCoordenadores: limpa(cts),
       emailResponderOperacionais: lerEmails(responder),
       emailsCoordenadorGeral: lerEmails(geral),
+      emailsResponsavelAuditoria: lerEmails(respAud),
+      emailsDirecaoExecutiva: lerEmails(direcao),
       temasTecnicos: tecnicos.filter((t) => (options.categories || []).includes(t)),
       motivosExperiencia: [...new Set(motivos.split("\n").map((x) => x.trim()).filter(Boolean))],
     });
@@ -51,7 +55,7 @@ export function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
     >
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55 }}>
-          <strong>Operacionais</strong> recebem à segunda-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas, e as reclamações dos temas técnicos, cada uma com link para ver a descrição. <strong>Coordenador geral</strong> recebe, à segunda-feira, um resumo da rede: escolas que precisam de atenção, escolas em destaque e reclamações de temas técnicos.
+          <strong>Operacionais</strong> recebem à terça-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas, e as reclamações dos temas técnicos, cada uma com link para ver a descrição. <strong>Coordenador técnico geral, responsável de área da auditoria e direção executiva</strong> recebem, à terça-feira, o resumo da rede: escolas que precisam de atenção, escolas em destaque, escolas com mais desistências e todas as reclamações em andamento.
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>
@@ -92,10 +96,19 @@ export function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
           <textarea rows={5} value={motivos} onChange={(e) => setMotivos(e.target.value)} style={{ ...ta, width: "100%" }} />
         </label>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>
-            Coordenador geral (e-mails)
-            <textarea rows={Math.max(2, String(geral || "").split("\n").length)} value={geral} onChange={(e) => setGeral(e.target.value)} placeholder="coordenador.geral@…" style={{ ...ta, width: "100%" }} />
-          </label>
+          <div style={{ flex: "1 1 260px", display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 12, color: COLORS.slate }}>Resumo semanal da rede (vai igual para os três):</div>
+            {[
+              ["Coordenador técnico geral", geral, setGeral, "coordenador.geral@…"],
+              ["Responsável de área da auditoria", respAud, setRespAud, "auditoria@…"],
+              ["Direção executiva", direcao, setDirecao, "direcao@…"],
+            ].map(([rot, v, set, ph]) => (
+              <label key={rot} style={{ display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>
+                {rot} (e-mails)
+                <textarea rows={Math.max(2, String(v || "").split("\n").length)} value={v} onChange={(e) => set(e.target.value)} placeholder={ph} style={{ ...ta, width: "100%" }} />
+              </label>
+            ))}
+          </div>
           <div style={{ flex: "1 1 340px", display: "grid", gap: 6, fontSize: 12.5, color: COLORS.ink2 }}>
             <span>Temas de reclamação que contam como técnicos (aparecem no resumo do coordenador geral)</span>
             {(options.categories || []).length === 0 ? (
@@ -307,7 +320,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
   }, [carregar]);
   const comOp = escolas.filter((e) => ((op.contactos.emailsOperacionais || {})[e] || []).length).length;
   const comCt = escolas.filter((e) => ((op.contactos.emailsCoordenadores || {})[e] || []).length).length;
-  const comGeral = (op.contactos.emailsCoordenadorGeral || []).length;
+  const comGeral = [...(op.contactos.emailsCoordenadorGeral || []), ...(op.contactos.emailsResponsavelAuditoria || []), ...(op.contactos.emailsDirecaoExecutiva || [])].length;
   const pedidoEm = op.pedidoEnvio && op.pedidoEnvio.em;
   const pendente = pedidoEm && (!envio || !envio.ultimo || pedidoEm > envio.ultimo);
   const hojeISO = new Date().toISOString();
@@ -346,7 +359,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
         )}
       </div>
       <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px", lineHeight: 1.5 }}>
-        À segunda-feira: aos operacionais, experiências com mais de 2 semanas por decidir e turmas do plano sem alunos; ao coordenador técnico, reclamações técnicas em aberto e o resumo da época; ao coordenador geral, o resumo da rede. Os pedidos de avaliação de eficácia saem quando os envias numa reclamação. Quem não abrir o link recebe um lembrete no dia seguinte. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "coordenador geral definido" : "sem coordenador geral"}.
+        À terça-feira (à segunda atualizam-se os dados): aos operacionais, experiências com mais de 2 semanas por decidir e turmas do plano sem alunos; ao coordenador técnico, reclamações técnicas em aberto e o resumo da época; ao coordenador técnico geral, à responsável de área da auditoria e à direção executiva, o resumo da rede com todas as reclamações em andamento. Os pedidos de avaliação de eficácia saem quando os envias numa reclamação. Quem não abrir o link recebe um lembrete no dia seguinte. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "resumo da rede com destinatários" : "resumo da rede sem destinatários"}.
         {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
       </div>
       {(() => {
