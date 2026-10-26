@@ -3042,6 +3042,28 @@ function AppPrincipal({ onSair }) {
     return { mudados, naoEncontrados };
   };
 
+  // Mudanças de turma propostas pelos operacionais e validadas na app: [{ epoca, escola, aluno, para }].
+  // Uma só gravação por época, para várias mudanças seguidas não se atropelarem.
+  const aplicarAlteracoesOperacional = (lista) => {
+    let mudados = 0;
+    const naoEncontrados = [];
+    [...new Set(lista.map((x) => x.epoca))].forEach((ep) => {
+      const reg = registoAlunos[ep];
+      const alunos = { ...((reg && reg.alunos) || {}) };
+      let mudou = false;
+      lista.filter((x) => x.epoca === ep).forEach((x) => {
+        const a = alunos[x.aluno];
+        if (!a) return naoEncontrados.push(x.aluno);
+        if (a.turma === x.para && a.escola === x.escola) return;
+        alunos[x.aluno] = { ...a, turma: x.para, escola: x.escola, turmaAntes: a.turma, mudadoPor: "operacional" };
+        mudados++;
+        mudou = true;
+      });
+      if (mudou) gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos }));
+    });
+    return { mudados, naoEncontrados };
+  };
+
   // Mudança de turma/equipa à mão. Fica marcada e a importação semanal respeita-a enquanto
   // o ficheiro continuar a trazer a turma antiga; se o ficheiro mudar, vale o ficheiro.
   const mudarTurmaAluno = (ep, id, turma) => {
@@ -3453,6 +3475,7 @@ function AppPrincipal({ onSair }) {
       notificar("Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
     },
     onAplicarIds: aplicarIdsOperacional,
+    onAplicarAlteracoes: aplicarAlteracoesOperacional,
     onMotivo: motivoExperiencia,
     onTurmaFicou: turmaFicouExperiencia,
   };

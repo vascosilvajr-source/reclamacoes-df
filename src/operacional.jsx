@@ -67,6 +67,124 @@ const faltaNova = (n) => {
 const lerIds = (t) =>
   [...new Set(String(t || "").split(/[\s,;]+/).map((x) => x.trim()).filter((x) => /^[0-9A-Za-z-]{1,20}$/.test(x)))];
 
+
+// Lotação de cada turma/equipa. Ao clicar abre os códigos dos alunos dessa turma, onde se pode propor
+// a mudança de turma. As propostas ficam sempre pendentes até a gestão da qualidade as validar.
+function LotacaoTurmas({ token, itens, propostas: iniciais }) {
+  const lotacao = itens.lotacao || [];
+  const alunosTurmas = itens.alunosTurmas || {};
+  const turmasEscola = itens.turmasEscola || [];
+  const [aberta, setAberta] = useState(null);
+  const [alt, setAlt] = useState({}); // código → turma de destino
+  const [extra, setExtra] = useState("");
+  const [pend, setPend] = useState(iniciais || []);
+  const [msg, setMsg] = useState("");
+  const [aEnviar, setAEnviar] = useState(false);
+  const pendDe = (id) => pend.find((x) => x.id === id);
+  const nAlt = Object.keys(alt).length;
+  const enviar = async () => {
+    setAEnviar(true);
+    setMsg("");
+    const lista = Object.entries(alt).map(([id, para]) => ({ id, para }));
+    const { data, error } = await supabase.rpc("op_propor_alteracoes", { p_token: token, p_alt: lista });
+    setAEnviar(false);
+    if (error) return setMsg("Não consegui enviar. Tenta outra vez.");
+    setPend((l) => [...l.filter((x) => !alt[x.id]), ...lista.map((x) => ({ id: x.id, de: null, para: x.para }))]);
+    setAlt({});
+    setMsg(`${data.propostas} alteração(ões) enviada(s) para validação${data.invalidas ? ` · ${data.invalidas} ignorada(s) (código que não existe na app)` : ""}.`);
+  };
+  const ids = aberta ? alunosTurmas[aberta] || [] : [];
+  const opcoes = (atual) => turmasEscola.filter((t) => t !== atual);
+  const juntarExtra = () => {
+    const id = extra.trim();
+    if (!/^[0-9A-Za-z-]{1,20}$/.test(id)) return setMsg("Código inválido.");
+    setAlt((a) => ({ ...a, [id]: aberta }));
+    setExtra("");
+    setMsg("");
+  };
+  return (
+    <section className="opSeccao">
+      <h2>Lotação das turmas e equipas</h2>
+      <p className="opNota">Alunos inscritos e lotação de cada turma. Carrega numa turma para ver os códigos e propor mudanças. Nada muda na app até a gestão da qualidade validar.</p>
+      <div style={{ display: "grid", gap: 6 }}>
+        {lotacao.map((l) => {
+          const cheia = l.cap && l.alunos > l.cap;
+          return (
+            <button key={l.turma} type="button" onClick={() => setAberta(l.turma)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: `1px solid ${LINHA}`, borderRadius: 10, background: "#fff", cursor: "pointer", textAlign: "left", font: "inherit", color: TINTA }}>
+              <strong style={{ flex: 1 }}>{l.turma}</strong>
+              <span style={{ fontVariantNumeric: "tabular-nums", color: cheia ? LARANJA : CINZA, fontWeight: cheia ? 700 : 500 }}>
+                {l.alunos}
+                {l.cap ? ` / ${l.cap}` : ""} alunos
+              </span>
+              <span style={{ color: AZUL, fontSize: 12.5, fontWeight: 600 }}>Ver códigos</span>
+            </button>
+          );
+        })}
+      </div>
+      {pend.length > 0 && (
+        <p className="opNota" style={{ marginTop: 10 }}>
+          Pendentes de validação: {pend.map((x) => `${x.id} → ${x.para}`).join(" · ")}
+        </p>
+      )}
+      {msg && <p className="opNota" style={{ color: VERDE, marginTop: 8 }}>{msg}</p>}
+      {aberta && (
+        <div role="dialog" aria-modal="true" aria-label={`Alunos da turma ${aberta}`} onClick={() => setAberta(null)} style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 520, width: "100%", maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${LINHA}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <strong style={{ flex: 1, fontSize: 16 }}>
+                {aberta} · {ids.length} {ids.length === 1 ? "aluno" : "alunos"}
+              </strong>
+              <button type="button" onClick={() => setAberta(null)} style={{ border: "none", background: "none", fontSize: 20, cursor: "pointer", color: CINZA }} aria-label="Fechar">
+                ×
+              </button>
+            </div>
+            <div style={{ padding: 16, overflowY: "auto", display: "grid", gap: 8 }}>
+              {ids.length === 0 && <div style={{ color: CINZA, fontSize: 13 }}>Sem alunos inscritos nesta turma.</div>}
+              {ids.map((id) => {
+                const p = pendDe(id);
+                return (
+                  <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <strong style={{ minWidth: 70 }}>{id}</strong>
+                    <select value={alt[id] || ""} onChange={(e) => setAlt((a) => { const n = { ...a }; if (e.target.value) n[id] = e.target.value; else delete n[id]; return n; })} aria-label={`Mudar o aluno ${id} para`} style={{ padding: "6px 8px", borderRadius: 8, border: `1px solid ${LINHA}`, font: "inherit", fontSize: 13 }}>
+                      <option value="">Fica nesta turma</option>
+                      {opcoes(aberta).map((t) => (
+                        <option key={t} value={t}>
+                          Mudar para {t}
+                        </option>
+                      ))}
+                    </select>
+                    {p && !alt[id] && <span style={{ fontSize: 12, color: AMBAR }}>pendente: {p.para}</span>}
+                  </div>
+                );
+              })}
+              {Object.entries(alt).filter(([id, para]) => para === aberta && !ids.includes(id)).map(([id]) => (
+                <div key={id} style={{ fontSize: 13, color: AZUL }}>
+                  <strong>{id}</strong> passa para esta turma{" "}
+                  <button type="button" onClick={() => setAlt((a) => { const n = { ...a }; delete n[id]; return n; })} style={{ border: "none", background: "none", color: CINZA, cursor: "pointer", textDecoration: "underline" }}>
+                    tirar
+                  </button>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${LINHA}`, paddingTop: 10 }}>
+                <input value={extra} onChange={(e) => setExtra(e.target.value)} maxLength={20} placeholder="Código de um aluno a juntar a esta turma" inputMode="numeric" style={{ flex: "1 1 220px", padding: "7px 9px", borderRadius: 8, border: `1px solid ${LINHA}`, font: "inherit", fontSize: 13 }} />
+                <button type="button" onClick={juntarExtra} style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${LINHA}`, background: "#fff", cursor: "pointer", font: "inherit", fontSize: 13 }}>
+                  Juntar
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: "12px 16px", borderTop: `1px solid ${LINHA}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ flex: 1, fontSize: 12.5, color: CINZA }}>{nAlt ? `${nAlt} alteração(ões) por enviar` : "Sem alterações"}</span>
+              <button type="button" disabled={!nAlt || aEnviar} onClick={async () => { await enviar(); setAberta(null); }} style={{ padding: "9px 16px", borderRadius: 10, border: "none", background: nAlt ? AZUL : "#B8C0CE", color: "#fff", fontWeight: 600, cursor: nAlt ? "pointer" : "default", font: "inherit" }}>
+                {aEnviar ? "A enviar…" : "Enviar para validação"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Operacional({ token }) {
   const [estado, setEstado] = useState("a carregar");
   const [pedido, setPedido] = useState(null);
@@ -434,6 +552,8 @@ export default function Operacional({ token }) {
                   </div>
                 </section>
               )}
+
+              {(itens.lotacao || []).length > 0 && <LotacaoTurmas token={token} itens={itens} propostas={pedido.propostas} />}
 
               {turmasEscola.length > 0 && (
                 <section className="opSeccao">

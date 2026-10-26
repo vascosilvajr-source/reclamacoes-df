@@ -205,6 +205,40 @@ end $$;
 
 -- 3. Chamada pelo agente do Google. Só prepara envios à terça-feira (a partir das 8h)
 --    ou quando se carrega em "Enviar agora" na app. Devolve ao agente a lista de e-mails a enviar.
+-- 3b. Lotação por turma (para o e-mail e para a janela do operacional) e alterações propostas por eles.
+create or replace function privado.ordem_turma(t text) returns numeric language sql immutable as $$
+  select case
+    when lower(t) like 'raíz%' or lower(t) like 'raiz%' then 1
+    when lower(t) like 'inicia%' then 2
+    when lower(t) like 'básico%' or lower(t) like 'basico%' then 3
+    when lower(t) like 'intermédio%' or lower(t) like 'intermedio%' then 4
+    when lower(t) like 'avançado%' or lower(t) like 'avancado%' then 5
+    when lower(t) like 'expert%' then 6
+    when lower(t) ~ '^sub[\s-]*\d+' then 100 + (substring(lower(t) from '^sub[\s-]*(\d+)'))::numeric
+    else 999 end $$;
+create or replace function privado.lotacao_turma(p_opc jsonb, p_escola text, p_turma text) returns int language sql immutable as $$
+  select coalesce(
+    nullif(case when (p_opc->'capacidades'->>(p_escola || '|' || p_turma)) ~ '^\d+$' then (p_opc->'capacidades'->>(p_escola || '|' || p_turma))::int end, 0),
+    case privado.ordem_turma(p_turma) when 1 then 8 when 2 then 10 when 3 then 12 when 4 then 14 when 5 then 16 when 6 then 18 end) $$;
+
+create table if not exists public.alteracoes_turma (
+  id bigserial primary key,
+  criado timestamptz not null default now(),
+  escola text not null,
+  epoca text not null,
+  aluno text not null,
+  de text,
+  para text not null,
+  estado text not null default 'pendente',   -- pendente | aceite | rejeitada
+  decidido_em timestamptz
+);
+create unique index if not exists alteracoes_turma_pendente on public.alteracoes_turma (escola, epoca, aluno) where estado = 'pendente';
+alter table public.alteracoes_turma enable row level security;
+drop policy if exists "app autenticada vê alterações" on public.alteracoes_turma;
+create policy "app autenticada vê alterações" on public.alteracoes_turma for select to authenticated using ((select public.e_equipa()));
+drop policy if exists "app autenticada decide alterações" on public.alteracoes_turma;
+create policy "app autenticada decide alterações" on public.alteracoes_turma for update to authenticated using ((select public.e_equipa())) with check ((select public.e_equipa()));
+
 create or replace function public.op_preparar(p_token text)
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
 declare
@@ -216,7 +250,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
-  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -280,13 +314,21 @@ begin
           select distinct pt.turma from jsonb_array_elements(v_esp) s,
                  lateral (select jsonb_array_elements_text(case when jsonb_typeof(s->'turmas') = 'array' and jsonb_array_length(s->'turmas') > 0 then s->'turmas' else jsonb_build_array(coalesce(s->>'turma','')) end) turma) pt
            where s->>'escola' = e and pt.turma <> '') q;
+        select coalesce(jsonb_agg(jsonb_build_object('turma', t, 'alunos', n, 'cap', privado.lotacao_turma(v_opc, e, t)) order by privado.ordem_turma(t), t), '[]'::jsonb) into v_lot
+          from (select tt.t, (select count(*) from jsonb_each(coalesce(v_reg->'alunos','{}'::jsonb)) a(id, al)
+                               where al->>'escola' = e and al->>'turma' = tt.t and al->>'estado' = 'ativo') n
+                  from jsonb_array_elements_text(v_turmasEsc) tt(t) where tt.t <> 'Sem turma') q;
+        select coalesce(jsonb_object_agg(turma, ids), '{}'::jsonb) into v_at
+          from (select al->>'turma' turma, jsonb_agg(a.id order by a.id) ids
+                  from jsonb_each(coalesce(v_reg->'alunos','{}'::jsonb)) a(id, al)
+                 where al->>'escola' = e and al->>'estado' = 'ativo' and coalesce(al->>'turma','') <> '' group by 1) q;
         v_tok := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
         insert into pedidos_operacionais (token, escola, emails, expira, itens)
         values (v_tok, e, v_em, v_agora + interval '10 days',
-                jsonb_build_object('epoca', v_ep, 'experiencias', v_xp, 'turmas', v_tu, 'turmasEscola', v_turmasEsc,
+                jsonb_build_object('epoca', v_ep, 'experiencias', v_xp, 'turmas', v_tu, 'turmasEscola', v_turmasEsc, 'lotacao', v_lot, 'alunosTurmas', v_at,
                                    'motivos', coalesce(v_opc->'motivosExperiencia', '["Técnico (treino ou treinador)","Horário","Preço","Distância ou transporte","Escolheu outro clube","Outra modalidade","Família sem resposta","Outro"]'::jsonb)));
         v_ops := v_ops || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'token', v_tok,
-                   'experiencias', jsonb_array_length(v_xp), 'turmas', jsonb_array_length(v_tu)));
+                   'experiencias', jsonb_array_length(v_xp), 'turmas', jsonb_array_length(v_tu), 'lotacao', v_lot));
       end if;
     end if;
 
@@ -375,7 +417,9 @@ begin
   -- Primeira abertura do link: deixa de precisar de lembrete.
   update pedidos_operacionais set aberto_em = now() where token = p_token and aberto_em is null;
   select jsonb_build_object('escola', p.escola, 'itens', p.itens, 'respostas', p.respostas, 'respondido_em', p.respondido_em,
-    'expira', p.expira, 'expirado', p.expira < now())
+    'expira', p.expira, 'expirado', p.expira < now(),
+    'propostas', (select coalesce(jsonb_agg(jsonb_build_object('id', c.aluno, 'de', c.de, 'para', c.para) order by c.id), '[]'::jsonb)
+                    from alteracoes_turma c where c.escola = p.escola and c.estado = 'pendente'))
     into v from pedidos_operacionais p where p.token = p_token;
   return v;
 end $$;
@@ -504,6 +548,36 @@ begin
 end $$;
 revoke all on function public.op_responder(text, jsonb) from public;
 grant execute on function public.op_responder(text, jsonb) to anon, authenticated;
+
+-- 5b. Alterações de turma propostas pelo operacional: ficam sempre pendentes até validares na app.
+--     p_alt = [{"id": "22534", "para": "Iniciação A"}, ...]. Só turmas da escola e códigos que existem na época.
+create or replace function public.op_propor_alteracoes(p_token text, p_alt jsonb)
+returns jsonb language plpgsql security definer set search_path to 'public' as $$
+declare
+  p pedidos_operacionais; x jsonb; v_id text; v_para text; v_ep text; v_de text; v_al jsonb; v_n int := 0; v_inv int := 0;
+begin
+  select * into p from pedidos_operacionais where token = p_token and length(coalesce(p_token,'')) >= 32;
+  if p.token is null then raise exception 'pedido inexistente'; end if;
+  if p.expira < now() then raise exception 'pedido expirado'; end if;
+  if p.itens ? 'tipo' then raise exception 'pedido sem turmas'; end if;
+  if jsonb_typeof(p_alt) <> 'array' then raise exception 'formato inválido'; end if;
+  v_ep := p.itens->>'epoca';
+  select value->v_ep->'alunos' into v_al from app_storage where key = 'reclamacoes:alunos';
+  for x in select value from jsonb_array_elements(p_alt) limit 80 loop
+    v_id := trim(coalesce(x->>'id', '')); v_para := trim(coalesce(x->>'para', ''));
+    if v_id !~ '^[0-9A-Za-z-]{1,20}$' or not (coalesce(p.itens->'turmasEscola', '[]'::jsonb) ? v_para) or not (coalesce(v_al, '{}'::jsonb) ? v_id) then
+      v_inv := v_inv + 1; continue;
+    end if;
+    v_de := v_al->v_id->>'turma';
+    if v_de = v_para and v_al->v_id->>'escola' = p.escola then continue; end if;
+    delete from alteracoes_turma where escola = p.escola and epoca = v_ep and aluno = v_id and estado = 'pendente';
+    insert into alteracoes_turma (escola, epoca, aluno, de, para) values (p.escola, v_ep, v_id, v_de, v_para);
+    v_n := v_n + 1;
+  end loop;
+  return jsonb_build_object('ok', true, 'propostas', v_n, 'invalidas', v_inv);
+end $$;
+revoke all on function public.op_propor_alteracoes(text, jsonb) from public;
+grant execute on function public.op_propor_alteracoes(text, jsonb) to anon, authenticated;
 
 -- 6. Avaliação da eficácia de reclamações: o agente pede, de hora a hora, os pedidos criados pela app
 --    que ainda não foram enviados (um por papel: operacional e coordenador) e marca-os como enviados.

@@ -293,6 +293,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
   const [aAplicar, setAAplicar] = useState(null);
   const [verTodos, setVerTodos] = useState(false);
   const [fila, setFila] = useState(null);
+  const [alteracoes, setAlteracoes] = useState([]);
   const carregar = useCallback(async () => {
     // Fila de e-mails (só tipo, escola e estado): o que ainda não saiu e o que falhou.
     try {
@@ -307,6 +308,12 @@ export function PainelEmailsEscolas({ op, escolas }) {
       setPedidos(data || []);
     } catch (e) {
       setPedidos([]);
+    }
+    try {
+      const { data } = await supabase.from("alteracoes_turma").select("id,escola,epoca,aluno,de,para,criado").eq("estado", "pendente").order("id");
+      setAlteracoes(data || []);
+    } catch (e) {
+      setAlteracoes([]);
     }
     try {
       const r = await dbStorage.get("reclamacoes:operacionais-envio");
@@ -333,6 +340,25 @@ export function PainelEmailsEscolas({ op, escolas }) {
       const r = op.onAplicarIds(p);
       await supabase.from("pedidos_operacionais").update({ ids_aplicados_em: new Date().toISOString() }).eq("token", p.token);
       op.notificar(`${r.mudados} ${r.mudados === 1 ? "aluno mudou" : "alunos mudaram"} de turma em ${p.escola}${r.naoEncontrados.length ? ` · ${r.naoEncontrados.length} códigos não existem na app: ${r.naoEncontrados.slice(0, 6).join(", ")}${r.naoEncontrados.length > 6 ? "…" : ""}` : ""}.`, r.naoEncontrados.length ? "aviso" : "ok", 9000);
+      await carregar();
+    } finally {
+      setAAplicar(null);
+    }
+  };
+  // Mudanças de turma propostas pelos operacionais: ficam pendentes até serem aceites ou rejeitadas aqui.
+  const decidirAlteracoes = async (lista, aceitar) => {
+    if (!lista.length) return;
+    setAAplicar("alteracoes");
+    try {
+      let msg = `${lista.length} ${lista.length === 1 ? "proposta rejeitada" : "propostas rejeitadas"}.`;
+      let nivel = "ok";
+      if (aceitar) {
+        const r = op.onAplicarAlteracoes(lista.map((x) => ({ epoca: x.epoca, escola: x.escola, aluno: x.aluno, para: x.para })));
+        msg = `${r.mudados} ${r.mudados === 1 ? "aluno mudou" : "alunos mudaram"} de turma.${r.naoEncontrados.length ? ` Códigos que já não existem: ${r.naoEncontrados.join(", ")}.` : ""}`;
+        if (r.naoEncontrados.length) nivel = "aviso";
+      }
+      await supabase.from("alteracoes_turma").update({ estado: aceitar ? "aceite" : "rejeitada", decidido_em: new Date().toISOString() }).in("id", lista.map((x) => x.id));
+      op.notificar(msg, nivel, 7000);
       await carregar();
     } finally {
       setAAplicar(null);
@@ -412,6 +438,35 @@ export function PainelEmailsEscolas({ op, escolas }) {
           </div>
         );
       })()}
+      {alteracoes.length > 0 && (
+        <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Mudanças de turma propostas pelos operacionais ({alteracoes.length})</div>
+            <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes(alteracoes, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>
+              Rejeitar todas
+            </button>
+            <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes(alteracoes, true)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "4px 10px", fontSize: 12 }}>
+              Aceitar todas
+            </button>
+          </div>
+          {alteracoes.map((x) => (
+            <div key={x.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+              <strong>{x.escola}</strong>
+              <span>
+                aluno {x.aluno}: {x.de || "—"} → <strong>{x.para}</strong>
+              </span>
+              <span style={{ color: COLORS.slate }}>proposto a {quando(x.criado)}</span>
+              <span style={{ flex: 1 }} />
+              <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes([x], false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>
+                Rejeitar
+              </button>
+              <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes([x], true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "3px 10px", fontSize: 12 }}>
+                Aceitar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Códigos dos alunos para confirmar</div>
