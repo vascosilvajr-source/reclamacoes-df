@@ -306,6 +306,10 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
   const comEmail = comEscola ? escolas.filter((e) => ((c[chave] || {})[e] || []).length) : [];
   const nGeral = chaveGeral ? (c[chaveGeral] || []).length : 0;
   const pronto = comEscola ? !!esc : nGeral > 0;
+  const [eu, setEu] = useState("");
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setEu((data && data.user && data.user.email) || "")).catch(() => {});
+  }, []);
   const pe = op.pedidoEnvio;
   const aEsperar = pe && (pe.papeis || pe.escolas) && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
   return (
@@ -331,6 +335,9 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
       {!comEscola && nGeral === 0 && <span style={{ color: COLORS.warn }}>Sem e-mail definido em "Contactos das escolas".</span>}
       <button disabled={!pronto || aEsperar} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar ? 1 : 0.5 }}>
         Enviar agora a este destinatário
+      </button>
+      <button disabled={!pronto || aEsperar || !eu} title={eu ? `Chega só a ${eu}` : "Sem e-mail da conta"} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel, eu); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar && eu ? 1 : 0.5 }}>
+        Pré-visualizar (enviar para mim)
       </button>
       {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
     </div>
@@ -400,7 +407,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
     }
     try {
       const { data } = await supabase.from("pedidos_operacionais").select("*").order("criado", { ascending: false }).limit(80);
-      setPedidos(data || []);
+      setPedidos((data || []).filter((p) => !p.itens?.preview));
     } catch (e) {
       setPedidos([]);
     }

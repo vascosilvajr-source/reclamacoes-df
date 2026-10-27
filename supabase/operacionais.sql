@@ -260,7 +260,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
-  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean; v_preview boolean := false; v_para jsonb; v_prevj jsonb := '{}'::jsonb;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -282,6 +282,10 @@ begin
                    then v_opc->'pedidoEnvioOperacionais'->'papeis'
                    when v_alvo is not null then '["operacional"]'::jsonb end;
   v_manual := v_papeis is not null;
+  -- Pré-visualização: o e-mail real (mesmo conteúdo e ligações) sai só para quem pediu, sem marcar nada como enviado.
+  v_para := privado.emails_validos(jsonb_build_array(coalesce(v_opc->'pedidoEnvioOperacionais'->>'para', '')));
+  v_preview := v_forcado and v_manual and coalesce(v_opc->'pedidoEnvioOperacionais'->>'preview', '') = 'true' and jsonb_array_length(v_para) > 0;
+  if v_preview then v_prevj := '{"preview": true}'::jsonb; end if;
   -- à terça-feira: à segunda atualizam-se os dados (mapa de acompanhamento) e o resumo ainda não está certo
   v_semanal := extract(isodow from v_lx) = 2 and extract(hour from v_lx) >= 8
                and (v_ultimo = '' or (v_ultimo::timestamptz at time zone 'Europe/Lisbon')::date < v_hoje);
@@ -302,7 +306,7 @@ begin
     if not privado.escola_aberta(v_opc, v_reg, e, v_ep) then continue; end if;
     if v_alvo is not null and not (v_alvo ? e) then continue; end if;
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
-    v_em := privado.emails_validos(v_opc->'emailsOperacionais'->e);
+    v_em := case when v_preview then v_para else privado.emails_validos(v_opc->'emailsOperacionais'->e) end;
     if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'operacional') then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma','')) order by x->>'data'), '[]'::jsonb) into v_xp
         from jsonb_array_elements(v_exps) x
@@ -346,7 +350,7 @@ begin
         v_tok := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
         insert into pedidos_operacionais (token, escola, emails, expira, itens)
         values (v_tok, e, v_em, v_agora + interval '10 days',
-                jsonb_build_object('epoca', v_ep, 'experiencias', v_xp, 'turmas', v_tu, 'turmasEscola', v_turmasEsc, 'lotacao', v_lot, 'alunosTurmas', v_at,
+                v_prevj || jsonb_build_object('epoca', v_ep, 'experiencias', v_xp, 'turmas', v_tu, 'turmasEscola', v_turmasEsc, 'lotacao', v_lot, 'alunosTurmas', v_at,
                                    'motivos', coalesce(v_opc->'motivosExperiencia', '["Técnico (treino ou treinador)","Horário","Preço","Distância ou transporte","Escolheu outro clube","Outra modalidade","Família sem resposta","Outro"]'::jsonb)));
         v_ops := v_ops || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'token', v_tok,
                    'experiencias', jsonb_array_length(v_xp), 'turmas', jsonb_array_length(v_tu), 'lotacao', v_lot));
@@ -354,7 +358,7 @@ begin
     end if;
 
     -- ---- coordenador técnico: motivos técnicos e turmas com muitas experiências não convertidas ----
-    v_em := privado.emails_validos(v_opc->'emailsCoordenadores'->e);
+    v_em := case when v_preview then v_para else privado.emails_validos(v_opc->'emailsCoordenadores'->e) end;
     if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'coordenador') then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma',''), 'motivo', x->>'motivo', 'nota', coalesce(x->>'nota',''))), '[]'::jsonb),
              coalesce(array_agg(x->>'id'), '{}')
@@ -386,7 +390,7 @@ begin
         v_recAv := v_recAv || v_marc;
         v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc, 'reclamacoes', v_rc,
                       'resumoTecnicas', privado.resumo_tecnicas(v_regs, coalesce(v_opc->'temasTecnicos', '[]'::jsonb), e, privado.inicio_epoca(v_hoje))));
-        if coalesce(array_length(v_avisados, 1), 0) > 0 then
+        if coalesce(array_length(v_avisados, 1), 0) > 0 and not v_preview then
           update app_storage s set value = (
             select jsonb_agg(case when x->>'id' = any(v_avisados) then x || '{"coordAvisado": true}'::jsonb else x end order by o)
               from jsonb_array_elements(s.value) with ordinality t(x, o)), updated_at = now()
@@ -404,6 +408,7 @@ begin
              case when v_papeis is null or v_papeis ? 'geral' then privado.emails_validos(v_opc->'emailsCoordenadorGeral') else '[]'::jsonb end
           || case when v_papeis is null or v_papeis ? 'auditoria' then privado.emails_validos(v_opc->'emailsResponsavelAuditoria') else '[]'::jsonb end
           || case when v_papeis is null or v_papeis ? 'direcao' then privado.emails_validos(v_opc->'emailsDirecaoExecutiva') else '[]'::jsonb end);
+  if v_preview then v_gem := v_para; end if;
   if jsonb_array_length(v_gem) > 0 and (v_papeis is null and v_alvo is null or v_papeis ?| array['geral','auditoria','direcao']) then
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
@@ -412,18 +417,18 @@ begin
 
   v_env := v_env || case when v_forcado then jsonb_build_object('ultimoPedido', v_pedido) else '{}'::jsonb end
              || case when v_manual then '{}'::jsonb else jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')) end
-             || jsonb_build_object( 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
+             || case when v_preview then '{}'::jsonb else jsonb_build_object( 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
              'ultimoResumo', jsonb_build_object('em', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'operacionais', jsonb_array_length(v_ops), 'coordenadores', jsonb_array_length(v_coords),
-                                                'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado));
+                                                'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado)) end;
   insert into app_storage (key, value, updated_at) values ('reclamacoes:operacionais-envio', v_env, now())
   on conflict (key) do update set value = excluded.value, updated_at = now();
   -- Tudo vai para a fila; o agente envia e confirma. As listas voltam vazias para um agente antigo não enviar em duplicado.
   insert into emails_fila (tipo, escola, emails, responder, dados)
-  select 'operacional', o->>'escola', o->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, o from jsonb_array_elements(v_ops) o
+  select 'operacional', o->>'escola', o->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, o || v_prevj from jsonb_array_elements(v_ops) o
   union all
-  select 'coordenador', c->>'escola', c->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, c from jsonb_array_elements(v_coords) c
+  select 'coordenador', c->>'escola', c->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, c || v_prevj from jsonb_array_elements(v_coords) c
   union all
-  select 'geral', null, v_geral->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, v_geral where v_geral is not null;
+  select 'geral', null, v_geral->'emails', privado.emails_validos(v_opc->'emailResponderOperacionais')->>0, v_geral || v_prevj where v_geral is not null;
   return jsonb_build_object('enviar', true, 'fila', jsonb_array_length(v_ops) + jsonb_array_length(v_coords) + case when v_geral is null then 0 else 1 end,
                             'operacionais', '[]'::jsonb, 'coordenadores', '[]'::jsonb, 'geral', null,
                             'responderPara', privado.emails_validos(v_opc->'emailResponderOperacionais'));
@@ -647,6 +652,7 @@ begin
        and f.enviado_em < now() - interval '24 hours'
        and f.enviado_em > now() - interval '7 days'
        and coalesce((f.dados->>'lembrete')::boolean, false) = false
+       and coalesce((f.dados->>'preview')::boolean, false) = false
        and p.aberto_em is null and p.respondido_em is null and p.lembrete_em is null and p.expira > now()
      order by p.token, f.id
   ), marca as (
