@@ -20,6 +20,29 @@ const XP_RESULTADO_META = {
   insucesso: { label: "Não converteu", color: COLORS.danger, bg: COLORS.dangerBg },
 };
 
+// Copia uma tabela: ao colar no Excel, Word ou e-mail sai em células (HTML); em texto simples sai separada por tabulações.
+async function copiarTabela(cabecalho, linhas) {
+  const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const txt = [cabecalho, ...linhas].map((l) => l.join("\t")).join("\n");
+  const cel = "border:1px solid #999;padding:3px 8px;font-family:Arial,sans-serif;font-size:13px";
+  const html = `<table style="border-collapse:collapse"><thead><tr>${cabecalho.map((c) => `<th style="${cel};background:#EEF1F6;text-align:left">${esc(c)}</th>`).join("")}</tr></thead><tbody>${linhas.map((l) => `<tr>${l.map((c) => `<td style="${cel}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  try {
+    if (window.ClipboardItem && navigator.clipboard.write) {
+      await navigator.clipboard.write([new window.ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([txt], { type: "text/plain" }) })]);
+      return true;
+    }
+    await navigator.clipboard.writeText(txt);
+    return true;
+  } catch (e) {
+    try {
+      await navigator.clipboard.writeText(txt);
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
 // Turmas/equipas que treinam juntas (no mesmo horário, nos Espaços) partilham uma só lotação:
 // se B1 e D1 treinam juntas, as vagas são para as duas, não para cada uma.
 // A lotação do grupo é a definida para o grupo; se não houver, a mais baixa entre as turmas.
@@ -3862,19 +3885,16 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                           <span style={{ fontSize: 12, color: COLORS.ink2, flex: 1 }}>Para confirmares no sistema de inscrições:</span>
                           <button
                             type="button"
-                            onClick={() => {
-                              const txt = ["Código\tEscola\tTurma", ...resultado.emFaltaLista.map((a) => `${a.semCodigo ? "(sem código)" : a.id}\t${a.escola}\t${a.turma}`)].join("\n");
-                              try {
-                                navigator.clipboard.writeText(txt);
+                            onClick={async () => {
+                              const ok = await copiarTabela(["Código", "Escola", "Turma"], resultado.emFaltaLista.map((a) => [a.semCodigo ? "(sem código)" : a.id, a.escola, a.turma]));
+                              if (ok) {
                                 setCopiadoFalta(true);
                                 setTimeout(() => setCopiadoFalta(false), 1600);
-                              } catch (e) {
-                                // sem acesso à área de transferência: os IDs ficam visíveis na lista
                               }
                             }}
                             style={{ background: "transparent", border: `1px solid ${COLORS.rule}`, borderRadius: 7, padding: "4px 10px", fontSize: 12, color: COLORS.ink, cursor: "pointer" }}
                           >
-                            {copiadoFalta ? "Copiado" : resultado.emFaltaLista.length === 1 ? "Copiar ID e escola" : "Copiar IDs e escolas"}
+                            {copiadoFalta ? "Copiado" : "Copiar em tabela"}
                           </button>
                         </div>
                         <div style={{ maxHeight: 180, overflowY: "auto", border: `1px solid ${COLORS.rule}`, borderRadius: 8, background: COLORS.paperRaised }}>
@@ -4262,22 +4282,14 @@ function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, esc
   // Lista de todos os casos do grupo (não só os visíveis), em colunas para colar no Excel ou num e-mail.
   // Só códigos, escolas e equipas, nunca nomes.
   const copiar = async () => {
-    const linhas = casos.map((c) => [c.id, c.escolaApp || "", c.turmaApp || "", c.escolaMapa || "", (c.turmas || []).map((t) => t.alvo || t.proposta).filter(Boolean).join(" + ")].join("\t"));
-    const txt = ["Código\tEscola na app\tEquipa na app\tEscola no mapa\tEquipa no mapa", ...linhas].join("\n");
-    try {
-      await navigator.clipboard.writeText(txt);
-    } catch (e) {
-      const ta = document.createElement("textarea");
-      ta.value = txt;
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch (e2) {} // eslint-disable-line no-empty
-      document.body.removeChild(ta);
+    const ok = await copiarTabela(
+      ["Código", "Escola na app", "Equipa na app", "Escola no mapa", "Equipa no mapa"],
+      casos.map((c) => [c.id, c.escolaApp || "", c.turmaApp || "", c.escolaMapa || "", (c.turmas || []).map((t) => t.alvo || t.proposta).filter(Boolean).join(" + ")])
+    );
+    if (ok) {
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
     }
-    setCopiado(true);
-    setTimeout(() => setCopiado(false), 2500);
   };
   return (
     <details open={casos.length <= 25} style={{ marginTop: 10, border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: "8px 12px" }}>
@@ -4293,7 +4305,7 @@ function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, esc
           </button>
         ))}
         <button type="button" onClick={copiar} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, fontWeight: 600 }}>
-          {copiado ? "Copiado" : `Copiar os ${casos.length} (código e escola)`}
+          {copiado ? "Copiado" : `Copiar os ${casos.length} em tabela`}
         </button>
       </div>
       <div style={{ display: "flex", flexDirection: "column" }}>
