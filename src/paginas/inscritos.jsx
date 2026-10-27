@@ -1017,6 +1017,7 @@ function alertasTurmas({ escolas, turmasAlunos, espacos, capacidades, niveis, re
   const caps = capacidades || {};
   const acima = [];
   const abaixo = [];
+  const semHorario = [];
   const ord = (a, b) => a.localeCompare(b, "pt", { numeric: true });
   (escolas || []).forEach((esc) => {
     const pt = {};
@@ -1048,6 +1049,11 @@ function alertasTurmas({ escolas, turmasAlunos, espacos, capacidades, niveis, re
     Object.values(pt).forEach((x) => {
       if (!comHorario.has(x.turma) && x.cap && x.total > x.cap) acima.push({ escola: esc, turmas: [x.turma], total: x.total, limite: x.cap, tol: 0, horarios: [], excesso: x.total - x.cap });
     });
+    // Turmas/equipas com alunos inscritos que não aparecem em nenhum horário dos Espaços da escola.
+    const blocosEsc = (espacos || []).filter((b) => normChave(b.escola) === normChave(esc));
+    const noPlano = new Set(blocosEsc.flatMap((b) => turmasDoBloco(b)).map((n) => compactoTurma(n)));
+    const orfas = Object.values(pt).filter((x) => x.total > 0 && !noPlano.has(compactoTurma(x.turma)));
+    if (orfas.length) semHorario.push({ escola: esc, semPlano: !blocosEsc.length, turmas: orfas.sort((a, b) => ord(a.turma, b.turma)).map((x) => ({ turma: x.turma, total: x.total })) });
     // Mínimo por grupo: turmas que já treinam juntas nos Espaços somam alunos e lotação; as que ainda
     // não foram juntadas contam sozinhas.
     const gl = gruposLotacao(esc, Object.keys(pt), espacos, caps, niveis);
@@ -1059,15 +1065,17 @@ function alertasTurmas({ escolas, turmasAlunos, espacos, capacidades, niveis, re
   });
   acima.sort((a, b) => b.excesso - a.excesso || ord(a.escola, b.escola));
   abaixo.sort((a, b) => a.total / a.minimo - b.total / b.minimo || ord(a.escola, b.escola));
-  return { acima, abaixo };
+  semHorario.sort((a, b) => ord(a.escola, b.escola));
+  return { acima, abaixo, semHorario };
 }
 
 function AlertasTurmas({ alertas, minimoPct, onMinimoPct, onVerEspacos }) {
   const [aberto, setAberto] = useState(false);
   const [pct, setPct] = useState(String(minimoPct));
   useEffect(() => setPct(String(minimoPct)), [minimoPct]);
-  const { acima, abaixo } = alertas;
-  if (!acima.length && !abaixo.length) return null;
+  const { acima, abaixo, semHorario = [] } = alertas;
+  const nSem = semHorario.reduce((n, x) => n + x.turmas.length, 0);
+  if (!acima.length && !abaixo.length && !nSem) return null;
   const grave = acima.length > 0;
   const cor = grave ? COLORS.danger : COLORS.warn;
   const linha = { display: "grid", gridTemplateColumns: "minmax(110px, 1fr) minmax(120px, 1.4fr) auto", gap: 10, padding: "6px 0", borderTop: `1px solid ${COLORS.ruleSoft}`, fontSize: 12.5, alignItems: "baseline" };
@@ -1076,7 +1084,7 @@ function AlertasTurmas({ alertas, minimoPct, onMinimoPct, onVerEspacos }) {
       <button type="button" onClick={() => setAberto((x) => !x)} style={{ all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, width: "100%", flexWrap: "wrap" }}>
         <AlertTriangle size={15} color={cor} />
         <span style={{ fontWeight: 600, fontSize: 13.5, flex: "1 1 240px" }}>
-          {[acima.length && `${acima.length} ${acima.length === 1 ? "horário ou turma acima" : "horários ou turmas acima"} da capacidade`, abaixo.length && `${abaixo.length} ${abaixo.length === 1 ? "turma abaixo" : "turmas abaixo"} do mínimo`].filter(Boolean).join(" · ")}
+          {[acima.length && `${acima.length} ${acima.length === 1 ? "horário ou turma acima" : "horários ou turmas acima"} da capacidade`, abaixo.length && `${abaixo.length} ${abaixo.length === 1 ? "turma abaixo" : "turmas abaixo"} do mínimo`, nSem && `${nSem} ${nSem === 1 ? "turma com alunos" : "turmas com alunos"} fora dos planos semanais`].filter(Boolean).join(" · ")}
         </span>
         <span style={{ fontSize: 12, color: COLORS.navySoft, fontWeight: 600 }}>{aberto ? "Esconder" : "Ver"}</span>
       </button>
@@ -1102,6 +1110,27 @@ function AlertasTurmas({ alertas, minimoPct, onMinimoPct, onVerEspacos }) {
                   <span style={{ color: COLORS.danger, fontWeight: 600, whiteSpace: "nowrap" }}>
                     {a.total}/{a.limite}
                     {a.tol ? ` (+${a.tol} trein.)` : ""} · +{a.excesso}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {nSem > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: COLORS.warn, textTransform: "uppercase", letterSpacing: "0.05em", flex: 1 }}>Alunos em turmas que não estão nos planos semanais (Espaços)</span>
+                {onVerEspacos && (
+                  <button type="button" onClick={onVerEspacos} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                    Abrir Espaços
+                  </button>
+                )}
+              </div>
+              {semHorario.map((x, i) => (
+                <div key={i} style={linha}>
+                  <span style={{ fontWeight: 600 }}>{x.escola}</span>
+                  <span>{x.semPlano ? "sem plano semanal nos Espaços" : x.turmas.map((t) => t.turma).join(", ")}</span>
+                  <span style={{ color: COLORS.warn, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {x.turmas.reduce((n, t) => n + t.total, 0)} alunos · {x.turmas.length} {x.turmas.length === 1 ? "turma" : "turmas"}
                   </span>
                 </div>
               ))}
