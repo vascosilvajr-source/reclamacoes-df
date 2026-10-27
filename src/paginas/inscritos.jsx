@@ -3863,7 +3863,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                           <button
                             type="button"
                             onClick={() => {
-                              const txt = resultado.emFaltaLista.map((a) => (a.semCodigo ? `(sem código) ${a.escola} · ${a.turma}` : String(a.id))).join("\n");
+                              const txt = ["Código\tEscola\tTurma", ...resultado.emFaltaLista.map((a) => `${a.semCodigo ? "(sem código)" : a.id}\t${a.escola}\t${a.turma}`)].join("\n");
                               try {
                                 navigator.clipboard.writeText(txt);
                                 setCopiadoFalta(true);
@@ -3874,7 +3874,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                             }}
                             style={{ background: "transparent", border: `1px solid ${COLORS.rule}`, borderRadius: 7, padding: "4px 10px", fontSize: 12, color: COLORS.ink, cursor: "pointer" }}
                           >
-                            {copiadoFalta ? "Copiado" : resultado.emFaltaLista.length === 1 ? "Copiar ID" : "Copiar IDs"}
+                            {copiadoFalta ? "Copiado" : resultado.emFaltaLista.length === 1 ? "Copiar ID e escola" : "Copiar IDs e escolas"}
                           </button>
                         </div>
                         <div style={{ maxHeight: 180, overflowY: "auto", border: `1px solid ${COLORS.rule}`, borderRadius: 8, background: COLORS.paperRaised }}>
@@ -4244,6 +4244,7 @@ function escolaAlvoCaso(c, d) {
 
 function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, escolas }) {
   const [mais, setMais] = useState(false);
+  const [copiado, setCopiado] = useState(false);
   const meta = TIPOS_CASO_INSCR[tipo];
   if (!casos.length) return null;
   const visiveis = mais ? casos : casos.slice(0, 25);
@@ -4258,6 +4259,26 @@ function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, esc
     });
   const todos = (acao) => setDecisoes((d) => ({ ...d, ...Object.fromEntries(casos.map((c) => [c.id, { ...(d[c.id] || {}), acao, ...(ACOES_COM_TURMA.includes(acao) && !(d[c.id] || {}).turma ? { turma: turmaPadrao(c) } : {}) }])) }));
   const nAlterar = casos.filter((c) => decisao(c).acao !== "manter").length;
+  // Lista de todos os casos do grupo (não só os visíveis), em colunas para colar no Excel ou num e-mail.
+  // Só códigos, escolas e equipas, nunca nomes.
+  const copiar = async () => {
+    const linhas = casos.map((c) => [c.id, c.escolaApp || "", c.turmaApp || "", c.escolaMapa || "", (c.turmas || []).map((t) => t.alvo || t.proposta).filter(Boolean).join(" + ")].join("\t"));
+    const txt = ["Código\tEscola na app\tEquipa na app\tEscola no mapa\tEquipa no mapa", ...linhas].join("\n");
+    try {
+      await navigator.clipboard.writeText(txt);
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = txt;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch (e2) {} // eslint-disable-line no-empty
+      document.body.removeChild(ta);
+    }
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 2500);
+  };
   return (
     <details open={casos.length <= 25} style={{ marginTop: 10, border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: "8px 12px" }}>
       <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLORS.warn }}>
@@ -4271,6 +4292,9 @@ function GrupoCasosInscritos({ tipo, casos, decisoes, setDecisoes, turmasDe, esc
             Todos: {rot.toLowerCase()}
           </button>
         ))}
+        <button type="button" onClick={copiar} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, fontWeight: 600 }}>
+          {copiado ? "Copiado" : `Copiar os ${casos.length} (código e escola)`}
+        </button>
       </div>
       <div style={{ display: "flex", flexDirection: "column" }}>
         {visiveis.map((c) => {
