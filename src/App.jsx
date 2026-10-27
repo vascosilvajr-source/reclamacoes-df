@@ -2605,7 +2605,7 @@ function AppPrincipal({ onSair }) {
         resultado: x.resultado === "pendente" && ant && ant.manual && ant.resultado !== "pendente" && ant.resultado !== "sucesso" ? ant.resultado : x.resultado || (aluno ? "sucesso" : "pendente"),
         ...(ant && ant.manual ? { manual: true } : {}),
         // O que o operacional ou a app registaram (motivo, detalhe, aviso ao coordenador) não se perde na importação.
-        ...Object.fromEntries(["motivo", "nota", "decididoPor", "coordAvisado"].filter((k) => ant && ant[k] !== undefined).map((k) => [k, ant[k]])),
+        ...Object.fromEntries(["motivo", "nota", "decididoPor", "coordAvisado", "turmaFicou"].filter((k) => ant && ant[k] !== undefined).map((k) => [k, ant[k]])),
         entraram: aluno ? 1 : 0,
         origem: "importacao",
       };
@@ -3042,6 +3042,52 @@ function AppPrincipal({ onSair }) {
     return { mudados, naoEncontrados };
   };
 
+  // Respostas dos operacionais já validadas no painel "Por validar". Cada item:
+  // { tipo: "exp" | "nova" | "turma" | "alteracao", epoca, escola, id, valor, turma, ids }.
+  // Tudo numa só gravação, para as mudanças não se atropelarem.
+  const aplicarRespostasOperacionais = (itens) => {
+    const r = { exp: 0, nova: 0, mudados: 0, naoEncontrados: [] };
+    let st = estadoAlunos();
+    let exps = [...st.exps];
+    [...new Set(itens.map((i) => i.epoca))].forEach((ep) => {
+      const reg = st.registo[ep] || { alunos: {}, experiencias: {}, importacoes: [] };
+      const alunos = { ...(reg.alunos || {}) };
+      const regExp = { ...(reg.experiencias || {}) };
+      const mudaTurma = (id, turma, escola) => {
+        const a = alunos[id];
+        if (!a) return r.naoEncontrados.push(id);
+        if (a.turma === turma && a.escola === escola) return;
+        alunos[id] = { ...a, turma, escola, turmaAntes: a.turma, mudadoPor: "operacional" };
+        r.mudados++;
+      };
+      itens
+        .filter((i) => i.epoca === ep)
+        .forEach((i) => {
+          const v = i.valor || {};
+          if (i.tipo === "exp" || i.tipo === "nova") {
+            const res = v.r;
+            const manual = res !== "pendente";
+            const existe = exps.some((x) => x.alunoId === i.id && x.epoca === ep && x.escola === i.escola);
+            if (existe) {
+              exps = exps.map((x) =>
+                x.alunoId === i.id && x.epoca === ep && x.escola === i.escola
+                  ? { ...x, resultado: res, manual, decididoPor: "operacional", motivo: v.motivo || undefined, nota: v.nota || undefined, turma: x.turma || v.turma || undefined, turmaFicou: res === "sucesso" ? v.turmaFicou || x.turmaFicou || undefined : undefined }
+                  : x
+              );
+            } else {
+              exps.push({ id: `x_${ep}_${i.id}`, alunoId: i.id, epoca: ep, escola: i.escola, turma: v.turma, n: 1, data: v.data, resultado: res, manual, origem: "operacional", decididoPor: "operacional", motivo: v.motivo || undefined, nota: v.nota || undefined, entraram: 0, turmaFicou: res === "sucesso" ? v.turmaFicou || undefined : undefined });
+            }
+            regExp[i.id] = regExp[i.id] ? { ...regExp[i.id], resultado: res, motivo: v.motivo || undefined, turma: regExp[i.id].turma || v.turma } : { id: i.id, escola: i.escola, data: v.data, turma: v.turma, resultado: res, motivo: v.motivo || undefined };
+            r[i.tipo]++;
+          } else if (i.tipo === "turma") (i.ids || []).forEach((id) => mudaTurma(id, i.turma, i.escola));
+          else if (i.tipo === "alteracao") mudaTurma(i.id, i.turma, i.escola);
+        });
+      st = derivarEpoca({ ...st, exps }, ep, { ...reg, alunos, experiencias: regExp });
+    });
+    gravarEstadoAlunos(st);
+    return r;
+  };
+
   // Mudanças de turma propostas pelos operacionais e validadas na app: [{ epoca, escola, aluno, para }].
   // Uma só gravação por época, para várias mudanças seguidas não se atropelarem.
   const aplicarAlteracoesOperacional = (lista) => {
@@ -3470,12 +3516,15 @@ function AppPrincipal({ onSair }) {
     carregadoEm: carregadoEm.current,
     notificar,
     onAbrirContactos: () => setContactosAbertos(true),
-    onPedirEnvio: () => {
-      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString() } });
-      notificar("Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
+    onPedirEnvio: (escola) => {
+      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString(), ...(escola ? { escolas: [escola] } : {}) } });
+      notificar(escola ? `Pedido feito para ${escola}. O e-mail sai em poucos minutos.` : "Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
     },
     onAplicarIds: aplicarIdsOperacional,
     onAplicarAlteracoes: aplicarAlteracoesOperacional,
+    onAplicarRespostas: aplicarRespostasOperacionais,
+    registoAlunos,
+    experiencias,
     onMotivo: motivoExperiencia,
     onTurmaFicou: turmaFicouExperiencia,
   };

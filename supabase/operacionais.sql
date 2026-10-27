@@ -25,6 +25,16 @@ alter table public.pedidos_operacionais add column if not exists aberto_em times
 alter table public.pedidos_operacionais add column if not exists lembrete_em timestamptz;
 -- Quando foi contactada (por telefone) a escola que não abriu o e-mail nem o lembrete (marcado na app).
 alter table public.pedidos_operacionais add column if not exists contactado_em timestamptz;
+-- Pedidos novos (validar = true): o que o operacional responde NÃO entra na app; fica na resposta até validares
+-- no painel "Por validar" da app. 'validado' guarda, por item, o que foi aceite ou rejeitado.
+-- Os pedidos que já existiam ficam como estavam (validar = false: já entraram na app).
+do $$ begin
+  if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'pedidos_operacionais' and column_name = 'validar') then
+    alter table public.pedidos_operacionais add column validar boolean not null default false;
+    alter table public.pedidos_operacionais alter column validar set default true;
+  end if;
+end $$;
+alter table public.pedidos_operacionais add column if not exists validado jsonb not null default '{}'::jsonb;
 alter table public.pedidos_operacionais enable row level security;
 -- Só quem entra na app (com conta) vê e atualiza os pedidos. O link do e-mail não dá acesso à tabela.
 drop policy if exists "app autenticada vê pedidos" on public.pedidos_operacionais;
@@ -250,7 +260,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
-  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -261,7 +271,11 @@ begin
   v_env := coalesce(v_env, '{}'::jsonb);
   v_pedido := v_opc->'pedidoEnvioOperacionais'->>'em';
   v_ultimo := coalesce(v_env->>'ultimo', '');
-  v_forcado := v_pedido is not null and v_pedido > v_ultimo;
+  -- Pedido de envio: para todas as escolas ou só para as indicadas (escolas). Os pedidos só para algumas escolas
+  -- não gastam o envio semanal nem o "último envio" geral.
+  v_forcado := v_pedido is not null and v_pedido > greatest(v_ultimo, coalesce(v_env->>'ultimoPedido', ''));
+  v_alvo := case when v_forcado and jsonb_typeof(v_opc->'pedidoEnvioOperacionais'->'escolas') = 'array' and jsonb_array_length(v_opc->'pedidoEnvioOperacionais'->'escolas') > 0
+                 then v_opc->'pedidoEnvioOperacionais'->'escolas' end;
   -- à terça-feira: à segunda atualizam-se os dados (mapa de acompanhamento) e o resumo ainda não está certo
   v_semanal := extract(isodow from v_lx) = 2 and extract(hour from v_lx) >= 8
                and (v_ultimo = '' or (v_ultimo::timestamptz at time zone 'Europe/Lisbon')::date < v_hoje);
@@ -280,6 +294,7 @@ begin
 
   for e in select jsonb_array_elements_text(coalesce(v_opc->'schools', '[]'::jsonb)) loop
     if not privado.escola_aberta(v_opc, v_reg, e, v_ep) then continue; end if;
+    if v_alvo is not null and not (v_alvo ? e) then continue; end if;
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
     v_em := privado.emails_validos(v_opc->'emailsOperacionais'->e);
     if jsonb_array_length(v_em) > 0 then
@@ -305,7 +320,7 @@ begin
                             where po.escola = e and po.respondido_em > v_agora - interval '28 days'
                               and coalesce(po.respostas->'turmasVazias', '[]'::jsonb) ? t.turma)
          group by t.turma) q;
-      if jsonb_array_length(v_xp) > 0 or jsonb_array_length(v_tu) > 0 then
+      if jsonb_array_length(v_xp) > 0 or jsonb_array_length(v_tu) > 0 or v_alvo is not null then
         -- turmas e equipas da escola: as dos alunos e as do plano semanal (inclui equipas de competição, "Sub-…")
         select coalesce(jsonb_agg(t order by t), '[]'::jsonb) into v_turmasEsc from (
           select distinct al->>'turma' t from jsonb_each(coalesce(v_reg->'alunos','{}'::jsonb)) a(id, al)
@@ -334,7 +349,7 @@ begin
 
     -- ---- coordenador técnico: motivos técnicos e turmas com muitas experiências não convertidas ----
     v_em := privado.emails_validos(v_opc->'emailsCoordenadores'->e);
-    if jsonb_array_length(v_em) > 0 then
+    if jsonb_array_length(v_em) > 0 and v_alvo is null then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma',''), 'motivo', x->>'motivo', 'nota', coalesce(x->>'nota',''))), '[]'::jsonb),
              coalesce(array_agg(x->>'id'), '{}')
         into v_te, v_avisados
@@ -383,13 +398,15 @@ begin
              privado.emails_validos(v_opc->'emailsCoordenadorGeral')
           || privado.emails_validos(v_opc->'emailsResponsavelAuditoria')
           || privado.emails_validos(v_opc->'emailsDirecaoExecutiva'));
-  if jsonb_array_length(v_gem) > 0 then
+  if jsonb_array_length(v_gem) > 0 and v_alvo is null then
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
     v_geral := jsonb_build_object('emails', v_gem) || privado.resumo_geral(v_opc, v_reg, v_regp, v_hoje);
   end if;
 
-  v_env := v_env || jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
+  v_env := v_env || case when v_forcado then jsonb_build_object('ultimoPedido', v_pedido) else '{}'::jsonb end
+             || case when v_alvo is not null then '{}'::jsonb else jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')) end
+             || jsonb_build_object( 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
              'ultimoResumo', jsonb_build_object('em', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'operacionais', jsonb_array_length(v_ops), 'coordenadores', jsonb_array_length(v_coords),
                                                 'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado));
   insert into app_storage (key, value, updated_at) values ('reclamacoes:operacionais-envio', v_env, now())
@@ -491,7 +508,8 @@ begin
                  'motivo', case when v_r = 'insucesso' then v_mo end, 'nota', v_no,
                  'turmaFicou', case when v_r = 'sucesso' and coalesce(p.itens->'turmasEscola', '[]'::jsonb) ? coalesce(n->>'turmaFicou', '') then n->>'turmaFicou' end)));
   end loop;
-  if jsonb_array_length(v_novas) > 0 then
+  -- Pedidos novos: nada entra na app aqui. As respostas ficam no pedido e entram quando as validares (painel "Por validar").
+  if jsonb_array_length(v_novas) > 0 and not p.validar then
     -- as que já existem (mesmo atleta, época e escola) são atualizadas
     update app_storage s set value = (
       select coalesce(jsonb_agg(case when x->>'escola' = p.escola and x->>'epoca' = v_ep and exists (select 1 from jsonb_array_elements(v_novas) nn where nn->>'id' = x->>'alunoId')
@@ -516,7 +534,7 @@ begin
         from jsonb_array_elements(v_novas) nn where not (coalesce(s.value->v_ep->'experiencias', '{}'::jsonb) ? (nn->>'id')))), updated_at = now()
      where key = 'reclamacoes:alunos' and s.value ? v_ep;
   end if;
-  if v_exp <> '{}'::jsonb then
+  if v_exp <> '{}'::jsonb and not p.validar then
     update app_storage s set value = (
       select jsonb_agg(case when x->>'escola' = p.escola and x->>'epoca' = p.itens->>'epoca' and v_exp ? (x->>'alunoId')
           then jsonb_strip_nulls(x || jsonb_build_object('resultado', v_exp->(x->>'alunoId')->>'r',

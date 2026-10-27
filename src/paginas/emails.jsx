@@ -287,6 +287,75 @@ export function HistoricoEmailsEscolas({ escolas }) {
   );
 }
 
+// Enviar o e-mail dos operacionais só a uma escola (sai em poucos minutos; o resumo da rede e os coordenadores não saem).
+function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
+  const [esc, setEsc] = useState("");
+  const comEmail = escolas.filter((e) => ((op.contactos.emailsOperacionais || {})[e] || []).length);
+  const aEsperar = op.pedidoEnvio && op.pedidoEnvio.escolas && op.pedidoEnvio.escolas.length && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
+      <span style={{ color: COLORS.ink2 }}>Enviar só a uma escola:</span>
+      <select value={esc} onChange={(e) => setEsc(e.target.value)} aria-label="Escola" style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }}>
+        <option value="">Escolher escola…</option>
+        {comEmail.map((e) => (
+          <option key={e} value={e}>
+            {e}
+          </option>
+        ))}
+      </select>
+      <button disabled={!esc || aEsperar} onClick={() => { op.onPedirEnvio(esc); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: esc && !aEsperar ? 1 : 0.5 }}>
+        Enviar a esta escola
+      </button>
+      {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido para {op.pedidoEnvio.escolas.join(", ")} às {quando(pedidoEm)} · sai em poucos minutos</span>}
+    </div>
+  );
+}
+
+// Painel "Por validar": o que os operacionais preencheram, antes de entrar na app.
+function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar }) {
+  if (!itens.length) return null;
+  const marcado = (i) => (sel[i.key] === undefined ? i.padrao : sel[i.key]);
+  const nMarcados = itens.filter(marcado).length;
+  const escolas = [...new Set(itens.map((i) => i.escola))].sort((a, b) => a.localeCompare(b, "pt"));
+  const nAvisos = itens.filter((i) => i.avisos.length).length;
+  return (
+    <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, flex: "1 1 240px" }}>
+          Por validar ({itens.length}){nAvisos ? ` · ${nAvisos} com aviso` : ""}
+          <div style={{ fontSize: 12, fontWeight: 400, color: COLORS.ink2 }}>Nada entra na app até aceitares. Os itens com aviso vêm desmarcados quando o código não existe.</div>
+        </div>
+        <button disabled={aAplicar || !nMarcados} onClick={onRejeitar} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>
+          Rejeitar as marcadas
+        </button>
+        <button disabled={aAplicar || !nMarcados} onClick={onAceitar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: nMarcados ? 1 : 0.5 }}>
+          {aAplicar ? "A aplicar…" : `Aceitar as marcadas (${nMarcados})`}
+        </button>
+      </div>
+      {escolas.map((e) => (
+        <div key={e} style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700 }}>{e}</div>
+          {itens
+            .filter((i) => i.escola === e)
+            .map((i) => (
+              <label key={i.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, cursor: "pointer" }}>
+                <input type="checkbox" checked={marcado(i)} onChange={(ev) => setSel((s) => ({ ...s, [i.key]: ev.target.checked }))} style={{ marginTop: 3 }} />
+                <span style={{ minWidth: 0 }}>
+                  <strong>{i.titulo}</strong> <span style={{ color: COLORS.ink2 }}>{i.detalhe}</span>
+                  {i.avisos.map((a, k) => (
+                    <div key={k} style={{ color: COLORS.warn, fontWeight: 600 }}>
+                      Atenção: {a}
+                    </div>
+                  ))}
+                </span>
+              </label>
+            ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PainelEmailsEscolas({ op, escolas }) {
   const [pedidos, setPedidos] = useState(null);
   const [envio, setEnvio] = useState(null);
@@ -329,10 +398,10 @@ export function PainelEmailsEscolas({ op, escolas }) {
   const comCt = escolas.filter((e) => ((op.contactos.emailsCoordenadores || {})[e] || []).length).length;
   const comGeral = [...(op.contactos.emailsCoordenadorGeral || []), ...(op.contactos.emailsResponsavelAuditoria || []), ...(op.contactos.emailsDirecaoExecutiva || [])].length;
   const pedidoEm = op.pedidoEnvio && op.pedidoEnvio.em;
-  const pendente = pedidoEm && (!envio || !envio.ultimo || pedidoEm > envio.ultimo);
+  const pendente = pedidoEm && (!envio || (!envio.ultimo && !envio.ultimoPedido) || (pedidoEm > (envio.ultimo || "") && pedidoEm > (envio.ultimoPedido || "")));
   const hojeISO = new Date().toISOString();
   const lista = (pedidos || []).filter((p) => p.itens?.tipo !== "eficacia").filter((p) => verTodos || !p.respondido_em || (p.respostas?.turmas && Object.keys(p.respostas.turmas).length && !p.ids_aplicados_em) || p.criado > new Date(Date.now() - 14 * 86400000).toISOString());
-  const porConfirmar = (pedidos || []).filter((p) => p.respostas?.turmas && Object.values(p.respostas.turmas).some((l) => (l || []).length) && !p.ids_aplicados_em);
+  const porConfirmar = (pedidos || []).filter((p) => !p.validar && p.respostas?.turmas && Object.values(p.respostas.turmas).some((l) => (l || []).length) && !p.ids_aplicados_em);
   const quando = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—");
   const aplicar = async (p) => {
     setAAplicar(p.token);
@@ -345,20 +414,72 @@ export function PainelEmailsEscolas({ op, escolas }) {
       setAAplicar(null);
     }
   };
-  // Mudanças de turma propostas pelos operacionais: ficam pendentes até serem aceites ou rejeitadas aqui.
-  const decidirAlteracoes = async (lista, aceitar) => {
-    if (!lista.length) return;
-    setAAplicar("alteracoes");
+  // Tudo o que os operacionais preencheram fica aqui até aceitares. Cada item vale pelo conteúdo: se o operacional
+  // corrigir a resposta depois, volta a aparecer.
+  const ROT_RES = { sucesso: "Converteu", pendente: "Ainda a decorrer", insucesso: "Não converteu" };
+  const porValidar = [];
+  (pedidos || [])
+    .filter((p) => p.validar && !p.itens?.tipo && p.respostas)
+    .forEach((p) => {
+      const ep = p.itens?.epoca;
+      const reg = (op.registoAlunos || {})[ep] || {};
+      const alunos = reg.alunos || {};
+      const val = p.validado || {};
+      const exps = op.experiencias || [];
+      const novoItem = (key, c, extra) => {
+        if (val[key] && val[key].v === c) return;
+        porValidar.push({ key, c, pedido: p.token, validado: val, escola: p.escola, epoca: ep, quando: p.respondido_em, ...extra });
+      };
+      Object.entries(p.respostas.experiencias || {}).forEach(([id, v0]) => {
+        const v = typeof v0 === "string" ? { r: v0 } : v0;
+        const avisos = exps.some((x) => x.alunoId === id && x.epoca === ep && x.escola === p.escola) ? [] : ["esta experiência não existe na app (o código pode estar errado)"];
+        novoItem(`exp:${id}`, JSON.stringify(v), { tipo: "exp", id, valor: v, titulo: `Experiência ${id}`, detalhe: [ROT_RES[v.r] || v.r, v.motivo, v.turmaFicou && `ficou em ${v.turmaFicou}`, v.nota && `“${v.nota}”`].filter(Boolean).join(" · "), avisos, padrao: !avisos.length });
+      });
+      (p.respostas.novas || []).forEach((n) => {
+        const a = alunos[n.id];
+        const avisos = [];
+        if (a && a.escola !== p.escola) avisos.push(`este código é de um aluno de ${a.escola}`);
+        if (!a && !(reg.experiencias || {})[n.id] && !exps.some((x) => x.alunoId === n.id)) avisos.push("código desconhecido na app (não é aluno nem tem experiência)");
+        if (exps.some((x) => x.alunoId === n.id && x.epoca === ep && x.escola === p.escola)) avisos.push("já existe uma experiência deste código: vai ser atualizada");
+        const v = { r: n.r, motivo: n.motivo, nota: n.nota, turma: n.turma, turmaFicou: n.turmaFicou, data: n.data };
+        novoItem(`nova:${n.id}`, JSON.stringify(v), { tipo: "nova", id: n.id, valor: v, titulo: `Experiência acrescentada ${n.id}`, detalhe: [`${n.turma}`, n.data, ROT_RES[n.r] || n.r, n.motivo, n.turmaFicou && `ficou em ${n.turmaFicou}`, n.nota && `“${n.nota}”`].filter(Boolean).join(" · "), avisos, padrao: !(a && a.escola !== p.escola) });
+      });
+      Object.entries(p.respostas.turmas || {}).forEach(([turma, ids]) => {
+        if (!(ids || []).length) return;
+        const falta = ids.filter((id) => !alunos[id]);
+        const avisos = [];
+        if (falta.length) avisos.push(`${falta.length === ids.length ? "nenhum dos códigos existe" : `não existem: ${falta.join(", ")}`} na app (ignorados)`);
+        const doutra = ids.filter((id) => alunos[id] && alunos[id].escola !== p.escola);
+        if (doutra.length) avisos.push(`de outra escola: ${doutra.join(", ")}`);
+        novoItem(`turma:${turma}`, ids.join(","), { tipo: "turma", turma, ids, titulo: `Turma sem alunos: ${turma}`, detalhe: `códigos ${ids.join(", ")}`, avisos, padrao: ids.some((id) => alunos[id]) });
+      });
+    });
+  alteracoes.forEach((x) => {
+    const a = ((op.registoAlunos || {})[x.epoca]?.alunos || {})[x.aluno];
+    const avisos = a ? (a.escola !== x.escola ? [`o aluno está em ${a.escola}: passa para ${x.escola}`] : []) : ["este código não existe na app"];
+    porValidar.push({ key: `alt:${x.id}`, tipo: "alteracao", linha: x.id, id: x.aluno, turma: x.para, escola: x.escola, epoca: x.epoca, quando: x.criado, titulo: `Mudança de turma ${x.aluno}`, detalhe: `${x.de || "—"} → ${x.para}`, avisos, padrao: !!a });
+  });
+  const [sel, setSel] = useState({});
+  const decidir = async (aceitar) => {
+    const marcados = porValidar.filter((i) => (sel[i.key] === undefined ? i.padrao : sel[i.key]));
+    if (!marcados.length) return;
+    setAAplicar("validar");
     try {
-      let msg = `${lista.length} ${lista.length === 1 ? "proposta rejeitada" : "propostas rejeitadas"}.`;
+      let msg = `${marcados.length} ${marcados.length === 1 ? "item rejeitado" : "itens rejeitados"}.`;
       let nivel = "ok";
       if (aceitar) {
-        const r = op.onAplicarAlteracoes(lista.map((x) => ({ epoca: x.epoca, escola: x.escola, aluno: x.aluno, para: x.para })));
-        msg = `${r.mudados} ${r.mudados === 1 ? "aluno mudou" : "alunos mudaram"} de turma.${r.naoEncontrados.length ? ` Códigos que já não existem: ${r.naoEncontrados.join(", ")}.` : ""}`;
+        const r = op.onAplicarRespostas(marcados.map((i) => ({ tipo: i.tipo, epoca: i.epoca, escola: i.escola, id: i.id, valor: i.valor, turma: i.turma, ids: i.ids })));
+        msg = `Validado: ${r.exp + r.nova} experiências, ${r.mudados} mudanças de turma.${r.naoEncontrados.length ? ` Códigos que não existem: ${r.naoEncontrados.slice(0, 8).join(", ")}.` : ""}`;
         if (r.naoEncontrados.length) nivel = "aviso";
       }
-      await supabase.from("alteracoes_turma").update({ estado: aceitar ? "aceite" : "rejeitada", decidido_em: new Date().toISOString() }).in("id", lista.map((x) => x.id));
-      op.notificar(msg, nivel, 7000);
+      const estado = aceitar ? "aceite" : "rejeitada";
+      const porPedido = {};
+      marcados.filter((i) => i.tipo !== "alteracao").forEach((i) => ((porPedido[i.pedido] = porPedido[i.pedido] || { ...i.validado })[i.key] = { v: i.c, estado }));
+      for (const [token, validado] of Object.entries(porPedido)) await supabase.from("pedidos_operacionais").update({ validado }).eq("token", token);
+      const alt = marcados.filter((i) => i.tipo === "alteracao").map((i) => i.linha);
+      if (alt.length) await supabase.from("alteracoes_turma").update({ estado, decidido_em: new Date().toISOString() }).in("id", alt);
+      setSel({});
+      op.notificar(msg, nivel, 8000);
       await carregar();
     } finally {
       setAAplicar(null);
@@ -379,11 +500,12 @@ export function PainelEmailsEscolas({ op, escolas }) {
         {pendente ? (
           <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai em poucos minutos</span>
         ) : (
-          <button onClick={op.onPedirEnvio} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
+          <button onClick={() => op.onPedirEnvio()} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
             Enviar agora
           </button>
         )}
       </div>
+      <EnviarEscola op={op} escolas={escolas} pedidoEm={pedidoEm} envio={envio} quando={quando} />
       <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px", lineHeight: 1.5 }}>
         À terça-feira (à segunda atualizam-se os dados): aos operacionais, experiências com mais de 2 semanas por decidir e turmas do plano sem alunos; ao coordenador técnico, reclamações técnicas em aberto e o resumo da época; ao coordenador técnico geral, à responsável de área da auditoria e à direção executiva, o resumo da rede com todas as reclamações em andamento. Os pedidos de avaliação de eficácia saem quando os envias numa reclamação. Quem não abrir o link recebe um lembrete no dia seguinte. {comOp} de {escolas.length} escolas com e-mail de operacionais · {comCt} com coordenador técnico · {comGeral ? "resumo da rede com destinatários" : "resumo da rede sem destinatários"}.
         {envio && envio.ultimoResumo ? ` Último envio: ${quando(envio.ultimoResumo.em || envio.ultimo)} · ${envio.ultimoResumo.operacionais} ${envio.ultimoResumo.operacionais === 1 ? "escola" : "escolas"}, ${envio.ultimoResumo.coordenadores} ${envio.ultimoResumo.coordenadores === 1 ? "aviso" : "avisos"} ao coordenador técnico${envio.ultimoResumo.geral ? ", resumo ao coordenador geral" : ""}.` : " Ainda sem envios."}
@@ -438,35 +560,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
           </div>
         );
       })()}
-      {alteracoes.length > 0 && (
-        <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Mudanças de turma propostas pelos operacionais ({alteracoes.length})</div>
-            <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes(alteracoes, false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>
-              Rejeitar todas
-            </button>
-            <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes(alteracoes, true)} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "4px 10px", fontSize: 12 }}>
-              Aceitar todas
-            </button>
-          </div>
-          {alteracoes.map((x) => (
-            <div key={x.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
-              <strong>{x.escola}</strong>
-              <span>
-                aluno {x.aluno}: {x.de || "—"} → <strong>{x.para}</strong>
-              </span>
-              <span style={{ color: COLORS.slate }}>proposto a {quando(x.criado)}</span>
-              <span style={{ flex: 1 }} />
-              <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes([x], false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12, color: COLORS.slate }}>
-                Rejeitar
-              </button>
-              <button disabled={aAplicar === "alteracoes"} onClick={() => decidirAlteracoes([x], true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "3px 10px", fontSize: 12 }}>
-                Aceitar
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <PorValidar itens={porValidar} sel={sel} setSel={setSel} aAplicar={aAplicar === "validar"} onAceitar={() => decidir(true)} onRejeitar={() => decidir(false)} />
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Códigos dos alunos para confirmar</div>

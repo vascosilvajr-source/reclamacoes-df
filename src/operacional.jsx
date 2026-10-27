@@ -288,7 +288,7 @@ export default function Operacional({ token }) {
       return (
         <Aviso
           titulo="Obrigado, ficou registado"
-          texto={`${enviado?.experiencias || 0} experiência(s) atualizadas na app${enviado?.turmas ? ` · códigos de ${enviado.turmas} turma(s)/equipa(s) enviados para confirmação` : ""}${enviado?.vazias ? ` · ${enviado.vazias} turma(s)/equipa(s) sem alunos por agora` : ""}${enviado?.novas ? ` · ${enviado.novas} experiência(s) acrescentada(s)` : ""}. Podes voltar a abrir o link para corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`}
+          texto={`${enviado?.experiencias || 0} experiência(s) enviadas para validação${enviado?.turmas ? ` · códigos de ${enviado.turmas} turma(s)/equipa(s) enviados para validação` : ""}${enviado?.vazias ? ` · ${enviado.vazias} turma(s)/equipa(s) sem alunos por agora` : ""}${enviado?.novas ? ` · ${enviado.novas} experiência(s) acrescentada(s)` : ""}. A gestão da qualidade valida antes de entrar na app. Podes voltar a abrir o link para corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`}
           cor={VERDE}
         />
       );
