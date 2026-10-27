@@ -97,7 +97,9 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
       span.className = "fbCampo";
       el.replaceWith(span);
     });
-    copia.querySelectorAll(".semFoto").forEach((el) => el.remove());
+    copia.querySelectorAll(".semFoto, [hidden], script, style[data-anim]").forEach((el) => el.remove());
+    // Gráficos e ícones animados pesam na impressão: ficam parados.
+    copia.querySelectorAll("[class*='anim'], [style*='animation']").forEach((el) => { el.style.animation = "none"; });
     copia.querySelectorAll('[style*="overflow"]').forEach((el) => {
       el.style.overflow = "visible";
       el.style.maxHeight = "none";
