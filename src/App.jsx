@@ -3,8 +3,8 @@ import { dbStorage, supabase } from "./supabaseClient";
 import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { detetarRiscos, idRecorrencia } from "./riscos";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw } from "lucide-react";
-import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, BibliotecaRespostas, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
+import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star } from "lucide-react";
+import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, AvaliacoesPage, BibliotecaRespostas, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
 
 // Toda a gravação passa por aqui: guarda a última versão de cada chave para perceber
 // o que foi apagado (vai para "Apagados" durante 30 dias).
@@ -60,6 +60,7 @@ const STORAGE_PLANO_INQ_KEY = "reclamacoes:inqueritos-plano";
 const STORAGE_RESPOSTAS_KEY = "reclamacoes:respostas-tipo";
 const STORAGE_RISCOS_KEY = "reclamacoes:riscos";
 const STORAGE_OCORRENCIAS_KEY = "reclamacoes:ocorrencias";
+const STORAGE_AVALIACOES_KEY = "reclamacoes:avaliacoes";
 const STORAGE_OBJETIVOS_KEY = "reclamacoes:objetivos";
 const STORAGE_DOCUMENTOS_KEY = "reclamacoes:documentos";
 const STORAGE_FORMACAO_KEY = "reclamacoes:formacao";
@@ -2007,6 +2008,7 @@ function AppPrincipal({ onSair }) {
   const [apagados, setApagados] = useState([]);
   const apagadosRef = useRef([]);
   const [ocorrencias, setOcorrencias] = useState([]);
+  const [avaliacoes, setAvaliacoes] = useState({ itens: [], roster: {}, criteriosTecnica: [] });
   const [radar, setRadar] = useState(null);
   const [inqueritos, setInqueritos] = useState([]);
   const [notasRelatorio, setNotasRelatorio] = useState({});
@@ -2156,6 +2158,7 @@ function AppPrincipal({ onSair }) {
   const persistDocumentos = fazPersist(setDocumentos, STORAGE_DOCUMENTOS_KEY, "o controlo documental");
   const persistFormacao = fazPersist(setFormacao, STORAGE_FORMACAO_KEY, "o plano de formação");
   const persistOcorrencias = fazPersist(setOcorrencias, STORAGE_OCORRENCIAS_KEY, "as ocorrências");
+  const persistAvaliacoes = fazPersist(setAvaliacoes, STORAGE_AVALIACOES_KEY, "as avaliações");
   const guardarOcorrencia = (o) => persistOcorrencias(ocorrencias.some((x) => x.id === o.id) ? ocorrencias.map((x) => (x.id === o.id ? o : x)) : [...ocorrencias, o]);
   const apagarOcorrencia = (id) => persistOcorrencias(ocorrencias.filter((x) => x.id !== id));
   const riscosDaEpoca = (ep) => ((riscos.epocas || {})[ep] || {}).itens || [];
@@ -2209,6 +2212,7 @@ function AppPrincipal({ onSair }) {
     [STORAGE_AUDITS_KEY]: persistAudits,
     [STORAGE_SANCOES_KEY]: persistSanctions,
     [STORAGE_OCORRENCIAS_KEY]: persistOcorrencias,
+    [STORAGE_AVALIACOES_KEY]: persistAvaliacoes,
     [STORAGE_RISCOS_KEY]: persistRiscos,
     [STORAGE_OBJETIVOS_KEY]: persistObjetivos,
     [STORAGE_DOCUMENTOS_KEY]: persistDocumentos,
@@ -2344,6 +2348,7 @@ function AppPrincipal({ onSair }) {
         [STORAGE_FORMACAO_KEY, setFormacao],
         [STORAGE_APAGADOS_KEY, (v) => setApagados(limparAntigos(v))],
         [STORAGE_OCORRENCIAS_KEY, setOcorrencias],
+        [STORAGE_AVALIACOES_KEY, setAvaliacoes],
         [STORAGE_RADAR_KEY, setRadar],
         [STORAGE_SATISFACAO_KEY, setSatisfacao],
         [STORAGE_INQUERITOS_KEY, setInqueritos],
@@ -3258,6 +3263,7 @@ function AppPrincipal({ onSair }) {
     hoje: "Geral",
     riscos: "Geral",
     ocorrencias: "Ocorrências",
+    avaliacoes: "Geral",
     emails: "Geral",
   }[page];
 
@@ -3284,6 +3290,8 @@ function AppPrincipal({ onSair }) {
       ? "Plano de formação"
       : page === "apagados"
       ? "Apagados"
+      : page === "avaliacoes"
+      ? "Avaliações do staff"
       : page === "ocorrencias"
       ? "Ocorrências"
       : page === "emails"
@@ -3418,6 +3426,7 @@ function AppPrincipal({ onSair }) {
     { id: "p-documentos", grupo: "Ir para", titulo: "Controlo documental", icon: FileText, acao: () => setPage("documentos") },
     { id: "p-formacao", grupo: "Ir para", titulo: "Plano de formação", icon: GraduationCap, acao: () => setPage("formacao") },
     { id: "p-ocorrencias", grupo: "Ir para", titulo: "Ocorrências", icon: AlertTriangle, acao: () => setPage("ocorrencias") },
+    { id: "p-avaliacoes", grupo: "Ir para", titulo: "Avaliações do staff", icon: Star, acao: () => setPage("avaliacoes") },
     { id: "p-emails", grupo: "Ir para", titulo: "E-mails às escolas", icon: Mail, acao: () => setPage("emails") },
     {
       id: "a-nova",
@@ -3554,6 +3563,7 @@ function AppPrincipal({ onSair }) {
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
         { key: "ocorrencias", label: "Ocorrências", icon: AlertTriangle, contador: ocorrencias.filter((o) => (o.estado || "aberta") === "aberta").length || null },
+        { key: "avaliacoes", label: "Avaliações do staff", icon: Star, contador: null },
         { key: "emails", label: "E-mails às escolas", icon: Mail, contador: null },
       ],
     },
@@ -4177,6 +4187,8 @@ function AppPrincipal({ onSair }) {
           <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} />
         ) : page === "apagados" ? (
           <ApagadosPage lista={apagados} onRepor={reporApagados} onApagarDeVez={(id) => guardarApagados(apagadosRef.current.filter((a) => a.id !== id))} />
+        ) : page === "avaliacoes" ? (
+          <AvaliacoesPage dados={avaliacoes} escolas={options.schools || []} onGuardar={persistAvaliacoes} notificar={notificar} />
         ) : page === "ocorrencias" ? (
           <OcorrenciasPage
             ocorrencias={ocorrencias}

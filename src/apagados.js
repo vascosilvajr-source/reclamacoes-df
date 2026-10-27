@@ -12,6 +12,7 @@ export const LISTAS_COM_LIXO = {
   "reclamacoes:auditorias": "Auditorias",
   "reclamacoes:sancoes": "Sanções",
   "reclamacoes:ocorrencias": "Ocorrências",
+  "reclamacoes:avaliacoes": "Avaliações",
   "reclamacoes:riscos": "Riscos e oportunidades",
   "reclamacoes:objetivos": "Objetivos",
   "reclamacoes:documentos": "Controlo documental",
