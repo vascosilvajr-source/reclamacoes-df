@@ -260,7 +260,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
-  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -276,6 +276,12 @@ begin
   v_forcado := v_pedido is not null and v_pedido > greatest(v_ultimo, coalesce(v_env->>'ultimoPedido', ''));
   v_alvo := case when v_forcado and jsonb_typeof(v_opc->'pedidoEnvioOperacionais'->'escolas') = 'array' and jsonb_array_length(v_opc->'pedidoEnvioOperacionais'->'escolas') > 0
                  then v_opc->'pedidoEnvioOperacionais'->'escolas' end;
+  -- Quem recebe num pedido manual: operacional, coordenador (da escola indicada), geral, auditoria, direcao.
+  -- Sem lista, o pedido vai a todos (ou só aos operacionais da escola, se houver escola indicada).
+  v_papeis := case when v_forcado and jsonb_typeof(v_opc->'pedidoEnvioOperacionais'->'papeis') = 'array' and jsonb_array_length(v_opc->'pedidoEnvioOperacionais'->'papeis') > 0
+                   then v_opc->'pedidoEnvioOperacionais'->'papeis'
+                   when v_alvo is not null then '["operacional"]'::jsonb end;
+  v_manual := v_papeis is not null;
   -- à terça-feira: à segunda atualizam-se os dados (mapa de acompanhamento) e o resumo ainda não está certo
   v_semanal := extract(isodow from v_lx) = 2 and extract(hour from v_lx) >= 8
                and (v_ultimo = '' or (v_ultimo::timestamptz at time zone 'Europe/Lisbon')::date < v_hoje);
@@ -297,7 +303,7 @@ begin
     if v_alvo is not null and not (v_alvo ? e) then continue; end if;
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
     v_em := privado.emails_validos(v_opc->'emailsOperacionais'->e);
-    if jsonb_array_length(v_em) > 0 then
+    if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'operacional') then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma','')) order by x->>'data'), '[]'::jsonb) into v_xp
         from jsonb_array_elements(v_exps) x
        where x->>'escola' = e and x->>'epoca' = v_ep and coalesce(x->>'alunoId','') <> ''
@@ -320,7 +326,7 @@ begin
                             where po.escola = e and po.respondido_em > v_agora - interval '28 days'
                               and coalesce(po.respostas->'turmasVazias', '[]'::jsonb) ? t.turma)
          group by t.turma) q;
-      if jsonb_array_length(v_xp) > 0 or jsonb_array_length(v_tu) > 0 or v_alvo is not null then
+      if jsonb_array_length(v_xp) > 0 or jsonb_array_length(v_tu) > 0 or v_manual then
         -- turmas e equipas da escola: as dos alunos e as do plano semanal (inclui equipas de competição, "Sub-…")
         select coalesce(jsonb_agg(t order by t), '[]'::jsonb) into v_turmasEsc from (
           select distinct al->>'turma' t from jsonb_each(coalesce(v_reg->'alunos','{}'::jsonb)) a(id, al)
@@ -349,13 +355,13 @@ begin
 
     -- ---- coordenador técnico: motivos técnicos e turmas com muitas experiências não convertidas ----
     v_em := privado.emails_validos(v_opc->'emailsCoordenadores'->e);
-    if jsonb_array_length(v_em) > 0 and v_alvo is null then
+    if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'coordenador') then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma',''), 'motivo', x->>'motivo', 'nota', coalesce(x->>'nota',''))), '[]'::jsonb),
              coalesce(array_agg(x->>'id'), '{}')
         into v_te, v_avisados
         from jsonb_array_elements(v_exps) x
        where x->>'escola' = e and x->>'epoca' = v_ep and x->>'resultado' = 'insucesso'
-         and coalesce(x->>'motivo','') ~* 't[eé]cnic' and not coalesce((x->>'coordAvisado')::boolean, false);
+         and coalesce(x->>'motivo','') ~* 't[eé]cnic' and (v_manual or not coalesce((x->>'coordAvisado')::boolean, false));
       -- 3 ou mais não convertidas e pelo menos metade das decididas nessa turma/equipa (avisa no máximo de 4 em 4 semanas)
       select coalesce(jsonb_agg(jsonb_build_object('turma', turma, 'nao', nao, 'decididas', dec) order by nao desc), '[]'::jsonb) into v_inc from (
         select x->>'turma' turma, count(*) filter (where x->>'resultado' = 'insucesso') nao, count(*) filter (where x->>'resultado' in ('sucesso','insucesso')) dec
@@ -363,20 +369,20 @@ begin
          where x->>'escola' = e and x->>'epoca' = v_ep and coalesce(x->>'turma','') <> ''
          group by 1) q
        where nao >= 3 and nao * 2 >= dec
-         and coalesce(v_avisos->>(e || '|' || turma), '') < (v_hoje - 28)::text;
+         and (v_manual or coalesce(v_avisos->>(e || '|' || turma), '') < (v_hoje - 28)::text);
       -- reclamações de temas técnicos em aberto que ainda não foram enviadas, cada uma com link para a página (as concluídas não entram)
       with t as (
         select x from jsonb_array_elements(v_regs) x
          where x->>'school' = e and coalesce(v_opc->'temasTecnicos', '[]'::jsonb) ? coalesce(x->>'tema', '')
            and x->>'status' <> 'concluido'
-           and not (v_recAv ? coalesce(x->>'id', ''))
+           and (v_manual or not (v_recAv ? coalesce(x->>'id', '')))
       )
       select coalesce(jsonb_agg(jsonb_build_object('numero', x->>'entryNumber', 'tema', x->>'tema', 'recebida', x->>'receivedDate',
                       'estado', 'em aberto', 'token', privado.link_reclamacao(e, x))
                       order by x->>'receivedDate' desc), '[]'::jsonb),
              coalesce(jsonb_object_agg(x->>'id', v_hoje::text), '{}'::jsonb)
         into v_rc, v_marc from t;
-      if jsonb_array_length(v_te) > 0 or jsonb_array_length(v_inc) > 0 or jsonb_array_length(v_rc) > 0 then
+      if jsonb_array_length(v_te) > 0 or jsonb_array_length(v_inc) > 0 or jsonb_array_length(v_rc) > 0 or v_manual then
         v_recAv := v_recAv || v_marc;
         v_coords := v_coords || jsonb_build_array(jsonb_build_object('escola', e, 'emails', v_em, 'tecnicos', v_te, 'turmas', v_inc, 'reclamacoes', v_rc,
                       'resumoTecnicas', privado.resumo_tecnicas(v_regs, coalesce(v_opc->'temasTecnicos', '[]'::jsonb), e, privado.inicio_epoca(v_hoje))));
@@ -395,17 +401,17 @@ begin
   -- ---- resumo da rede: coordenador geral, responsável de área da auditoria e direção executiva ----
   --      (escolas a precisar de atenção, escolas em destaque e todas as reclamações em andamento)
   v_gem := privado.emails_validos(
-             privado.emails_validos(v_opc->'emailsCoordenadorGeral')
-          || privado.emails_validos(v_opc->'emailsResponsavelAuditoria')
-          || privado.emails_validos(v_opc->'emailsDirecaoExecutiva'));
-  if jsonb_array_length(v_gem) > 0 and v_alvo is null then
+             case when v_papeis is null or v_papeis ? 'geral' then privado.emails_validos(v_opc->'emailsCoordenadorGeral') else '[]'::jsonb end
+          || case when v_papeis is null or v_papeis ? 'auditoria' then privado.emails_validos(v_opc->'emailsResponsavelAuditoria') else '[]'::jsonb end
+          || case when v_papeis is null or v_papeis ? 'direcao' then privado.emails_validos(v_opc->'emailsDirecaoExecutiva') else '[]'::jsonb end);
+  if jsonb_array_length(v_gem) > 0 and (v_papeis is null and v_alvo is null or v_papeis ?| array['geral','auditoria','direcao']) then
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
     v_geral := jsonb_build_object('emails', v_gem) || privado.resumo_geral(v_opc, v_reg, v_regp, v_hoje);
   end if;
 
   v_env := v_env || case when v_forcado then jsonb_build_object('ultimoPedido', v_pedido) else '{}'::jsonb end
-             || case when v_alvo is not null then '{}'::jsonb else jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')) end
+             || case when v_manual then '{}'::jsonb else jsonb_build_object('ultimo', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')) end
              || jsonb_build_object( 'avisosTurma', v_avisos, 'reclamacoesAvisadas', v_recAv,
              'ultimoResumo', jsonb_build_object('em', to_char(v_agora at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'operacionais', jsonb_array_length(v_ops), 'coordenadores', jsonb_array_length(v_coords),
                                                 'geral', case when v_geral is null then 0 else 1 end, 'forcado', v_forcado));

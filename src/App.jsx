@@ -3516,9 +3516,11 @@ function AppPrincipal({ onSair }) {
     carregadoEm: carregadoEm.current,
     notificar,
     onAbrirContactos: () => setContactosAbertos(true),
-    onPedirEnvio: (escola) => {
-      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString(), ...(escola ? { escolas: [escola] } : {}) } });
-      notificar(escola ? `Pedido feito para ${escola}. O e-mail sai em poucos minutos.` : "Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
+    // Envio manual: a todos, ou só a quem escolheres (papel: operacional | coordenador | geral | auditoria | direcao; escola quando é de uma escola).
+    onPedirEnvio: (escola, papel) => {
+      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString(), ...(escola ? { escolas: [escola] } : {}), ...(papel ? { papeis: [papel] } : {}) } });
+      const quem = { operacional: "operacional", coordenador: "coordenador técnico", geral: "coordenador técnico geral", auditoria: "responsável de área da auditoria", direcao: "direção executiva" }[papel || "operacional"];
+      notificar(papel || escola ? `Pedido feito para ${quem}${escola ? ` de ${escola}` : ""}. O e-mail sai em poucos minutos.` : "Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
     },
     onAplicarIds: aplicarIdsOperacional,
     onAplicarAlteracoes: aplicarAlteracoesOperacional,

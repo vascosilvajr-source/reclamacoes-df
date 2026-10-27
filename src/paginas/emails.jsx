@@ -287,26 +287,52 @@ export function HistoricoEmailsEscolas({ escolas }) {
   );
 }
 
-// Enviar o e-mail dos operacionais só a uma escola (sai em poucos minutos; o resumo da rede e os coordenadores não saem).
+// Envio individual: só a um destinatário (operacional ou coordenador de uma escola, ou um dos três do resumo da rede).
+// Sai em poucos minutos e não gasta o envio semanal.
+const DESTINOS_ENVIO = [
+  ["operacional", "Operacional de uma escola", true],
+  ["coordenador", "Coordenador técnico de uma escola", true],
+  ["geral", "Coordenador técnico geral (resumo da rede)", false],
+  ["auditoria", "Responsável de área da auditoria (resumo da rede)", false],
+  ["direcao", "Direção executiva (resumo da rede)", false],
+];
 function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
+  const [papel, setPapel] = useState("operacional");
   const [esc, setEsc] = useState("");
-  const comEmail = escolas.filter((e) => ((op.contactos.emailsOperacionais || {})[e] || []).length);
-  const aEsperar = op.pedidoEnvio && op.pedidoEnvio.escolas && op.pedidoEnvio.escolas.length && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
+  const c = op.contactos || {};
+  const [, , comEscola] = DESTINOS_ENVIO.find((d) => d[0] === papel);
+  const chave = { operacional: "emailsOperacionais", coordenador: "emailsCoordenadores" }[papel];
+  const chaveGeral = { geral: "emailsCoordenadorGeral", auditoria: "emailsResponsavelAuditoria", direcao: "emailsDirecaoExecutiva" }[papel];
+  const comEmail = comEscola ? escolas.filter((e) => ((c[chave] || {})[e] || []).length) : [];
+  const nGeral = chaveGeral ? (c[chaveGeral] || []).length : 0;
+  const pronto = comEscola ? !!esc : nGeral > 0;
+  const pe = op.pedidoEnvio;
+  const aEsperar = pe && (pe.papeis || pe.escolas) && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
-      <span style={{ color: COLORS.ink2 }}>Enviar só a uma escola:</span>
-      <select value={esc} onChange={(e) => setEsc(e.target.value)} aria-label="Escola" style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }}>
-        <option value="">Escolher escola…</option>
-        {comEmail.map((e) => (
-          <option key={e} value={e}>
-            {e}
+      <span style={{ color: COLORS.ink2 }}>Enviar só a:</span>
+      <select value={papel} onChange={(e) => { setPapel(e.target.value); setEsc(""); }} aria-label="Destinatário" style={{ ...inputStyle, width: 290, padding: "5px 8px", fontSize: 12.5 }}>
+        {DESTINOS_ENVIO.map(([k, rot]) => (
+          <option key={k} value={k}>
+            {rot}
           </option>
         ))}
       </select>
-      <button disabled={!esc || aEsperar} onClick={() => { op.onPedirEnvio(esc); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: esc && !aEsperar ? 1 : 0.5 }}>
-        Enviar a esta escola
+      {comEscola && (
+        <select value={esc} onChange={(e) => setEsc(e.target.value)} aria-label="Escola" style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }}>
+          <option value="">Escolher escola…</option>
+          {comEmail.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+      )}
+      {!comEscola && nGeral === 0 && <span style={{ color: COLORS.warn }}>Sem e-mail definido em "Contactos das escolas".</span>}
+      <button disabled={!pronto || aEsperar} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar ? 1 : 0.5 }}>
+        Enviar agora a este destinatário
       </button>
-      {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido para {op.pedidoEnvio.escolas.join(", ")} às {quando(pedidoEm)} · sai em poucos minutos</span>}
+      {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
     </div>
   );
 }
