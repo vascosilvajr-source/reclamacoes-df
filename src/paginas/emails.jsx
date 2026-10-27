@@ -511,7 +511,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
   const comCt = escolas.filter((e) => ((op.contactos.emailsCoordenadores || {})[e] || []).length).length;
   const comGeral = [...(op.contactos.emailsCoordenadorGeral || []), ...(op.contactos.emailsResponsavelAuditoria || []), ...(op.contactos.emailsDirecaoExecutiva || [])].length;
   const pedidoEm = op.pedidoEnvio && op.pedidoEnvio.em;
-  const pendente = pedidoEm && (!envio || (!envio.ultimo && !envio.ultimoPedido) || (pedidoEm > (envio.ultimo || "") && pedidoEm > (envio.ultimoPedido || "")));
+  const pendente = pedidoEm && !(op.pedidoEnvio && op.pedidoEnvio.preview) && (!envio || (!envio.ultimo && !envio.ultimoPedido) || (pedidoEm > (envio.ultimo || "") && pedidoEm > (envio.ultimoPedido || "")));
   const hojeISO = new Date().toISOString();
   const lista = (pedidos || []).filter((p) => p.itens?.tipo !== "eficacia").filter((p) => verTodos || !p.respondido_em || (p.respostas?.turmas && Object.keys(p.respostas.turmas).length && !p.ids_aplicados_em) || p.criado > new Date(Date.now() - 14 * 86400000).toISOString());
   const porConfirmar = (pedidos || []).filter((p) => !p.validar && p.respostas?.turmas && Object.values(p.respostas.turmas).some((l) => (l || []).length) && !p.ids_aplicados_em);
@@ -610,13 +610,10 @@ export function PainelEmailsEscolas({ op, escolas }) {
         <button onClick={op.onAbrirContactos} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
           Contactos das escolas
         </button>
-        {pendente ? (
-          <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Envio pedido às {quando(pedidoEm)} · sai em poucos minutos</span>
-        ) : (
-          <button onClick={() => op.onPedirEnvio()} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
-            Enviar agora
-          </button>
-        )}
+        {pendente && <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
+        <button onClick={() => op.onPedirEnvio()} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
+          Enviar agora a todos
+        </button>
       </div>
       <EnviarEscola op={op} escolas={escolas} pedidoEm={pedidoEm} envio={envio} quando={quando} />
       <div style={{ fontSize: 12, color: COLORS.ink2, margin: "6px 0 10px", lineHeight: 1.5 }}>
