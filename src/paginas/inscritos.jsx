@@ -2437,6 +2437,49 @@ function RevisaoEvento({ ev, c, escolas, onUpdate }) {
   );
 }
 
+// Editar o público do evento depois de criado: escolas e turmas/equipas elegíveis.
+function EditarPublicoEvento({ ev, listaEscolas, registoAlunos, niveis, onUpdate }) {
+  const [aberto, setAberto] = useState(false);
+  const reg = registoAlunos[epocaDe(ev.data)];
+  const opcoes = [...new Set([...alunosNaData(reg, ev.data).map((a) => escalaoDaTurma(a.turma, niveis)), ...(ev.escaloes || [])])].sort((a, b) => ORDEM_ESCALAO(a, niveis) - ORDEM_ESCALAO(b, niveis));
+  const modo = ev.escolas && ev.escolas.length ? "so" : "exceto";
+  const marcadas = modo === "so" ? ev.escolas : ev.excluidas || [];
+  const chip = (sel, on, txt) => (
+    <button key={txt} type="button" onClick={on} style={{ border: `1px solid ${sel ? COLORS.navy : COLORS.rule}`, background: sel ? COLORS.navy : COLORS.paperRaised, color: sel ? "#fff" : COLORS.ink, borderRadius: 7, padding: "4px 9px", fontSize: 12.5, cursor: "pointer" }}>
+      {txt}
+    </button>
+  );
+  const alternaEscalao = (k) => onUpdate({ ...ev, escaloes: (ev.escaloes || []).includes(k) ? ev.escaloes.filter((x) => x !== k) : [...(ev.escaloes || []), k] });
+  const alternaEscola = (e) => {
+    const l = marcadas.includes(e) ? marcadas.filter((x) => x !== e) : [...marcadas, e];
+    onUpdate(modo === "so" ? { ...ev, escolas: l } : { ...ev, excluidas: l });
+  };
+  const mudaModo = (m) => onUpdate(m === "so" ? { ...ev, escolas: ev.excluidas && ev.excluidas.length ? [] : ev.escolas || [], excluidas: [] } : { ...ev, excluidas: ev.escolas || [], escolas: [] });
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button type="button" onClick={() => setAberto((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5 }}>
+        {aberto ? "Fechar" : "Editar"} turmas/equipas e escolas elegíveis
+      </button>
+      {aberto && (
+        <div style={{ marginTop: 8, padding: "10px 12px", border: `1px solid ${COLORS.rule}`, borderRadius: 10, display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600 }}>Turmas / equipas elegíveis {(ev.escaloes || []).length ? `(${ev.escaloes.length})` : "(todas)"}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {chip(!(ev.escaloes || []).length, () => onUpdate({ ...ev, escaloes: [] }), "Todas")}
+            {opcoes.map((k) => chip((ev.escaloes || []).includes(k), () => alternaEscalao(k), k))}
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            Escolas
+            {chip(modo === "so", () => mudaModo("so"), "Só estas")}
+            {chip(modo === "exceto", () => mudaModo("exceto"), "Todas menos estas")}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{listaEscolas.map((e) => chip(marcadas.includes(e), () => alternaEscola(e), e.replace(/^Dragon Force\s+/, "")))}</div>
+          <div style={{ fontSize: 11.5, color: COLORS.slate }}>A adesão recalcula-se logo. Não é preciso voltar a importar o Excel.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onMapaEscola, onSave, onUpdate, onRemove }) {
   const hoje = isoDe(new Date());
   const [nome, setNome] = useState("");
@@ -2537,16 +2580,28 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
         // Nome da escola no Excel ("Porto", "CN Gaia") → escola da app.
         // Procura primeiro nas escolas com alunos na época do evento.
         const comAlunos = [...new Set(Object.values(registoAlunos[epocaDe(ev.data)]?.alunos || {}).map((a) => a.escola))];
-        const alvo = ev.escolas && ev.escolas.length ? ev.escolas : comAlunos.length ? comAlunos : listaEscolas;
+        // Procura entre todas as escolas da app (uma escola do Excel que não participa no evento deve ligar-se
+        // à sua escola e não a outra parecida); as que têm alunos na época ganham ligeira vantagem.
+        const alvo = [...new Set([...comAlunos, ...listaEscolas])];
         const mapa = {};
+        const pontos = {};
         Object.keys(r.porEscola).forEach((raw) => {
           // A escolha feita antes (neste evento ou noutro ficheiro) vale outra vez.
           const anterior = ev.participantes && ev.participantes.mapa && ev.participantes.mapa[raw];
           if (anterior) return (mapa[raw] = anterior);
           const guardada = (mapaEscolas || {})[normChave(raw)];
           if (guardada) return (mapa[raw] = guardada);
-          const melhor = alvo.map((e) => ({ e, s: semelhancaEscolas(raw, e) })).sort((x, y) => y.s - x.s)[0];
+          const melhor = alvo.map((e) => ({ e, s: semelhancaEscolas(raw, e) + (comAlunos.includes(e) ? 0.01 : 0) })).sort((x, y) => y.s - x.s)[0];
           mapa[raw] = melhor && melhor.s >= 0.6 ? melhor.e : "";
+          pontos[raw] = melhor ? melhor.s : 0;
+        });
+        // Duas escolas do Excel nunca ficam ligadas sozinhas à mesma escola da app: fica a que se parece mais e a outra
+        // aparece para escolheres (ex.: "CN Gaia" e "CN Maia").
+        const fixas = (raw) => (ev.participantes && ev.participantes.mapa && ev.participantes.mapa[raw]) || (mapaEscolas || {})[normChave(raw)];
+        Object.keys(mapa).forEach((raw) => {
+          if (!mapa[raw] || fixas(raw)) return;
+          const rival = Object.keys(mapa).find((o) => o !== raw && mapa[o] === mapa[raw] && (fixas(o) || pontos[o] > pontos[raw] || (pontos[o] === pontos[raw] && o < raw)));
+          if (rival) mapa[raw] = "";
         });
         participantes = { ids: [], manual: {}, porEscola: r.porEscola, mapa };
       }
@@ -2833,6 +2888,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
             {ab && (
               <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 12 }}>
                 {!c.temRegisto && <div style={{ fontSize: 12.5, color: COLORS.warn, marginBottom: 8 }}>Sem alunos importados em {c.ep}: não dá para saber quantos eram elegíveis.</div>}
+                <EditarPublicoEvento ev={ev} listaEscolas={listaEscolas} registoAlunos={registoAlunos} niveis={niveis} onUpdate={onUpdate} />
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
                   <label style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <FileText size={14} /> {aLer ? "A ler…" : ev.ficheiro ? "Substituir Excel dos inscritos" : "Importar Excel dos inscritos"}
@@ -2886,6 +2942,9 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                   const mapa = ev.participantes.mapa || {};
                   const linhasMapa = Object.entries(ev.participantes.porEscola).sort((x, y) => y[1].total - x[1].total);
                   const porResolver = linhasMapa.filter(([raw]) => !mapa[raw]);
+                  const contaDestino = {};
+                  linhasMapa.forEach(([raw]) => mapa[raw] && (contaDestino[mapa[raw]] = (contaDestino[mapa[raw]] || 0) + 1));
+                  const repetidas = linhasMapa.filter(([raw]) => mapa[raw] && contaDestino[mapa[raw]] > 1);
                   const escolher = (raw, escola) => {
                     onUpdate({ ...ev, participantes: { ...ev.participantes, mapa: { ...mapa, [raw]: escola } } });
                     if (escola && onMapaEscola) onMapaEscola(raw, escola);
@@ -2935,6 +2994,12 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                             A app não reconheceu {porResolver.length === 1 ? "1 escola" : `${porResolver.length} escolas`} do Excel ({porResolver.reduce((t, [, x]) => t + x.total, 0)} inscritos). Diz de que escola {porResolver.length === 1 ? "é" : "são"}:
                           </div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 6 }}>{porResolver.map(linhaMapa)}</div>
+                        </div>
+                      )}
+                      {repetidas.length > 0 && (
+                        <div style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, marginBottom: 8 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Atenção: {repetidas.length} escolas do Excel estão ligadas à mesma escola da app. Confirma se está certo:</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 6 }}>{repetidas.map(linhaMapa)}</div>
                         </div>
                       )}
                       <details>
