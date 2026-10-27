@@ -297,9 +297,16 @@ const DESTINOS_ENVIO = [
   ["auditoria", "Responsável de área da auditoria (resumo da rede)", false],
   ["direcao", "Direção executiva (resumo da rede)", false],
 ];
+const ROT_DESTINO = { operacional: "Operacional", coordenador: "Coordenador técnico", geral: "Coordenador técnico geral", auditoria: "Responsável da auditoria", direcao: "Direção executiva" };
 function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
   const [papel, setPapel] = useState("operacional");
   const [esc, setEsc] = useState("");
+  const [lista, setLista] = useState([]); // destinatários escolhidos: [{ papel, escola? }]
+  const [previa, setPrevia] = useState(null);
+  const [eu, setEu] = useState("");
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setEu((data && data.user && data.user.email) || "")).catch(() => {});
+  }, []);
   const c = op.contactos || {};
   const [, , comEscola] = DESTINOS_ENVIO.find((d) => d[0] === papel);
   const chave = { operacional: "emailsOperacionais", coordenador: "emailsCoordenadores" }[papel];
@@ -307,50 +314,80 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
   const comEmail = comEscola ? escolas.filter((e) => ((c[chave] || {})[e] || []).length) : [];
   const nGeral = chaveGeral ? (c[chaveGeral] || []).length : 0;
   const pronto = comEscola ? !!esc : nGeral > 0;
-  const [previa, setPrevia] = useState(null); // { a carregar | erro | lista }
+  const existe = (d) => lista.some((x) => x.papel === d.papel && (x.escola || "") === (d.escola || ""));
+  const adicionar = () => {
+    const d = comEscola ? { papel, escola: esc } : { papel };
+    if (!existe(d)) setLista((l) => [...l, d]);
+    setEsc("");
+  };
+  const tira = (d) => setLista((l) => l.filter((x) => !(x.papel === d.papel && (x.escola || "") === (d.escola || ""))));
+  const pe = op.pedidoEnvio;
+  const aEsperar = pe && !pe.preview && (pe.destinos || pe.papeis || pe.escolas) && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
   const verPrevia = async () => {
     setPrevia({ aCarregar: true });
-    const { data, error } = await supabase.rpc("op_previa", { p_escola: comEscola ? esc : "", p_papel: papel });
-    if (error) return setPrevia({ erro: "Não consegui gerar a pré-visualização. Confirma que colaste o operacionais.sql no Supabase." });
-    const itens = (data || []).map((x) => ({ ...x, ...previaEmail(x.tipo, x.dados) })).filter((x) => x.html);
-    setPrevia(itens.length ? { itens } : { erro: comEscola ? "Esta escola não tem e-mail definido para este destinatário (ver Contactos das escolas)." : "Sem e-mail definido para este destinatário (ver Contactos das escolas)." });
+    const itens = [];
+    let erro = "";
+    for (const d of lista) {
+      const { data, error } = await supabase.rpc("op_previa", { p_escola: d.escola || "", p_papel: d.papel });
+      if (error) {
+        erro = "Não consegui gerar a pré-visualização. Confirma que colaste o operacionais.sql no Supabase.";
+        break;
+      }
+      const lido = (data || []).map((x) => ({ ...x, ...previaEmail(x.tipo, x.dados) })).filter((x) => x.html);
+      if (!lido.length) erro = `${ROT_DESTINO[d.papel]}${d.escola ? ` de ${d.escola}` : ""}: sem e-mail definido (ver Contactos das escolas).`;
+      itens.push(...lido);
+    }
+    setPrevia(itens.length ? { itens, erro } : { erro: erro || "Nada para mostrar." });
   };
-  const [eu, setEu] = useState("");
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEu((data && data.user && data.user.email) || "")).catch(() => {});
-  }, []);
-  const pe = op.pedidoEnvio;
-  const aEsperar = pe && (pe.papeis || pe.escolas) && pedidoEm && (!envio || pedidoEm > (envio.ultimoPedido || ""));
+  const etiqueta = (d) => `${ROT_DESTINO[d.papel]}${d.escola ? ` · ${d.escola}` : ""}`;
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
-      <span style={{ color: COLORS.ink2 }}>Enviar só a:</span>
-      <select value={papel} onChange={(e) => { setPapel(e.target.value); setEsc(""); }} aria-label="Destinatário" style={{ ...inputStyle, width: 290, padding: "5px 8px", fontSize: 12.5 }}>
-        {DESTINOS_ENVIO.map(([k, rot]) => (
-          <option key={k} value={k}>
-            {rot}
-          </option>
-        ))}
-      </select>
-      {comEscola && (
-        <select value={esc} onChange={(e) => setEsc(e.target.value)} aria-label="Escola" style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }}>
-          <option value="">Escolher escola…</option>
-          {comEmail.map((e) => (
-            <option key={e} value={e}>
-              {e}
+    <div style={{ display: "grid", gap: 8, marginTop: 8, fontSize: 12.5 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ color: COLORS.ink2 }}>Enviar só a:</span>
+        <select value={papel} onChange={(e) => { setPapel(e.target.value); setEsc(""); }} aria-label="Destinatário" style={{ ...inputStyle, width: 290, padding: "5px 8px", fontSize: 12.5 }}>
+          {DESTINOS_ENVIO.map(([k, rot]) => (
+            <option key={k} value={k}>
+              {rot}
             </option>
           ))}
         </select>
+        {comEscola && (
+          <select value={esc} onChange={(e) => setEsc(e.target.value)} aria-label="Escola" style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: 12.5 }}>
+            <option value="">Escolher escola…</option>
+            {comEmail.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </select>
+        )}
+        {!comEscola && nGeral === 0 && <span style={{ color: COLORS.warn }}>Sem e-mail definido em "Contactos das escolas".</span>}
+        <button disabled={!pronto} onClick={adicionar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto ? 1 : 0.5 }}>
+          + Juntar à lista
+        </button>
+      </div>
+      {lista.length > 0 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {lista.map((d) => (
+            <span key={`${d.papel}|${d.escola || ""}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${COLORS.rule}`, borderRadius: 999, padding: "3px 6px 3px 10px", background: COLORS.paperRaised }}>
+              {etiqueta(d)}
+              <button onClick={() => tira(d)} aria-label={`Tirar ${etiqueta(d)}`} style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.slate, padding: 0, display: "inline-flex" }}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          <button onClick={verPrevia} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5 }}>
+            Ver preview
+          </button>
+          <button disabled={!eu} title={eu ? `Chega só a ${eu}` : "Sem e-mail da conta"} onClick={() => op.onPedirEnvioA(lista, eu, false)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: eu ? 1 : 0.5 }}>
+            Enviar preview para mim
+          </button>
+          <button onClick={() => { op.onPedirEnvioA(lista, null, aEsperar); setLista([]); }} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5 }}>
+            Enviar a {lista.length === 1 ? "este destinatário" : `estes ${lista.length}`}
+          </button>
+        </div>
       )}
-      {!comEscola && nGeral === 0 && <span style={{ color: COLORS.warn }}>Sem e-mail definido em "Contactos das escolas".</span>}
-      <button disabled={!pronto || aEsperar} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar ? 1 : 0.5 }}>
-        Enviar agora a este destinatário
-      </button>
-      <button disabled={!pronto} onClick={verPrevia} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto ? 1 : 0.5 }}>
-        Ver preview
-      </button>
-      <button disabled={!pronto || aEsperar || !eu} title={eu ? `Chega só a ${eu}` : "Sem e-mail da conta"} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel, eu); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar && eu ? 1 : 0.5 }}>
-        Enviar preview para mim
-      </button>
+      {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Há um pedido à espera desde as {quando(pedidoEm)} · sai em poucos minutos. Podes juntar mais destinatários e enviar outra vez: juntam-se ao pedido.</span>}
       {previa && (
         <div role="dialog" aria-modal="true" aria-label="Pré-visualização do e-mail" onClick={() => setPrevia(null)} style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 14, width: "100%", maxWidth: 680, maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
@@ -383,7 +420,6 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
           </div>
         </div>
       )}
-      {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
     </div>
   );
 }

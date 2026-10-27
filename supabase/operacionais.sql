@@ -260,7 +260,7 @@ declare
   e text; v_em jsonb; v_xp jsonb; v_tu jsonb; v_te jsonb; v_inc jsonb; v_tok text; v_turmasEsc jsonb;
   v_ops jsonb := '[]'::jsonb; v_coords jsonb := '[]'::jsonb; v_avisos jsonb; v_avisados text[] := '{}';
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
-  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean; v_preview boolean := false; v_para jsonb; v_prevj jsonb := '{}'::jsonb;
+  v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean; v_dest jsonb; v_dg boolean; v_da boolean; v_dd boolean; v_geral_ok boolean; v_preview boolean := false; v_para jsonb; v_prevj jsonb := '{}'::jsonb;
 begin
   if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
@@ -281,7 +281,15 @@ begin
   v_papeis := case when v_forcado and jsonb_typeof(v_opc->'pedidoEnvioOperacionais'->'papeis') = 'array' and jsonb_array_length(v_opc->'pedidoEnvioOperacionais'->'papeis') > 0
                    then v_opc->'pedidoEnvioOperacionais'->'papeis'
                    when v_alvo is not null then '["operacional"]'::jsonb end;
-  v_manual := v_papeis is not null;
+  -- Vários destinatários num só pedido: destinos = [{"escola": "DF Alfa", "papel": "operacional"}, {"papel": "direcao"}, ...]
+  v_dest := case when v_forcado and jsonb_typeof(v_opc->'pedidoEnvioOperacionais'->'destinos') = 'array' and jsonb_array_length(v_opc->'pedidoEnvioOperacionais'->'destinos') > 0
+                 then v_opc->'pedidoEnvioOperacionais'->'destinos' end;
+  if v_dest is not null then v_alvo := null; v_papeis := null; end if;
+  v_manual := v_papeis is not null or v_dest is not null;
+  v_dg := case when v_dest is not null then exists (select 1 from jsonb_array_elements(v_dest) d where d->>'papel' = 'geral') else v_papeis is null or v_papeis ? 'geral' end;
+  v_da := case when v_dest is not null then exists (select 1 from jsonb_array_elements(v_dest) d where d->>'papel' = 'auditoria') else v_papeis is null or v_papeis ? 'auditoria' end;
+  v_dd := case when v_dest is not null then exists (select 1 from jsonb_array_elements(v_dest) d where d->>'papel' = 'direcao') else v_papeis is null or v_papeis ? 'direcao' end;
+  v_geral_ok := case when v_dest is not null then (v_dg or v_da or v_dd) else (v_papeis is null and v_alvo is null) or coalesce(v_papeis ?| array['geral','auditoria','direcao'], false) end;
   -- Pré-visualização: o e-mail real (mesmo conteúdo e ligações) sai só para quem pediu, sem marcar nada como enviado.
   v_para := privado.emails_validos(jsonb_build_array(coalesce(v_opc->'pedidoEnvioOperacionais'->>'para', '')));
   v_preview := v_forcado and v_manual and coalesce(v_opc->'pedidoEnvioOperacionais'->>'preview', '') = 'true' and jsonb_array_length(v_para) > 0;
@@ -305,9 +313,10 @@ begin
   for e in select jsonb_array_elements_text(coalesce(v_opc->'schools', '[]'::jsonb)) loop
     if not privado.escola_aberta(v_opc, v_reg, e, v_ep) then continue; end if;
     if v_alvo is not null and not (v_alvo ? e) then continue; end if;
+    if v_dest is not null and not exists (select 1 from jsonb_array_elements(v_dest) d where d->>'escola' = e) then continue; end if;
     -- ---- operacionais: experiências com 14+ dias por decidir e turmas do plano sem alunos ----
     v_em := case when v_preview then v_para else privado.emails_validos(v_opc->'emailsOperacionais'->e) end;
-    if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'operacional') then
+    if jsonb_array_length(v_em) > 0 and (case when v_dest is not null then exists (select 1 from jsonb_array_elements(v_dest) d where d->>'escola' = e and d->>'papel' = 'operacional') else v_papeis is null or v_papeis ? 'operacional' end) then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma','')) order by x->>'data'), '[]'::jsonb) into v_xp
         from jsonb_array_elements(v_exps) x
        where x->>'escola' = e and x->>'epoca' = v_ep and coalesce(x->>'alunoId','') <> ''
@@ -359,7 +368,7 @@ begin
 
     -- ---- coordenador técnico: motivos técnicos e turmas com muitas experiências não convertidas ----
     v_em := case when v_preview then v_para else privado.emails_validos(v_opc->'emailsCoordenadores'->e) end;
-    if jsonb_array_length(v_em) > 0 and (v_papeis is null or v_papeis ? 'coordenador') then
+    if jsonb_array_length(v_em) > 0 and (case when v_dest is not null then exists (select 1 from jsonb_array_elements(v_dest) d where d->>'escola' = e and d->>'papel' = 'coordenador') else v_papeis is null or v_papeis ? 'coordenador' end) then
       select coalesce(jsonb_agg(jsonb_build_object('id', x->>'alunoId', 'data', x->>'data', 'turma', coalesce(x->>'turma',''), 'motivo', x->>'motivo', 'nota', coalesce(x->>'nota',''))), '[]'::jsonb),
              coalesce(array_agg(x->>'id'), '{}')
         into v_te, v_avisados
@@ -405,11 +414,11 @@ begin
   -- ---- resumo da rede: coordenador geral, responsável de área da auditoria e direção executiva ----
   --      (escolas a precisar de atenção, escolas em destaque e todas as reclamações em andamento)
   v_gem := privado.emails_validos(
-             case when v_papeis is null or v_papeis ? 'geral' then privado.emails_validos(v_opc->'emailsCoordenadorGeral') else '[]'::jsonb end
-          || case when v_papeis is null or v_papeis ? 'auditoria' then privado.emails_validos(v_opc->'emailsResponsavelAuditoria') else '[]'::jsonb end
-          || case when v_papeis is null or v_papeis ? 'direcao' then privado.emails_validos(v_opc->'emailsDirecaoExecutiva') else '[]'::jsonb end);
+             case when v_dg then privado.emails_validos(v_opc->'emailsCoordenadorGeral') else '[]'::jsonb end
+          || case when v_da then privado.emails_validos(v_opc->'emailsResponsavelAuditoria') else '[]'::jsonb end
+          || case when v_dd then privado.emails_validos(v_opc->'emailsDirecaoExecutiva') else '[]'::jsonb end);
   if v_preview then v_gem := v_para; end if;
-  if jsonb_array_length(v_gem) > 0 and (v_papeis is null and v_alvo is null or v_papeis ?| array['geral','auditoria','direcao']) then
+  if jsonb_array_length(v_gem) > 0 and v_geral_ok then
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
     v_geral := jsonb_build_object('emails', v_gem) || privado.resumo_geral(v_opc, v_reg, v_regp, v_hoje);

@@ -3523,6 +3523,14 @@ function AppPrincipal({ onSair }) {
       if (previa) return notificar(`Pré-visualização pedida: chega a ${previa} em poucos minutos. Ninguém mais recebe nada.`, "ok", 8000);
       notificar(papel || escola ? `Pedido feito para ${quem}${escola ? ` de ${escola}` : ""}. O e-mail sai em poucos minutos.` : "Pedido feito. Os e-mails saem em poucos minutos.", "ok", 7000);
     },
+    // Envio a vários destinatários escolhidos: destinos = [{ escola?, papel }]. Se o pedido anterior ainda não saiu, juntam-se.
+    onPedirEnvioA: (destinos, previa, juntar) => {
+      const pe = options.pedidoEnvioOperacionais || {};
+      const base = juntar && !previa && !pe.preview && Array.isArray(pe.destinos) ? pe.destinos : [];
+      const todos = [...base, ...destinos].filter((d, i, l) => l.findIndex((x) => x.papel === d.papel && (x.escola || "") === (d.escola || "")) === i);
+      persistOptions({ ...options, pedidoEnvioOperacionais: { em: new Date().toISOString(), destinos: todos, ...(previa ? { preview: true, para: previa } : {}) } });
+      notificar(previa ? `Pré-visualização pedida: chega a ${previa} em poucos minutos. Ninguém mais recebe nada.` : `Pedido feito para ${todos.length} ${todos.length === 1 ? "destinatário" : "destinatários"}. Os e-mails saem em poucos minutos.`, "ok", 8000);
+    },
     onAplicarIds: aplicarIdsOperacional,
     onAplicarAlteracoes: aplicarAlteracoesOperacional,
     onAplicarRespostas: aplicarRespostasOperacionais,
