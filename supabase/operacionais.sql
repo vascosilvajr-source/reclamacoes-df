@@ -578,6 +578,33 @@ end $$;
 revoke all on function public.op_responder(text, jsonb) from public;
 grant execute on function public.op_responder(text, jsonb) to anon, authenticated;
 
+-- 5a. Pré-visualização dentro da app: gera os e-mails de verdade (mesmos dados) e desfaz tudo no fim, por isso não fica
+--     nada gravado nem enviado. p_papel: operacional | coordenador | geral | auditoria | direcao; p_escola só nos dois primeiros.
+create or replace function public.op_previa(p_escola text, p_papel text)
+returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
+declare v_max bigint; v_tok text; v_res jsonb; v_det text;
+begin
+  if not (select public.e_equipa()) then raise exception 'sem acesso'; end if;
+  if p_papel not in ('operacional','coordenador','geral','auditoria','direcao') then raise exception 'destinatário inválido'; end if;
+  begin
+    select coalesce(max(id), 0) into v_max from emails_fila;
+    select valor into v_tok from privado.segredos where nome = 'radar_token';
+    update app_storage set value = jsonb_set(coalesce(value, '{}'::jsonb), '{pedidoEnvioOperacionais}',
+        jsonb_strip_nulls(jsonb_build_object('em', to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'papeis', jsonb_build_array(p_papel),
+          'escolas', case when coalesce(p_escola, '') = '' then null else jsonb_build_array(p_escola) end)), true)
+     where key = 'reclamacoes:opcoes';
+    perform op_preparar(v_tok);
+    select coalesce(jsonb_agg(jsonb_build_object('tipo', tipo, 'escola', escola, 'emails', emails, 'dados', dados) order by id), '[]'::jsonb) into v_res
+      from emails_fila where id > v_max;
+    raise exception 'previa' using errcode = 'PX001', detail = v_res::text;
+  exception when sqlstate 'PX001' then
+    get stacked diagnostics v_det = pg_exception_detail;
+    return v_det::jsonb;
+  end;
+end $$;
+revoke all on function public.op_previa(text, text) from public;
+grant execute on function public.op_previa(text, text) to authenticated;
+
 -- 5b. Alterações de turma propostas pelo operacional: ficam sempre pendentes até validares na app.
 --     p_alt = [{"id": "22534", "para": "Iniciação A"}, ...]. Só turmas da escola e códigos que existem na época.
 create or replace function public.op_propor_alteracoes(p_token text, p_alt jsonb)

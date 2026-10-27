@@ -2,7 +2,8 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { dbStorage, supabase } from "../supabaseClient";
-import { Mail } from "lucide-react";
+import { Mail, X } from "lucide-react";
+import { previaEmail } from "../emailsHtml.js";
 import { COLORS, MOTIVOS_EXPERIENCIA_PADRAO, inputStyle, linkBtnStyle, normChave, panelStyle, primaryBtnStyle, secondaryBtnStyle } from "../nucleo.jsx";
 import { JanelaSGQ, tdStyle, thStyle } from "../partilhado.jsx";
 
@@ -306,6 +307,14 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
   const comEmail = comEscola ? escolas.filter((e) => ((c[chave] || {})[e] || []).length) : [];
   const nGeral = chaveGeral ? (c[chaveGeral] || []).length : 0;
   const pronto = comEscola ? !!esc : nGeral > 0;
+  const [previa, setPrevia] = useState(null); // { a carregar | erro | lista }
+  const verPrevia = async () => {
+    setPrevia({ aCarregar: true });
+    const { data, error } = await supabase.rpc("op_previa", { p_escola: comEscola ? esc : "", p_papel: papel });
+    if (error) return setPrevia({ erro: "Não consegui gerar a pré-visualização. Confirma que colaste o operacionais.sql no Supabase." });
+    const itens = (data || []).map((x) => ({ ...x, ...previaEmail(x.tipo, x.dados) })).filter((x) => x.html);
+    setPrevia(itens.length ? { itens } : { erro: comEscola ? "Esta escola não tem e-mail definido para este destinatário (ver Contactos das escolas)." : "Sem e-mail definido para este destinatário (ver Contactos das escolas)." });
+  };
   const [eu, setEu] = useState("");
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setEu((data && data.user && data.user.email) || "")).catch(() => {});
@@ -336,9 +345,44 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
       <button disabled={!pronto || aEsperar} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar ? 1 : 0.5 }}>
         Enviar agora a este destinatário
       </button>
-      <button disabled={!pronto || aEsperar || !eu} title={eu ? `Chega só a ${eu}` : "Sem e-mail da conta"} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel, eu); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar && eu ? 1 : 0.5 }}>
-        Pré-visualizar (enviar para mim)
+      <button disabled={!pronto} onClick={verPrevia} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto ? 1 : 0.5 }}>
+        Ver preview
       </button>
+      <button disabled={!pronto || aEsperar || !eu} title={eu ? `Chega só a ${eu}` : "Sem e-mail da conta"} onClick={() => { op.onPedirEnvio(comEscola ? esc : undefined, papel, eu); setEsc(""); }} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 12px", fontSize: 12.5, opacity: pronto && !aEsperar && eu ? 1 : 0.5 }}>
+        Enviar preview para mim
+      </button>
+      {previa && (
+        <div role="dialog" aria-modal="true" aria-label="Pré-visualização do e-mail" onClick={() => setPrevia(null)} style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: COLORS.paperRaised, borderRadius: 14, width: "100%", maxWidth: 680, maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}>
+            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.rule}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <strong style={{ flex: 1, fontSize: 14 }}>Pré-visualização do e-mail</strong>
+              <button onClick={() => setPrevia(null)} aria-label="Fechar" style={{ background: "none", border: "none", cursor: "pointer", color: COLORS.slate }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: 14, overflowY: "auto", display: "grid", gap: 14 }}>
+              {previa.aCarregar && <div style={{ color: COLORS.slate }}>A preparar…</div>}
+              {previa.erro && <div style={{ color: COLORS.warn, fontWeight: 600 }}>{previa.erro}</div>}
+              {(previa.itens || []).map((x, i) => (
+                <div key={i} style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12.5 }}>
+                    <div>
+                      <span style={{ color: COLORS.slate }}>Assunto: </span>
+                      <strong>{x.assunto}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: COLORS.slate }}>Para: </span>
+                      {(x.emails || []).join(", ")}
+                    </div>
+                  </div>
+                  <iframe title={`Preview ${i + 1}`} sandbox="" srcDoc={x.html} style={{ width: "100%", height: 520, border: `1px solid ${COLORS.rule}`, borderRadius: 8, background: "#fff" }} />
+                </div>
+              ))}
+              {previa.itens && <div style={{ fontSize: 11.5, color: COLORS.slate }}>É o que seria enviado agora, com os dados de hoje. Nada foi enviado nem gravado. Os links são de exemplo e não abrem.</div>}
+            </div>
+          </div>
+        </div>
+      )}
       {aEsperar && <span style={{ color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
     </div>
   );
