@@ -90,6 +90,16 @@ begin
   return v_tok;
 end $$;
 
+-- 2b'. Link do dashboard da rede (só leitura, 30 dias): guarda uma cópia do resumo que vai no e-mail.
+create or replace function privado.link_painel(p_dados jsonb) returns text language plpgsql as $$
+declare v_tok text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+begin
+  insert into pedidos_operacionais (token, escola, emails, expira, itens, enviado_em)
+  values (v_tok, 'Rede', '[]'::jsonb, now() + interval '30 days',
+    jsonb_build_object('tipo', 'painel', 'gerado', to_char(now() at time zone 'Europe/Lisbon', 'YYYY-MM-DD'), 'dados', p_dados - 'emails'), now());
+  return v_tok;
+end $$;
+
 -- 2c. Resumo das reclamações de origem técnica de uma escola na época: quantas, quantas em aberto
 --     e os temas mais mencionados. Técnica = categoria "Técnico" ou um dos temas técnicos escolhidos na app.
 create or replace function privado.resumo_tecnicas(p_rec jsonb, p_tem jsonb, p_escola text, p_desde date)
@@ -422,6 +432,7 @@ begin
     v_prev := (left(v_ep, 4)::int - 1)::text || '/' || right(left(v_ep, 4), 2);
     select value->v_prev into v_regp from app_storage where key = 'reclamacoes:alunos';
     v_geral := jsonb_build_object('emails', v_gem) || privado.resumo_geral(v_opc, v_reg, v_regp, v_hoje);
+    v_geral := v_geral || jsonb_build_object('painel', privado.link_painel(v_geral));
   end if;
 
   v_env := v_env || case when v_forcado then jsonb_build_object('ultimoPedido', v_pedido) else '{}'::jsonb end
@@ -476,7 +487,7 @@ begin
   select * into p from pedidos_operacionais where token = p_token and length(coalesce(p_token,'')) >= 32 for update;
   if p.token is null then raise exception 'pedido inexistente'; end if;
   if p.expira < now() then raise exception 'pedido expirado'; end if;
-  if p.itens->>'tipo' = 'reclamacao' then raise exception 'pedido só de leitura'; end if;
+  if p.itens->>'tipo' in ('reclamacao','painel') then raise exception 'pedido só de leitura'; end if;
   -- Avaliação da eficácia de uma reclamação (operacional ou coordenador da escola)
   if p.itens->>'tipo' = 'eficacia' then
     v_av := p_respostas->>'avaliacao';

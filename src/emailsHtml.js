@@ -91,42 +91,16 @@ function blocoEscolas_(titulo, lista, cor, vazio) {
 
 function htmlGeral_(g) {
   const r = g.rede || {};
-  const dec = (r.convertidas || 0) + (r.naoConvertidas || 0);
-  const conv = dec >= 5 ? `${Math.round(((r.convertidas || 0) / dec) * 100)}% (${r.convertidas} de ${dec})` : '—';
-  const inscr = r.anterior ? `${r.inscritos} (mesmo dia da época passada: ${r.anterior})` : `${r.inscritos}`;
-  // Todas as reclamações em andamento (versões antigas da app só mandavam as técnicas).
-  const abertas = g.abertas || g.tecnicas || [];
-  const corEstado = (e) => (e === 'atrasada' ? '#C2570C' : e === 'em andamento' ? '#0B2A5B' : '#5B6577');
-  const tec = abertas
-    .map((x) => `<tr><td style="${td_()}"><b>${esc_(x.escola)}</b></td><td style="${td_()}">nº ${esc_(String(x.numero).padStart(4, '0'))}</td><td style="${td_()}">${esc_(x.tema)}${x.tecnica ? ' <span style="font-size:11px;color:#5B6577">(técnica)</span>' : ''}</td><td style="${td_()}">${dataPT_(x.recebida)}</td><td style="${td_()};color:${corEstado(x.estado)};font-weight:600">${esc_(x.estado)}</td><td style="${td_()}">${linkRecl_(x.token)}</td></tr>`)
-    .join('');
+  const a = (g.atencao || []).length;
+  const abertas = (g.abertas || g.tecnicas || []);
   const nAtras = abertas.filter((x) => x.estado === 'atrasada').length;
-  const res = (g.resumoTecnicas || [])
-    .map((x) => `<tr><td style="${td_()}"><b>${esc_(x.escola)}</b></td><td style="${td_()};text-align:right">${x.total}</td><td style="${td_()};text-align:right">${x.abertas || 0}</td><td style="${td_()}">${(x.temas || []).map((t) => `${esc_(t.tema)} (${t.n})`).join(' · ')}</td></tr>`)
-    .join('');
+  const link = g.painel ? `${URL_APP}/?op=${encodeURIComponent(g.painel)}` : '${URL_APP}';
   return moldura_(`
     <p style="margin:0 0 14px">Olá,</p>
-    <p style="margin:0 0 6px">Resumo da rede desta semana:</p>
-    <ul style="margin:0 0 4px;padding-left:20px;line-height:1.6">
-      <li>Inscritos: <b>${inscr}</b></li>
-      <li>Desistências na época: <b>${r.desistencias || 0}</b></li>
-      <li>Conversão das experiências: <b>${conv}</b></li>
-    </ul>
-    ${blocoEscolas_('Precisam de atenção', g.atencao, '#C2570C', 'Nenhuma escola com alertas esta semana.')}
-    <p style="margin:18px 0 6px;font-weight:700;color:#C2570C">Escolas com mais desistências</p>
-    ${(g.desistencias || []).length
-      ? `<table style="border-collapse:collapse;width:100%;font-size:13px;border-top:2px solid #C2570C">${g.desistencias.map((x) => `<tr><td style="${td_()}"><b>${esc_(x.escola)}</b></td><td style="${td_()};text-align:right">${x.n} desistências</td><td style="${td_()};text-align:right">${esc_(x.taxa)}% dos alunos da época</td></tr>`).join('')}</table>`
-      : `<p style="margin:0;color:#5B6577;font-size:13px">Sem desistências registadas.</p>`}
-    ${blocoEscolas_('Em destaque', g.destaque, '#0C7A52', 'Sem destaques positivos esta semana.')}
-    <p style="margin:18px 0 6px;font-weight:700;color:#0B2A5B">Reclamações de origem técnica nesta época, por escola</p>
-    ${res
-      ? `<table style="border-collapse:collapse;width:100%;font-size:13px"><tr>${['Escola', 'Total', 'Em aberto', 'Mais mencionados'].map((h) => `<th style="${th_()}">${h}</th>`).join('')}</tr>${res}</table>`
-      : `<p style="margin:0;color:#5B6577;font-size:13px">Sem reclamações de origem técnica nesta época.</p>`}
-    <p style="margin:18px 0 6px;font-weight:700;color:#0B2A5B">Reclamações em andamento${abertas.length ? ` (${abertas.length}${nAtras ? `, ${nAtras} ${nAtras === 1 ? 'atrasada' : 'atrasadas'}` : ''})` : ''}</p>
-    ${tec
-      ? `<table style="border-collapse:collapse;width:100%;font-size:13px"><tr>${['Escola', 'Reclamação', 'Tema', 'Recebida', 'Estado', ''].map((h) => `<th style="${th_()}">${h}</th>`).join('')}</tr>${tec}</table>`
-      : `<p style="margin:0;color:#5B6577;font-size:13px">Sem reclamações em andamento.</p>`}
-    <p style="margin:18px 0 0;color:#5B6577;font-size:13px">Comparação com o mesmo dia da época passada. Os números completos estão na app.</p>
+    <p style="margin:0 0 6px">O resumo semanal da rede está no dashboard, com a mesma informação de sempre: inscritos, desistências, conversão das experiências, escolas que precisam de atenção, escolas em destaque e reclamações em andamento.</p>
+    <p style="margin:0 0 18px;color:#5B6577;font-size:13px">Esta semana: ${r.inscritos != null ? `${r.inscritos} inscritos` : 'inscritos na app'} · ${a} ${a === 1 ? 'ponto de atenção' : 'pontos de atenção'} · ${abertas.length} ${abertas.length === 1 ? 'reclamação em andamento' : 'reclamações em andamento'}${nAtras ? ` (${nAtras} ${nAtras === 1 ? 'atrasada' : 'atrasadas'})` : ''}.</p>
+    <p style="margin:0 0 6px"><a href="${link}" style="display:inline-block;background:#0B2A5B;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:9px">Abrir o dashboard</a></p>
+    <p style="margin:14px 0 0;color:#5B6577;font-size:12.5px">O link é pessoal da rede e fica ativo durante 30 dias.</p>
   `);
 }
 

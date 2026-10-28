@@ -56,7 +56,7 @@ export function ContactosEscolas({ escolas, options, onGuardar, onFechar }) {
     >
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ fontSize: 12.5, color: COLORS.ink2, lineHeight: 1.55 }}>
-          <strong>Operacionais</strong> recebem à terça-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas, e as reclamações dos temas técnicos, cada uma com link para ver a descrição. <strong>Coordenador técnico geral, responsável de área da auditoria e direção executiva</strong> recebem, à terça-feira, o resumo da rede: escolas que precisam de atenção, escolas em destaque, escolas com mais desistências e todas as reclamações em andamento.
+          <strong>Operacionais</strong> recebem à terça-feira o pedido da escola (experiências com mais de 2 semanas e turmas do plano sem alunos). <strong>Coordenador técnico</strong> recebe as experiências que não converteram por motivo técnico e as turmas/equipas com muitas experiências não convertidas, e as reclamações dos temas técnicos, cada uma com link para ver a descrição. <strong>Coordenador técnico geral, responsável de área da auditoria e direção executiva</strong> recebem, à terça-feira, um e-mail curto com o botão para o dashboard da rede (atenção, destaques, desistências e todas as reclamações em andamento).
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <label style={{ flex: "1 1 260px", display: "grid", gap: 4, fontSize: 12.5, color: COLORS.ink2 }}>

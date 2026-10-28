@@ -185,6 +185,160 @@ function LotacaoTurmas({ token, itens, propostas: iniciais }) {
   );
 }
 
+const cx = { padding: "7px 8px", borderBottom: `1px solid ${LINHA}`, verticalAlign: "top", fontSize: 13 };
+const chx = { textAlign: "left", padding: "6px 8px", borderBottom: `2px solid ${AZUL}`, fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: CINZA };
+
+function Bloco({ titulo, cor = AZUL, vazio, children }) {
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontWeight: 700, color: cor, marginBottom: 6, fontSize: 15 }}>{titulo}</div>
+      {children || <div style={{ color: CINZA, fontSize: 13 }}>{vazio}</div>}
+    </div>
+  );
+}
+
+function ListaEscolas({ lista, cor, vazio, titulo }) {
+  const m = {};
+  (lista || []).forEach((x) => (m[x.escola] = (m[x.escola] || []).concat(x.texto)));
+  const escolas = Object.keys(m).sort((a, b) => a.localeCompare(b, "pt"));
+  return (
+    <Bloco titulo={`${titulo}${escolas.length ? ` (${escolas.length})` : ""}`} cor={cor} vazio={vazio}>
+      {escolas.length ? (
+        <table style={{ width: "100%", borderCollapse: "collapse", borderTop: `2px solid ${cor}` }}>
+          <tbody>
+            {escolas.map((e) => (
+              <tr key={e}>
+                <td style={{ ...cx, width: "30%", fontWeight: 700 }}>{e}</td>
+                <td style={cx}>
+                  {m[e].map((t, i) => (
+                    <div key={i} style={{ marginBottom: 3 }}>
+                      {t}
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+    </Bloco>
+  );
+}
+
+// Dashboard da rede (link nos e-mails da direção, auditoria e coordenador geral). Só leitura.
+function PainelRede({ d, gerado, expira }) {
+  const r = d.rede || {};
+  const dec = (r.convertidas || 0) + (r.naoConvertidas || 0);
+  const conv = dec >= 5 ? `${Math.round(((r.convertidas || 0) / dec) * 100)}%` : "—";
+  const abertas = d.abertas || d.tecnicas || [];
+  const nAtras = abertas.filter((x) => x.estado === "atrasada").length;
+  const corEstado = (e) => (e === "atrasada" ? LARANJA : e === "em andamento" ? AZUL : CINZA);
+  const caixa = (rot, val, sub) => (
+    <div style={{ flex: "1 1 160px", border: `1px solid ${LINHA}`, borderRadius: 12, padding: "12px 14px" }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: CINZA }}>{rot}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: AZUL, lineHeight: 1.2 }}>{val}</div>
+      {sub && <div style={{ fontSize: 12, color: CINZA }}>{sub}</div>}
+    </div>
+  );
+  return (
+    <div>
+      <div className="opRotulo">Dashboard da rede</div>
+      <h1 className="opTitulo">Resumo semanal{gerado ? ` · ${dataPT(gerado)}` : ""}</h1>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        {caixa("Inscritos", r.inscritos ?? "—", r.anterior ? `mesmo dia da época passada: ${r.anterior}` : "")}
+        {caixa("Desistências na época", r.desistencias || 0)}
+        {caixa("Conversão das experiências", conv, dec >= 5 ? `${r.convertidas} de ${dec}` : "poucos casos")}
+        {caixa("Reclamações em andamento", abertas.length, nAtras ? `${nAtras} ${nAtras === 1 ? "atrasada" : "atrasadas"}` : "")}
+      </div>
+      <ListaEscolas lista={d.atencao} cor={LARANJA} titulo="Precisam de atenção" vazio="Nenhuma escola com alertas esta semana." />
+      <Bloco titulo="Escolas com mais desistências" cor={LARANJA} vazio="Sem desistências registadas.">
+        {(d.desistencias || []).length ? (
+          <table style={{ width: "100%", borderCollapse: "collapse", borderTop: `2px solid ${LARANJA}` }}>
+            <tbody>
+              {d.desistencias.map((x) => (
+                <tr key={x.escola}>
+                  <td style={{ ...cx, fontWeight: 700 }}>{x.escola}</td>
+                  <td style={{ ...cx, textAlign: "right" }}>{x.n} desistências</td>
+                  <td style={{ ...cx, textAlign: "right" }}>{x.taxa}% dos alunos da época</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+      </Bloco>
+      <ListaEscolas lista={d.destaque} cor={VERDE} titulo="Em destaque" vazio="Sem destaques positivos esta semana." />
+      <Bloco titulo="Reclamações de origem técnica nesta época, por escola" vazio="Sem reclamações de origem técnica nesta época.">
+        {(d.resumoTecnicas || []).length ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Escola", "Total", "Em aberto", "Mais mencionados"].map((h) => (
+                    <th key={h} style={chx}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {d.resumoTecnicas.map((x) => (
+                  <tr key={x.escola}>
+                    <td style={{ ...cx, fontWeight: 700 }}>{x.escola}</td>
+                    <td style={{ ...cx, textAlign: "right" }}>{x.total}</td>
+                    <td style={{ ...cx, textAlign: "right" }}>{x.abertas || 0}</td>
+                    <td style={cx}>{(x.temas || []).map((t) => `${t.tema} (${t.n})`).join(" · ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Bloco>
+      <Bloco titulo={`Reclamações em andamento${abertas.length ? ` (${abertas.length})` : ""}`} vazio="Sem reclamações em andamento.">
+        {abertas.length ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Escola", "Reclamação", "Tema", "Recebida", "Estado", ""].map((h) => (
+                    <th key={h} style={chx}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {abertas.map((x, i) => (
+                  <tr key={i}>
+                    <td style={{ ...cx, fontWeight: 700 }}>{x.escola}</td>
+                    <td style={cx}>nº {String(x.numero).padStart(4, "0")}</td>
+                    <td style={cx}>
+                      {x.tema}
+                      {x.tecnica ? <span style={{ fontSize: 11, color: CINZA }}> (técnica)</span> : null}
+                    </td>
+                    <td style={{ ...cx, whiteSpace: "nowrap" }}>{dataPT(x.recebida)}</td>
+                    <td style={{ ...cx, color: corEstado(x.estado), fontWeight: 600 }}>{x.estado}</td>
+                    <td style={cx}>
+                      {x.token ? (
+                        <a href={`?op=${encodeURIComponent(x.token)}`} style={{ color: AZUL, fontWeight: 600 }}>
+                          Abrir
+                        </a>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Bloco>
+      <div style={{ marginTop: 20, fontSize: 12, color: CINZA }}>
+        Comparação com o mesmo dia da época passada. Fotografia da terça-feira{expira ? `; o link fica ativo até ${dataPT(String(expira).slice(0, 10))}` : ""}.
+      </div>
+    </div>
+  );
+}
+
 export default function Operacional({ token }) {
   const [estado, setEstado] = useState("a carregar");
   const [pedido, setPedido] = useState(null);
@@ -282,6 +436,7 @@ export default function Operacional({ token }) {
     if (estado === "a carregar") return <div style={{ color: CINZA, fontSize: 14 }}>A abrir o pedido…</div>;
     if (estado === "invalido") return <Aviso titulo="Link inválido" texto="Este link não existe ou foi copiado incompleto. Abre-o outra vez a partir do e-mail." />;
     if (estado === "expirado") return <Aviso titulo="Pedido expirado" texto="Este pedido já não aceita respostas. O próximo chega no e-mail da semana." />;
+    if (estado === "pronto" && pedido && pedido.itens && pedido.itens.tipo === "painel") return <PainelRede d={pedido.itens.dados || {}} gerado={pedido.itens.gerado} expira={pedido.expira} />;
     if (estado === "enviado" && pedido && pedido.itens && pedido.itens.tipo === "eficacia")
       return <Aviso titulo="Obrigado, a avaliação ficou registada" texto={`Podes voltar a abrir o link para a corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`} cor={VERDE} />;
     if (estado === "enviado")
@@ -297,7 +452,8 @@ export default function Operacional({ token }) {
 
   useEffect(() => {
     if (ehEficacia) document.title = "Dragon Force · Avaliação de reclamação";
-  }, [ehEficacia]);
+    if (itens.tipo === "painel") document.title = "Dragon Force · Dashboard da rede";
+  }, [ehEficacia, itens.tipo]);
 
   return (
     <div className="opEcra">
@@ -306,7 +462,7 @@ export default function Operacional({ token }) {
         <div className="foto" style={{ backgroundImage: `url(${FOTO_ESTADIO})` }} />
         <div className="veu" />
       </div>
-      <div className="opColuna">
+      <div className="opColuna" style={itens.tipo === "painel" ? { maxWidth: 940 } : undefined}>
         <div className="opMarca">
           <img src={LOGO_BRANCO} alt="" />
           <div>
