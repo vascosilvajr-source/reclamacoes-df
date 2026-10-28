@@ -1782,6 +1782,7 @@ const CARREGAR_PAGINA = {
   riscos: () => import("./paginas/riscos.jsx"),
   ocorrencias: () => import("./paginas/ocorrencias.jsx"),
   avaliacoes: () => import("./paginas/avaliacoes.jsx"),
+  camps: () => import("./paginas/camps.jsx"),
 };
 const paginasCarregadas = {};
 const carregarPagina = (g) => (paginasCarregadas[g] = paginasCarregadas[g] || CARREGAR_PAGINA[g]().catch((e) => {
@@ -1825,4 +1826,5 @@ export const ObjetivosPage = aMedida("objetivos", "ObjetivosPage", true);
 export const RiscosPage = aMedida("riscos", "RiscosPage", true);
 export const OcorrenciasPage = aMedida("ocorrencias", "OcorrenciasPage", true);
 export const AvaliacoesPage = aMedida("avaliacoes", "AvaliacoesPage", true);
+export const PainelCamps = aMedida("camps", "PainelCamps", false);
 

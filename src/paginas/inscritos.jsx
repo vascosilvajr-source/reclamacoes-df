@@ -7,7 +7,7 @@ import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAc
 import { LOGO_BRANCO } from "../imagens";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, Area, ComposedChart, LabelList } from "recharts";
-import { COLORS, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
+import { COLORS, PainelCamps, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
 import { BarrasRel, BotaoFoto, ComparacaoEpocas, DicaGrafico, FiltroEpocas, Filtros, JanelaSGQ, MESES_EPOCA, MES_CURTO, QuadrantMatrix, SemDados, TickEixoX, corSatisfacao, dataDeCelula, descarregarXlsx, epocasDisponiveis, fmtNum, lerCSVInq, lerExcelInq, mesDeData, naSelecao, nomeEscolaProposto, selecaoInicial, tdStyle, textoSelecao, thStyle } from "../partilhado.jsx";
 
 const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -2529,8 +2529,9 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const escolasReg = [...new Set(Object.values((reg && reg.alunos) || {}).map((a) => a.escola))];
   const listaEscolas = [...new Set([...escolasReg, ...escolas])].sort((a, b) => a.localeCompare(b, "pt"));
   const escaloesReg = [...new Set(alunosNaData(reg, data).map((a) => escalaoDaTurma(a.turma, niveis)))].sort((a, b) => ORDEM_ESCALAO(a, niveis) - ORDEM_ESCALAO(b, niveis));
-  const novos = eventos.filter((e) => e.v === 2).sort((a, b) => String(b.data).localeCompare(String(a.data)));
-  const antigos = eventos.filter((e) => e.v !== 2);
+  const camps = eventos.filter((e) => e.tipo === "semanas");
+  const novos = eventos.filter((e) => e.v === 2 && e.tipo !== "semanas").sort((a, b) => String(b.data).localeCompare(String(a.data)));
+  const antigos = eventos.filter((e) => e.v !== 2 && e.tipo !== "semanas");
   const [aCriar, setACriar] = useState(false);
   const [fEpRaw, setFEp] = useState(null);
   const [fEv, setFEv] = useState("todos");
@@ -2720,6 +2721,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const fmtPct = (v) => (v === null || v === undefined ? "—" : `${fmtNum(v, 1)}%`);
   return (
     <div>
+      <PainelCamps camps={camps} onSave={onSave} onUpdate={onUpdate} onRemove={onRemove} />
       {novos.length === 0 ? (
         formulario || (
           <Vazio

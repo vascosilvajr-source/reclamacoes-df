@@ -2175,6 +2175,7 @@ function AppPrincipal({ onSair }) {
       audits,
       participantesDe: (ev) => {
         try {
+          if (ev && ev.tipo === "semanas") return ev.inscricoes || null;
           const c = contasEvento(ev, registoAlunos || {}, niveisO);
           return c ? c.lidos : null;
         } catch (e) {
