@@ -27,6 +27,7 @@ const SECCOES_RELATORIO = [
   { key: "inscritos", label: "Inscritos e turmas" },
   { key: "movimentos", label: "Desistências, experiências e desvinculações" },
   { key: "satisfacao", label: "Satisfação e inquéritos" },
+  { key: "avaliacoes", label: "Avaliações do staff" },
   { key: "causas", label: "Causa raiz" },
   { key: "sancoes", label: "Sanções" },
   { key: "acompanhar", label: "Pontos a acompanhar" },
@@ -567,7 +568,7 @@ const contar = (lista, chave) => {
     .map(([name, value]) => ({ name, value }));
 };
 
-const LS_RELATORIO = "df-relatorio-seccoes-v2";
+const LS_RELATORIO = "df-relatorio-seccoes-v3";
 
 // ======================================================================
 // ---------- Relatório geral Dragon Force (todas as escolas) ----------
@@ -1304,7 +1305,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   );
 }
 
-export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, registoAlunos = {}, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
+export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, registoAlunos = {}, desistencias, experiencias, desvinculacoes, satisfacao, inqueritos, avaliacoes, niveis, notas, onGuardarNota, notificar, tema, setTema }) {
   const epocaAtual = epocaDe(new Date().toISOString().slice(0, 10));
   const epocasComDados = [...new Set([epocaAtual, ...Object.keys(registoAlunos), ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaAud(a))].filter(Boolean))].sort().reverse();
 
@@ -2114,6 +2115,73 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
             )}
           </SeccaoRel>
         )}
+
+        {ver("avaliacoes") && (() => {
+          const av = (avaliacoes && avaliacoes.itens) || [];
+          const vis = (avaliacoes && avaliacoes.visitas) || [];
+          const dela = av.filter((x) => x.escola === escola && x.data && dentroPeriodo(periodo, x.data)).sort((a, b) => String(a.data).localeCompare(String(b.data)));
+          const visEsc = vis.filter((x) => x.escola === escola && dentroPeriodo(periodo, x.data));
+          if (!dela.length && !visEsc.length) return null;
+          const media = (n) => {
+            const v = Object.values(n || {}).map(Number).filter((x) => x > 0);
+            return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+          };
+          const f = (x) => (x === null ? "—" : x.toFixed(1).replace(".", ","));
+          const cor = (x) => (x === null ? COLORS.slate : x >= 4 ? COLORS.ok : x >= 3 ? COLORS.warn : COLORS.danger);
+          const th = { textAlign: "left", padding: "6px 8px", borderBottom: `1px solid ${COLORS.ink}`, fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: COLORS.slate };
+          const td = { padding: "7px 8px", borderBottom: `1px solid ${COLORS.ruleSoft}`, fontSize: 13 };
+          const blocos = [["operacional", "Operacionais"], ["tecnica", "Área técnica"]];
+          return (
+            <SeccaoRel titulo="Avaliações do staff" nota={`${dela.length} ${dela.length === 1 ? "avaliação" : "avaliações"} · ${visEsc.length} ${visEsc.length === 1 ? "visita" : "visitas"} no período`}>
+              {blocos.map(([area, rot]) => {
+                const l = dela.filter((x) => x.area === area);
+                if (!l.length) return null;
+                const crit = [...new Set(l.flatMap((x) => Object.keys(x.notas || {})))];
+                return (
+                  <div key={area} style={{ marginBottom: 18 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6, color: COLORS.navy }}>{rot}</div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr>
+                            {["Data", "Avaliado", "Tipo", ...crit, "Média", "Avaliou"].map((h) => (
+                              <th key={h} style={th}>
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {l.map((x) => (
+                            <tr key={x.id}>
+                              <td style={{ ...td, whiteSpace: "nowrap" }}>{fmt(new Date(String(x.data).slice(0, 10) + "T00:00:00"))}</td>
+                              <td style={{ ...td, fontWeight: 700 }}>{x.avaliado}</td>
+                              <td style={td}>{x.momento === "intermedia" ? "Intermédia" : "Avaliação"}</td>
+                              {crit.map((k) => (
+                                <td key={k} style={{ ...td, textAlign: "center" }}>{(x.notas || {})[k] ?? ""}</td>
+                              ))}
+                              <td style={{ ...td, textAlign: "center", fontWeight: 700, color: cor(media(x.notas)) }}>{f(media(x.notas))}</td>
+                              <td style={td}>{(x.avaliadores || []).join(", ")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+              {visEsc.length > 0 && (
+                <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.6 }}>
+                  <strong>Visitas à escola:</strong>{" "}
+                  {[...visEsc]
+                    .sort((a, b) => String(a.data).localeCompare(String(b.data)))
+                    .map((v) => fmt(new Date(String(v.data).slice(0, 10) + "T00:00:00")) + (v.duracao ? ` (${v.duracao})` : ""))
+                    .join(" · ")}
+                </div>
+              )}
+            </SeccaoRel>
+          );
+        })()}
 
         {ver("causas") && (
           <SeccaoRel titulo="Causa raiz" nota="Reclamações concluídas e constatações resolvidas no período">

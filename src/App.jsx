@@ -4237,6 +4237,7 @@ function AppPrincipal({ onSair }) {
             inscritos={inscritosVista}
             turmasAlunos={turmasAlunos}
             epocaAnterior={epocaAnterior}
+            avaliacoes={avaliacoes}
             registoAlunos={registoAlunos}
             desistencias={desistencias}
             experiencias={experiencias}
