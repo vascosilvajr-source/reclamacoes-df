@@ -673,6 +673,7 @@ export function AvaliacoesPage({ dados, escolas, onGuardar, notificar }) {
   const [ver, setVer] = useState(null);
   const [importar, setImportar] = useState(null); // "periodica" | "intermedia"
   const [defCrit, setDefCrit] = useState(false);
+  const [limpar, setLimpar] = useState(false);
   const criterios = area === "tecnica" ? dados.criteriosTecnica || [] : CRITERIOS_OPERACIONAL;
   const daArea = itens.filter((i) => i.area === (area === "tecnica" ? "tecnica" : "operacional"));
   const epocas = [...new Set([...daArea, ...visitas].map((i) => epocaDe(i.data)).filter(Boolean))].sort().reverse();
@@ -729,6 +730,23 @@ export function AvaliacoesPage({ dados, escolas, onGuardar, notificar }) {
     notificar && notificar(`${novos.length} avaliações e ${vs.length} visitas importadas${repetidas ? ` (${repetidas} avaliações já existiam)` : ""}.`);
   };
 
+  const limparDados = (o) => {
+    const doExcel = (i) => i.area === "operacional" && i.origem === "excel";
+    const nAv = itens.filter(doExcel).length;
+    const nVis = visitas.length;
+    const novo = { ...dados };
+    if (o !== "visitas") {
+      novo.itens = itens.filter((i) => !doExcel(i));
+      novo.roster = {};
+    }
+    if (o !== "avaliacoes") {
+      novo.visitas = [];
+      novo.escolasInfo = {};
+    }
+    onGuardar(novo);
+    setLimpar(false);
+    notificar && notificar(`${o === "visitas" ? 0 : nAv} avaliações e ${o === "avaliacoes" ? 0 : nVis} visitas apagadas.`);
+  };
   const comMedia = grupos.filter((g) => g.media !== null);
   const mediaGeral = comMedia.length ? comMedia.reduce((t, g) => t + g.media, 0) / comMedia.length : null;
   const sobem = grupos.filter((g) => g.delta !== null && g.delta > 0.05).length;
@@ -779,6 +797,11 @@ export function AvaliacoesPage({ dados, escolas, onGuardar, notificar }) {
         {area === "tecnica" && (
           <button onClick={() => setDefCrit(true)} className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13 }}>
             Critérios
+          </button>
+        )}
+        {area !== "tecnica" && (
+          <button onClick={() => setLimpar(true)} className="press" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Trash2 size={14} /> Apagar importação
           </button>
         )}
         {area !== "tecnica" && [botaoImp("Importar Excel", "periodica"), botaoImp("Importar intermédias", "intermedia")]}
@@ -879,6 +902,30 @@ export function AvaliacoesPage({ dados, escolas, onGuardar, notificar }) {
         />
       )}
       {editar && <FormAvaliacao inicial={editar} area={editar.area || areaDados} criterios={(editar.area || areaDados) === "tecnica" ? dados.criteriosTecnica || [] : CRITERIOS_OPERACIONAL} escolas={escolas} onGuardar={guardar} onApagar={() => apagar(editar.id)} onFechar={() => setEditar(null)} />}
+      {limpar && (
+        <div className="veil" style={{ position: "fixed", inset: 0, background: "rgba(8,14,24,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={() => setLimpar(false)}>
+          <div className="sheet" style={{ width: "min(460px, 100%)", background: COLORS.paperRaised, borderRadius: 14, padding: 22, border: `1px solid ${COLORS.rule}` }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 18, color: COLORS.navy }}>Apagar o que veio do Excel</h2>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: COLORS.ink2, lineHeight: 1.55 }}>
+              Apaga {itens.filter((i) => i.area === "operacional" && i.origem === "excel").length} avaliações importadas e {visitas.length} visitas. As avaliações que juntaste à mão e as da área técnica ficam. Depois podes importar de novo.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button onClick={() => limparDados("tudo")} style={{ ...primaryBtnStyle, width: "100%", padding: "9px 14px", fontSize: 13 }}>
+                Apagar avaliações e visitas
+              </button>
+              <button onClick={() => limparDados("avaliacoes")} style={{ ...secondaryBtnStyle, width: "100%", padding: "9px 14px", fontSize: 13 }}>
+                Só avaliações
+              </button>
+              <button onClick={() => limparDados("visitas")} style={{ ...secondaryBtnStyle, width: "100%", padding: "9px 14px", fontSize: 13 }}>
+                Só visitas
+              </button>
+              <button onClick={() => setLimpar(false)} style={{ ...linkBtnStyle, fontSize: 13, marginTop: 4 }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {importar && <ImportarOperacionais escolas={escolas} itens={itens} visitasGuardadas={visitas} momento={importar} onImportar={importado} onFechar={() => setImportar(null)} />}
       {defCrit && (
         <DefinirCriterios
