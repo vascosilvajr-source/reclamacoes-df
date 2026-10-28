@@ -1198,6 +1198,8 @@ export function contasEvento(ev, registoAlunos, niveis) {
   // Na adesão só contam as escolas com elegíveis; o resto fica explicado à parte.
   const tot = linhas.filter((l) => l.elegiveis > 0).reduce((t, l) => ({ elegiveis: t.elegiveis + l.elegiveis, inscritos: t.inscritos + l.inscritos, fora: t.fora + l.fora }), { elegiveis: 0, inscritos: 0, fora: 0 });
   const semElegiveis = linhas.filter((l) => !l.elegiveis).reduce((t, l) => t + l.inscritos, 0);
+  // Inscritos de todas as escolas (também as sem alunos elegíveis importados); a adesão só usa as que têm elegíveis.
+  tot.inscritosTodos = tot.inscritos + semElegiveis;
   const lidos = ids.size || Object.values(bruto).reduce((t, x) => t + x.total, 0);
   return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, ignorados, contadosAMao, casos, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
 }
