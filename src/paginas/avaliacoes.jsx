@@ -104,6 +104,7 @@ export function lerFicheiroOperacionais(folhas, trocarDatas) {
   const escolasInfo = [];
   // Todos os nomes de pessoas do ficheiro (responsáveis, coordenadores, quem acompanhou as visitas),
   // para trocar também os que aparecem em texto livre.
+  const nomes = [];
   folhas.forEach((f) => {
     const L = f.linhas;
     L.forEach((l) => {
