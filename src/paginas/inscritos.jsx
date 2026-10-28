@@ -2544,7 +2544,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const visiveis = evSel === "todos" ? daEpoca : daEpoca.filter((e) => e.id === evSel);
   const contaDe = new Map(visiveis.map((ev) => [ev.id, contasEvento(ev, registoAlunos, niveis)]));
   const comAdesao = visiveis.filter((ev) => contaDe.get(ev.id).adesao !== null);
-  const somaIns = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritos, 0);
+  const somaIns = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritosTodos, 0);
   const somaEleg = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.elegiveis, 0);
   const adesaoGlobal = somaEleg ? (somaIns / somaEleg) * 100 : null;
   const totInscritos = visiveis.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritosTodos, 0);
@@ -2637,7 +2637,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
       // Cada atualização fica guardada pela data exata, para se ver a evolução das inscrições.
       const novo = { ...ev, participantes, ficheiro: f.name, leitura: r.explicacao };
       const c = contasEvento(novo, registoAlunos, niveis);
-      const ponto = { data: dataAtual, ficheiro: f.name, inscritos: c.tot.inscritos, elegiveis: c.tot.elegiveis, porEscola: Object.fromEntries(c.linhas.map((l) => [l.escola, l.inscritos])) };
+      const ponto = { data: dataAtual, ficheiro: f.name, inscritos: c.tot.inscritosTodos, elegiveis: c.tot.elegiveis, porEscola: Object.fromEntries(c.linhas.map((l) => [l.escola, l.inscritos])) };
       novo.historico = [...(ev.historico || []).filter((h) => h.data !== dataAtual), ponto].sort((a, b) => a.data.localeCompare(b.data));
       onUpdate(novo);
       setMsgImp(`Lido: ${r.explicacao}.`);
@@ -2796,7 +2796,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                 const sats = evs.filter((e) => e.satisfacao !== null && e.satisfacao !== undefined && e.satisfacao !== "");
                 return {
                   n: evs.length,
-                  adesao: el ? (com.reduce((t, c) => t + c.tot.inscritos, 0) / el) * 100 : null,
+                  adesao: el ? (com.reduce((t, c) => t + c.tot.inscritosTodos, 0) / el) * 100 : null,
                   inscritos: cs.reduce((t, c) => t + c.tot.inscritosTodos, 0),
                   sat: sats.length ? sats.reduce((t, e) => t + Number(e.satisfacao), 0) / sats.length : null,
                   recl: evs.reduce((t, e) => t + (Number(e.reclamacoes) || 0), 0),
@@ -2886,8 +2886,8 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontSize: 22, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.adesao === null ? "—" : `${fmtNum(c.adesao, 1)}%`}</div>
                 <div style={{ fontSize: 11.5, color: COLORS.slate }}>
-                  {fmtNum(c.tot.inscritos)} de {fmtNum(c.tot.elegiveis)} elegíveis
-                  {c.tot.inscritosTodos > c.tot.inscritos ? ` · ${fmtNum(c.tot.inscritosTodos)} inscritos no total` : c.lidos > c.tot.inscritos ? ` · ${fmtNum(c.lidos)} no Excel` : ""}
+                  {fmtNum(c.tot.inscritosTodos)} de {fmtNum(c.tot.elegiveis)} elegíveis
+                  {c.lidos > c.tot.inscritosTodos ? ` · ${fmtNum(c.lidos)} no Excel` : ""}
                 </div>
               </div>
               <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -3092,7 +3092,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                 )}
                 {c.lidos > c.tot.inscritosTodos && (
                   <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 10, padding: "8px 10px", borderRadius: 8, background: COLORS.paperSunken }}>
-                    <strong>{fmtNum(c.lidos)}</strong> inscritos no Excel, <strong>{fmtNum(c.tot.inscritosTodos)}</strong> contam como inscritos ({fmtNum(c.tot.inscritos)} entram no cálculo da adesão, as escolas sem elegíveis ficam de fora do %). Os outros {fmtNum(c.lidos - c.tot.inscritosTodos)}:{" "}
+                    <strong>{fmtNum(c.lidos)}</strong> inscritos no Excel, <strong>{fmtNum(c.tot.inscritosTodos)}</strong> contam na adesão. Os outros {fmtNum(c.lidos - c.tot.inscritosTodos)}:{" "}
                     {[
                       c.semEscola && `${c.semEscola} sem escola atribuída (escolhe-a acima)`,
                       c.tot.fora && `${c.tot.fora} de outras turmas/equipas`,
@@ -3104,7 +3104,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                     .
                   </div>
                 )}
-                {c.semElegiveis > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.semElegiveis} inscritos de escolas sem alunos elegíveis importados contam como inscritos, mas não entram no cálculo da adesão (importa os alunos dessas escolas para entrarem).</div>}
+                {c.semElegiveis > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.semElegiveis} inscritos de escolas sem alunos elegíveis importados contam na adesão total, mas essas escolas ainda não têm elegíveis (importa os alunos delas para o % ficar certo).</div>}
                 {c.foraEscolas > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.foraEscolas} inscritos no evento são de escolas fora do público definido (não contam na adesão).</div>}
                 {(c.casos.length > 0 || c.ignorados > 0) && <RevisaoEvento ev={ev} c={c} escolas={[...new Set(Object.values(registoAlunos[c.ep]?.alunos || {}).map((a) => a.escola))].sort()} onUpdate={onUpdate} />}
                 <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Os números da coluna "Inscritos no evento" vêm do Excel; podes corrigi-los à mão.</div>

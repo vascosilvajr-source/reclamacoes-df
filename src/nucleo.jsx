@@ -1201,7 +1201,7 @@ export function contasEvento(ev, registoAlunos, niveis) {
   // Inscritos de todas as escolas (também as sem alunos elegíveis importados); a adesão só usa as que têm elegíveis.
   tot.inscritosTodos = tot.inscritos + semElegiveis;
   const lidos = ids.size || Object.values(bruto).reduce((t, x) => t + x.total, 0);
-  return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, ignorados, contadosAMao, casos, adesao: tot.elegiveis ? (tot.inscritos / tot.elegiveis) * 100 : null };
+  return { ep, temRegisto: !!reg, linhas, tot, lidos, semElegiveis, semCorrespondencia, foraEscolas, semEscola, ignorados, contadosAMao, casos, adesao: tot.elegiveis ? (tot.inscritosTodos / tot.elegiveis) * 100 : null };
 }
 
 export function normChave(t) {
