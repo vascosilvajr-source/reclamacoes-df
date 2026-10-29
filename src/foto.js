@@ -174,12 +174,13 @@ export function imprimirBalanco(no, opcoes) {
 
 
 // PDF feito aqui, sem bibliotecas: a folha é fotografada, cortada em páginas A4 e cada página vai como JPEG para o PDF.
-async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome }) {
+async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome, larguraFolha }) {
   const { toCanvas } = await import("html-to-image");
   const tf = folha.querySelector("tfoot");
   if (tf) tf.remove();
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
-  const w = pagina;
+  const w = larguraFolha || pagina; // largura natural da folha; se for maior que a página, a imagem é reduzida
+  const k = pagina / w;
   const h = folha.scrollHeight;
   let escala = 2;
   while (h * escala > 15000 && escala > 1) escala -= 0.25;
@@ -189,7 +190,7 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome })
   const paginas = [];
   // Blocos que não se podem cortar: linhas, tabelas pequenas, gráficos, cartões e blocos de texto (até 20% da página).
   const topoFolha = folha.getBoundingClientRect().top;
-  const livreMax = altP - faixa * 2;
+  const livreMax = (altP - faixa * 2) / k;
   const blocos = [];
   folha.querySelectorAll("*").forEach((el) => {
     const r = el.getBoundingClientRect();
@@ -215,21 +216,21 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome })
   let n = 0;
   while (y < h - 1) {
     const primeira = n === 0;
-    const livre = altP - faixa - (primeira ? 0 : faixa);
+    const livre = (altP - faixa - (primeira ? 0 : faixa)) / k; // altura disponível, em px da folha
     const tomar = corte(y, livre);
     const c = document.createElement("canvas");
-    c.width = Math.round(w * escala);
+    c.width = Math.round(pagina * escala);
     c.height = Math.round(altP * escala);
     const g = c.getContext("2d");
     g.scale(escala, escala);
     g.fillStyle = "#fff";
-    g.fillRect(0, 0, w, altP);
-    g.drawImage(src, 0, y * escala, w * escala, tomar * escala, 0, primeira ? 0 : faixa, w, tomar);
+    g.fillRect(0, 0, pagina, altP);
+    g.drawImage(src, 0, y * escala, w * escala, tomar * escala, 0, primeira ? 0 : faixa, w * k, tomar * k);
     g.strokeStyle = "#D5DBE5";
     g.lineWidth = 1;
     g.beginPath();
     g.moveTo(margem, altP - faixa + 0.5);
-    g.lineTo(w - margem, altP - faixa + 0.5);
+    g.lineTo(pagina - margem, altP - faixa + 0.5);
     g.stroke();
     g.fillStyle = "#6B7A90";
     g.font = "10px Arial, sans-serif";
@@ -237,7 +238,7 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome })
     g.textAlign = "left";
     g.fillText("FC Porto · Dragon Force · Gestão da Qualidade", margem, altP - faixa / 2);
     g.textAlign = "right";
-    g.fillText(`${titulo} · ${hoje}`, w - margem, altP - faixa / 2);
+    g.fillText(`${titulo} · ${hoje}`, pagina - margem, altP - faixa / 2);
     paginas.push({ url: c.toDataURL("image/jpeg", 0.92), w: c.width, h: c.height });
     y += tomar;
     n++;
@@ -289,4 +290,40 @@ function pdfDeJpegs(paginas, ptW, ptH) {
   for (let i = 1; i < total; i++) x += `${String(pos[i]).padStart(10, "0")} 00000 n \n`;
   push(x + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   return new Blob(partes, { type: "application/pdf" });
+}
+
+
+// PDF de uma página já desenhada para papel (relatórios): copia o nó, tira botões e espaços de impressão,
+// reduz à largura A4 e descarrega logo. A moldura (rodapé em todas as páginas) é feita em gerarPdf.
+export async function pdfDeFolha(no, { titulo, nome, vertical = true, largura = 880 }) {
+  if (!no) throw new Error("sem página");
+  const pagina = vertical ? 794 : 1123;
+  const margem = 40;
+  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const folha = document.createElement("div");
+  folha.id = "folhaRel";
+  folha.style.cssText = `position:fixed;left:-30000px;top:0;width:${largura}px;background:#fff;overflow:hidden`;
+  const c = no.cloneNode(true);
+  c.querySelectorAll("button, .naoImprimir, .relSoEcra, .relControlos, .relFimEcra, .semFoto, .relPaginas > thead, .relPaginas > tfoot").forEach((el) => el.remove());
+  c.querySelectorAll(".relSoImpressao").forEach((el) => (el.style.display = "block"));
+  c.style.cssText += `;width:${largura}px;max-width:none;margin:0;border:none;box-shadow:none;border-radius:0`;
+  const origSel = no.querySelectorAll("select, input, textarea");
+  c.querySelectorAll("select, input, textarea").forEach((el, i) => {
+    const o = origSel[i];
+    const v = o ? (o.tagName === "SELECT" ? (o.options[o.selectedIndex] || {}).text || "" : o.type === "checkbox" || o.type === "radio" ? "" : o.value) : "";
+    if (!v) return el.remove();
+    const span = document.createElement("span");
+    span.textContent = v;
+    el.replaceWith(span);
+  });
+  const st = document.createElement("style");
+  st.textContent = "#folhaRel .relPaginas { width: 100%; border-collapse: collapse; } #folhaRel td { padding: 0; } #folhaRel *, #folhaRel *::before, #folhaRel *::after { animation: none !important; transition: none !important; }";
+  folha.appendChild(st);
+  folha.appendChild(c);
+  document.body.appendChild(folha);
+  try {
+    await gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome, larguraFolha: largura });
+  } finally {
+    folha.remove();
+  }
 }

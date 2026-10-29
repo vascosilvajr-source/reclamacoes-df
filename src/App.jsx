@@ -2048,6 +2048,28 @@ function AppPrincipal({ onSair }) {
     setNotificacoes((l) => [...l, { id, texto, tipo, acao }]);
     if (duracao) setTimeout(() => setNotificacoes((l) => l.filter((n) => n.id !== id)), duracao);
   }, []);
+  // Saída suave dos popups e avisos: quando um é retirado, fica uma cópia a desvanecer durante 200 ms.
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
+    const obs = new MutationObserver((muts) => {
+      muts.forEach((m) => {
+        m.removedNodes.forEach((n) => {
+          if (n.nodeType !== 1 || !m.target.isConnected || n.dataset.saida) return;
+          const classe = n.classList.contains("veil") ? "veilSai" : n.classList.contains("toastIn") ? "toastSai" : "";
+          if (!classe) return;
+          const c = n.cloneNode(true);
+          c.dataset.saida = "1";
+          c.classList.add(classe);
+          c.setAttribute("aria-hidden", "true");
+          c.querySelectorAll("input, textarea, select, button").forEach((el) => (el.tabIndex = -1));
+          m.target.appendChild(c);
+          setTimeout(() => c.remove(), 260);
+        });
+      });
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
   // Aviso de nova versão: compara a versão desta página com /versao.json (de 5 em 5 minutos e ao voltar ao separador).
   const avisouVersao = useRef(false);
   useEffect(() => {
@@ -3636,20 +3658,29 @@ function AppPrincipal({ onSair }) {
         /* Curva de saída do iOS: arranca depressa e assenta devagar. */
         :root { --ease: cubic-bezier(0.32, 0.72, 0, 1); }
 
-        .navItem, button, select, input, textarea { transition: background 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease; }
+        .navItem, button, select, input, textarea, a, tr { transition: background 200ms ease, border-color 200ms ease, color 200ms ease, opacity 200ms ease, box-shadow 200ms ease; }
         .navItem:active, .btnPress:active { transform: scale(0.975); }
 
         /* Conteúdo da página: entra com um fade curto e um deslize mínimo. */
-        @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        .pageIn { animation: pageIn 260ms var(--ease) backwards; }
+        @keyframes pageIn { from { opacity: 0; } to { opacity: 1; } }
+        .pageIn { animation: pageIn 320ms ease backwards; }
 
         /* Fundo escurecido dos modais. */
         @keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
-        .veil { animation: veilIn 200ms ease both; }
+        .veil { animation: veilIn 260ms ease both; backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+        /* Saída: o fundo e a caixa desvanecem em vez de desaparecerem de repente (ver o observador no AppPrincipal). */
+        @keyframes veilOut { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes sheetOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(8px) scale(0.98); } }
+        @keyframes drawerOut { from { transform: none; } to { transform: translateX(100%); } }
+        @keyframes toastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(8px) scale(0.97); } }
+        .veilSai { animation: veilOut 200ms ease forwards !important; pointer-events: none !important; }
+        .veilSai .sheet { animation: sheetOut 200ms ease forwards !important; }
+        .veilSai .drawer { animation: drawerOut 240ms ease forwards !important; }
+        .toastSai { animation: toastOut 200ms ease forwards !important; pointer-events: none !important; }
 
         /* Caixa centrada: sobe e cresce ligeiramente, como uma folha do iOS. */
-        @keyframes sheetIn { from { opacity: 0; transform: translateY(14px) scale(0.975); } to { opacity: 1; transform: none; } }
-        .sheet { animation: sheetIn 300ms var(--ease) both; box-sizing: border-box; }
+        @keyframes sheetIn { from { opacity: 0; transform: translateY(18px) scale(0.965); } to { opacity: 1; transform: none; } }
+        .sheet { animation: sheetIn 380ms cubic-bezier(0.22, 1, 0.36, 1) both; box-sizing: border-box; }
         .drawer { box-sizing: border-box; }
 
         /* Painel lateral: desliza da direita. */
@@ -3678,6 +3709,7 @@ function AppPrincipal({ onSair }) {
         /* Respeita quem desativou animações no sistema. */
         @media (prefers-reduced-motion: reduce) {
           .pageIn, .veil, .sheet, .drawer, .softIn, .vistaTroca > * { animation: none; }
+          .veilSai, .veilSai .sheet, .veilSai .drawer, .toastSai { animation: none !important; }
           html.temaTransicao *, html.temaTransicao *::before, html.temaTransicao *::after { transition: none !important; }
           .navItem, button, select, input, textarea { transition: none; }
           .navItem:active, .btnPress:active { transform: none; }
@@ -3708,7 +3740,7 @@ function AppPrincipal({ onSair }) {
         /* Os blocos de cada página entram em cascata, com poucos milissegundos
            de diferença. Dá a sensação de fluidez sem atrasar a leitura. */
         @keyframes riseIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-        .pageIn > * { animation: riseIn 300ms var(--ease) backwards; }
+        .pageIn > * { animation: riseIn 380ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
         .pageIn > *:nth-child(1) { animation-delay: 0ms; }
         .pageIn > *:nth-child(2) { animation-delay: 45ms; }
         .pageIn > *:nth-child(3) { animation-delay: 90ms; }

@@ -2,6 +2,7 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import React, { useState, useEffect } from "react";
 import { LOGO_BRANCO } from "../imagens";
+import { pdfDeFolha } from "../foto";
 import { FileText, Printer } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, AreaChart, Area, LabelList } from "recharts";
 import { CANAL_META, COLORS, DEFAULT_NIVEIS, MOTIVO_META, SEVERITY_META, STATUS_META, alunosNaData, capacidadeSugerida, classificarCrescimento, ehEscolinha, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, escalaoDaTurma, fimEpocaISO, fmt, inputStyle, isoDe, labelStyle, nomeOcorrencia, panelStyle, preverEscola, satisfacaoDe, semanaLabel } from "../nucleo.jsx";
@@ -1595,25 +1596,31 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
               onClick={() => {
                 // O PDF sai sempre em tema claro; se estiver escuro, troca e repõe no fim.
                 const imprimir = () => {
-                  const tituloAntes = document.title;
-                  document.title = `${geral ? "Relatório geral Dragon Force" : `Relatório ${escola}`} - ${nomePeriodo(periodo)}`.replace(/[\\/:*?"<>|]/g, "-");
-                  const repor = () => {
-                    document.title = tituloAntes;
-                    window.removeEventListener("afterprint", repor);
-                  };
-                  window.addEventListener("afterprint", repor);
-                  try {
-                    window.print();
-                  } catch (e) {
-                    notificar("Não foi possível abrir a impressão neste browser.", "erro");
-                  }
+                  const nomePdf = `${geral ? "Relatório geral Dragon Force" : `Relatório ${escola}`} - ${nomePeriodo(periodo)}`.replace(/[\\/:*?"<>|]/g, "-");
+                  notificar("A gerar o PDF…", "ok", 2500);
+                  pdfDeFolha(document.querySelector(".relFolha"), { titulo: geral ? "Relatório geral Dragon Force" : `Relatório · ${escola}`, nome: nomePdf, vertical: true, largura: 880 })
+                    .catch(() => {
+                      // Se não der, abre a impressão como antes.
+                      const tituloAntes = document.title;
+                      document.title = nomePdf;
+                      const repor = () => {
+                        document.title = tituloAntes;
+                        window.removeEventListener("afterprint", repor);
+                      };
+                      window.addEventListener("afterprint", repor);
+                      try {
+                        window.print();
+                      } catch (e) {
+                        notificar("Não foi possível gerar o PDF neste browser.", "erro");
+                      }
+                    })
+                    .finally(() => {
+                      if (tema === "dark" && setTema) setTema("dark");
+                    });
                 };
                 if (tema === "dark" && setTema) {
                   setTema("light");
-                  setTimeout(() => {
-                    imprimir();
-                    setTema("dark");
-                  }, 350);
+                  setTimeout(imprimir, 350);
                 } else imprimir();
               }}
               className="press"
