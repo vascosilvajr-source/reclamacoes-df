@@ -1545,7 +1545,7 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
   const publicos = [...new Set(daEpoca.map((p) => p.publico).filter(Boolean))].sort();
   const selectFiltro = { ...inputStyle, width: "auto", minWidth: 150, padding: "8px 10px" };
   const numeroDe = (p) => daEpoca.findIndex((x) => x.id === p.id) + 1;
-  const dataCurta = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short" }).format(dataLocal(iso)).replace(".", "") : "—");
+  const dataCurta = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(dataLocal(iso)) : "—");
 
   return (
     <div>

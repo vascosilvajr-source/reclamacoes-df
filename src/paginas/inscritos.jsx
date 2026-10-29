@@ -7010,7 +7010,7 @@ function PrevisaoFimEpoca({ escolas, inscritos, epocaAnterior, experiencias, tur
   const lista = todas.filter((p) => fEsc === "todas" || p.escola === fEsc);
   const validas = lista.filter((p) => !p.insuficiente);
   const fim = fimDeEpoca(epocaDe(hoje));
-  const fimTxt = new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long" }).format(new Date(fim + "T00:00:00"));
+  const fimTxt = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(fim + "T00:00:00"));
 
   // Gráfico: soma das escolas visíveis, semana a semana (real + projeção). Cada escola
   // conta em todas as semanas com o último valor que tem, para a soma não cair quando

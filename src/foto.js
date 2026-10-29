@@ -6,7 +6,7 @@ export async function tirarFoto(no, { titulo, subtitulo, fundo = "#ffffff", tint
   const cab = document.createElement("div");
   cab.setAttribute("data-foto-cab", "1");
   cab.style.cssText = `display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:0 0 14px;margin:0 0 16px;border-bottom:2px solid ${azul};font-family:inherit`;
-  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
   cab.innerHTML = `<div><div style="font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${azul}">FC Porto · Dragon Force · Gestão da Qualidade</div>
     <div style="font-size:22px;font-weight:700;color:${tinta};margin-top:6px;letter-spacing:-.01em"></div>
     <div style="font-size:13px;color:${cinza};margin-top:2px"></div></div>
@@ -56,7 +56,7 @@ export function imprimirBalanco(no, opcoes) {
   // Com html próprio (ex.: auditorias) o conteúdo já é feito para papel: sem cópia do ecrã nem escala.
   const largura = html ? util : Math.max(no.scrollWidth, no.offsetWidth, 600);
   const escala = Math.min(1, util / largura);
-  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
   const txt = (t) => String(t || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   const folha = document.createElement("div");
@@ -299,7 +299,7 @@ export async function pdfDeFolha(no, { titulo, nome, vertical = true, largura = 
   if (!no) throw new Error("sem página");
   const pagina = vertical ? 794 : 1123;
   const margem = 40;
-  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const hoje = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
   const folha = document.createElement("div");
   folha.id = "folhaRel";
   folha.style.cssText = `position:fixed;left:-30000px;top:0;width:${largura}px;background:#fff;overflow:hidden`;

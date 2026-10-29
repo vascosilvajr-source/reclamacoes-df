@@ -188,7 +188,7 @@ export function HistoricoEmailsEscolas({ escolas }) {
     };
   }, [dias]);
 
-  const data = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "");
+  const data = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "");
   const resumo = useMemo(() => {
     const r = {};
     (escolas || []).forEach((e) => (r[e] = { escola: e, enviados: 0, pedidos: 0, abertos: 0, respondidos: 0, lembretes: 0, ultimo: "" }));
@@ -515,7 +515,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
   const hojeISO = new Date().toISOString();
   const lista = (pedidos || []).filter((p) => p.itens?.tipo !== "eficacia").filter((p) => verTodos || !p.respondido_em || (p.respostas?.turmas && Object.keys(p.respostas.turmas).length && !p.ids_aplicados_em) || p.criado > new Date(Date.now() - 14 * 86400000).toISOString());
   const porConfirmar = (pedidos || []).filter((p) => !p.validar && p.respostas?.turmas && Object.values(p.respostas.turmas).some((l) => (l || []).length) && !p.ids_aplicados_em);
-  const quando = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—");
+  const quando = (iso) => (iso ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso)) : "—");
   const aplicar = async (p) => {
     setAAplicar(p.token);
     try {

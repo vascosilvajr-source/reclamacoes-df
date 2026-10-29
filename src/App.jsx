@@ -1497,7 +1497,7 @@ function HojePage(props) {
   const desist7 = props.desistencias.filter((x) => entre(x.data, menos(6), hoje)).reduce((n, x) => n + x.n, 0);
   const xp7 = props.experiencias.filter((x) => entre(x.data, menos(6), hoje)).reduce((n, x) => n + x.n, 0);
 
-  const dataLonga = new Intl.DateTimeFormat("pt-PT", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
+  const dataLonga = new Intl.DateTimeFormat("pt-PT", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
 
   const bloco = (titulo, lista, vazio, destaque) => (
     <div style={{ ...panelStyle, padding: "14px 10px 10px" }}>

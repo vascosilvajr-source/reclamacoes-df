@@ -1056,7 +1056,7 @@ export function ComparacaoEpocas({ titulo, epocas, metricas, calcular, nota, sel
   const ref = cols[0];
   const parcial = mesmaData && cols.includes(epAtual);
   const valores = Object.fromEntries(cols.map((ep) => [ep, calcular(ep, parcial ? limiteEpoca(ep, epAtual) : null)]));
-  const limTxt = parcial ? new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long" }).format(new Date(limiteEpoca(epAtual, epAtual) + "T00:00:00")) : null;
+  const limTxt = parcial ? new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(limiteEpoca(epAtual, epAtual) + "T00:00:00")) : null;
   const fmtV = (m, v) => (v === null || v === undefined || isNaN(v) ? "—" : `${Number(v).toLocaleString("pt-PT", { maximumFractionDigits: m.dec ?? 0 })}${m.unidade || ""}`);
   const variacao = (m, x, y) => {
     const temAmbos = x !== null && x !== undefined && y !== null && y !== undefined && !isNaN(x) && !isNaN(y);

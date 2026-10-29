@@ -665,7 +665,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   const chaveNota = `__geral__|${periodo}`;
   const [nota, setNota] = useState(notas[chaveNota] || "");
   useEffect(() => setNota(notas[chaveNota] || ""), [chaveNota]); // eslint-disable-line react-hooks/exhaustive-deps
-  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
 
   // ---- Épocas com dados (no máximo as três mais recentes) ----
   const todasEpocas = [...new Set([epocaAtual, ...reclamacoes.map((r) => epocaDe(r.receivedDate)), ...audits.map((a) => epocaAud(a)), ...inqueritos.map((i) => epocaDe(i.data))].filter(Boolean))]
@@ -682,7 +682,7 @@ function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGu
   })();
   const ind = Object.fromEntries(epocas.map((e) => [e, indicadoresEpoca(e, dados)]));
   const homologo = epocas.includes(epocaPassada) && epocas.includes(epocaAtual) ? indicadoresEpoca(epocaPassada, dados, hojeUmAnoAntes) : null;
-  const dataCurta = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit" }).format(new Date());
+  const dataCurta = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
 
   // ---- Período escolhido ----
   const recl = reclamacoes.filter((r) => dentroPeriodo(periodo, r.receivedDate));
@@ -1505,7 +1505,7 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
   const sancFora = sanctions.filter((s) => s.school === escola && !dentroPeriodo(periodo, s.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   const ver = (k) => seccoes.has(k);
-  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
+  const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
   const corEstado = (e) => (e === "melhor" ? COLORS.ok : e === "pior" ? COLORS.danger : COLORS.slate);
   const txtComp = (c) => {
     if (!comparar || c.med === null) return null;
