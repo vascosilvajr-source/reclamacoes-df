@@ -1824,7 +1824,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
     const t = setTimeout(async () => {
       try {
         const nomeEsc = modoRecinto ? `recinto ${recintoSel}` : `${escola}${fRecinto ? ` · ${fRecinto}` : ""}`;
-        imprimirBalanco(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, logo: LOGO_BRANCO });
+        await imprimirBalanco(fotoRef.current, { titulo: `Espaços · ${nomeEsc}`, subtitulo: `${doEscola.length} horários · ${nAcima} acima da lotação · ${nTolerados} aceitáveis pelos treinadores`, nome: `Espacos ${nomeEsc} ${isoDe(new Date())}`, logo: LOGO_BRANCO , modo: "pdf" });
       } finally {
         setFotoEsp(false);
       }
