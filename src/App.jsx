@@ -3,8 +3,8 @@ import { dbStorage, supabase } from "./supabaseClient";
 import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { detetarRiscos, idRecorrencia } from "./riscos";
-import { Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star } from "lucide-react";
-import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, AvaliacoesPage, BibliotecaRespostas, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
+import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star } from "lucide-react";
+import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, AvaliacoesPage, BibliotecaRespostas, CopiaSegurancaPage, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
 
 // Toda a gravação passa por aqui: guarda a última versão de cada chave para perceber
 // o que foi apagado (vai para "Apagados" durante 30 dias).
@@ -1512,7 +1512,7 @@ function HojePage(props) {
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.02em", color: COLORS.ink }}>{dataLonga.charAt(0).toUpperCase() + dataLonga.slice(1)}</h2>
+        <h2 style={{ margin: 0, fontSize: "clamp(20px, 5.5vw, 26px)", letterSpacing: "-0.02em", color: COLORS.ink, textWrap: "balance" }}>{dataLonga.charAt(0).toUpperCase() + dataLonga.slice(1)}</h2>
         <div style={{ fontSize: 14, color: COLORS.ink2, marginTop: 4 }}>
           {atrasos.length + deHoje.length === 0 ? "Nada urgente para hoje." : `${atrasos.length + deHoje.length} ${atrasos.length + deHoje.length === 1 ? "assunto" : "assuntos"} para tratar hoje.`}
         </div>
@@ -2037,6 +2037,10 @@ function AppPrincipal({ onSair }) {
   // Notificações flutuantes: substituem o banner de erro, que só aparecia
   // numa das páginas e passava despercebido nas outras.
   const [paletaAberta, setPaletaAberta] = useState(false);
+  const [menuMovel, setMenuMovel] = useState(false); // menu lateral no telemóvel
+  // Última cópia de segurança: avisa se passou mais de uma semana.
+  const [ultimaCopia, setUltimaCopia] = useState(null);
+  const copiaAtrasada = !ultimaCopia || Date.now() - new Date(ultimaCopia.em).getTime() > 7 * 86400000;
   // Qual lista está a ser gerida: cada campo abre só a sua, em vez de um
   // único menu com todas as listas da app.
   const [listaAberta, setListaAberta] = useState(null);
@@ -2048,6 +2052,25 @@ function AppPrincipal({ onSair }) {
     setNotificacoes((l) => [...l, { id, texto, tipo, acao }]);
     if (duracao) setTimeout(() => setNotificacoes((l) => l.filter((n) => n.id !== id)), duracao);
   }, []);
+  useEffect(() => setMenuMovel(false), [page]);
+  const avisouCopia = useRef(false);
+  useEffect(() => {
+    if (loading || avisouCopia.current) return;
+    avisouCopia.current = true;
+    (async () => {
+      let reg = null;
+      try {
+        const r = await armazem.get("reclamacoes:ultima-copia");
+        reg = r ? JSON.parse(r.value) : null;
+      } catch (e) {
+        reg = null;
+      }
+      setUltimaCopia(reg);
+      const dias = reg && reg.em ? (Date.now() - new Date(reg.em).getTime()) / 86400000 : null;
+      if (dias === null || dias > 7)
+        notificar(dias === null ? "Ainda não há cópia de segurança dos dados." : `A última cópia de segurança foi há ${Math.floor(dias)} dias.`, "aviso", 9000, { rotulo: "Fazer cópia", fn: () => setPage("copia") });
+    })();
+  }, [loading, notificar]);
   // Saída suave dos popups e avisos: quando um é retirado, fica uma cópia a desvanecer durante 200 ms.
   useEffect(() => {
     if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
@@ -3339,6 +3362,8 @@ function AppPrincipal({ onSair }) {
       ? "Plano de formação"
       : page === "apagados"
       ? "Apagados"
+      : page === "copia"
+      ? "Cópia de segurança"
       : page === "avaliacoes"
       ? "Avaliações do staff"
       : page === "ocorrencias"
@@ -3706,6 +3731,47 @@ function AppPrincipal({ onSair }) {
           transition: background-color 320ms ease, color 320ms ease, border-color 320ms ease, fill 320ms ease, stroke 320ms ease, box-shadow 320ms ease !important;
         }
 
+        /* ================= telemóvel ================= */
+        .soMovel { display: none !important; }
+        html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+        button, a, select, label { touch-action: manipulation; }
+        @media (max-width: 899px) {
+          .soMovel { display: inline-flex !important; }
+          .soPc { display: none !important; }
+          .appLado {
+            position: fixed !important; left: 0; top: 0; bottom: 0; height: 100dvh !important; width: min(300px, 86vw) !important;
+            z-index: 85 !important; transform: translateX(-104%); transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28); padding-top: calc(14px + env(safe-area-inset-top, 0px)) !important;
+            padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+          }
+          .appLado.aberto { transform: none; }
+          .appLado .navItem, .appLado button { min-height: 42px; font-size: 15px !important; }
+          .appLadoVeu { position: fixed; inset: 0; z-index: 84; background: rgba(8, 14, 24, 0.45); animation: veilIn 240ms ease both; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+          .appTopo { padding: 0 12px !important; gap: 8px !important; height: calc(52px + env(safe-area-inset-top, 0px)) !important; padding-top: env(safe-area-inset-top, 0px) !important; }
+          .appTopo button { padding: 7px 9px !important; }
+          .appTopoTitulo { font-size: 15px !important; }
+          .appPagina { padding: 14px 12px calc(40px + env(safe-area-inset-bottom, 0px)) !important; }
+          .appConteudo { -webkit-overflow-scrolling: touch; scroll-behavior: smooth; }
+          /* Campos com 16px: o iPhone deixa de fazer zoom ao tocar. */
+          input, select, textarea { font-size: 16px !important; }
+          /* Grelhas de várias colunas passam a uma ou duas. */
+          .appPagina [style*="grid-template-columns: repeat(auto-fit, minmax(2"],
+          .appPagina [style*="grid-template-columns: repeat(auto-fill, minmax(2"],
+          .appPagina [style*="gridTemplateColumns"] { grid-template-columns: minmax(0, 1fr) !important; }
+          .appPagina [style*="minmax(170px"], .appPagina [style*="minmax(160px"], .appPagina [style*="minmax(150px"], .appPagina [style*="minmax(180px"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          .appPagina table { font-size: 12.5px; }
+          .appPagina select { flex: 1 1 150px; min-width: 0; }
+          .appPagina button { white-space: nowrap; }
+          .appPagina h1 { font-size: 22px !important; }
+          /* Popups: folha que sobe de baixo, a toda a largura. */
+          .veil { align-items: flex-end !important; padding: 0 !important; }
+          .veil > .sheet { width: 100% !important; max-width: 100% !important; max-height: 92dvh !important; border-radius: 18px 18px 0 0 !important; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important; animation: sheetSobe 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+          .veilSai > .sheet { animation: sheetDesce 220ms ease forwards !important; }
+          .toastIn { margin-bottom: env(safe-area-inset-bottom, 0px); }
+        }
+        @keyframes sheetSobe { from { transform: translateY(100%); } to { transform: none; } }
+        @keyframes sheetDesce { from { transform: none; } to { transform: translateY(100%); } }
+
         /* Respeita quem desativou animações no sistema. */
         @media (prefers-reduced-motion: reduce) {
           .pageIn, .veil, .sheet, .drawer, .softIn, .vistaTroca > * { animation: none; }
@@ -3875,9 +3941,14 @@ function AppPrincipal({ onSair }) {
         </div>
       )}
 
-      {/* ---------- barra lateral ---------- */}
+      {/* ---------- barra lateral (no telemóvel é uma gaveta) ---------- */}
+      {menuMovel && <div className="appLadoVeu naoImprimir" onClick={() => setMenuMovel(false)} />}
       <div
-        className="naoImprimir"
+        className={`naoImprimir appLado${menuMovel ? " aberto" : ""}`}
+        onClickCapture={(e) => {
+          // No telemóvel, escolher uma página fecha a gaveta.
+          if (menuMovel && e.target.closest && e.target.closest(".navItem")) setTimeout(() => setMenuMovel(false), 0);
+        }}
         style={{
           width: 248,
           flex: "none",
@@ -4003,6 +4074,30 @@ function AppPrincipal({ onSair }) {
           <span style={{ flex: 1 }}>Apagados</span>
           {apagados.length > 0 && <span style={{ fontSize: 11.5, color: COLORS.slate }}>{apagados.length}</span>}
         </button>
+        <button
+          className="navItem press"
+          onClick={() => setPage("copia")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            width: "calc(100% - 16px)",
+            margin: "1px 8px",
+            padding: "8px 9px",
+            borderRadius: 7,
+            border: "none",
+            background: page === "copia" ? COLORS.navyWash : "transparent",
+            color: page === "copia" ? COLORS.navy : COLORS.ink2,
+            fontWeight: page === "copia" ? 600 : 450,
+            fontSize: 13.5,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <HardDriveDownload size={15} />
+          <span style={{ flex: 1 }}>Cópia de segurança</span>
+          {copiaAtrasada && <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.warn }} />}
+        </button>
 
         {/* alternador de tema */}
         <div style={{ marginTop: "auto", padding: "12px 16px 0", borderTop: `1px solid ${COLORS.rule}` }}>
@@ -4047,7 +4142,7 @@ function AppPrincipal({ onSair }) {
       {/* ---------- conteúdo ---------- */}
       <div ref={conteudoRef} className="appConteudo" style={{ flex: 1, minWidth: 0, maxWidth: "100%", height: "100%", overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <div
-          className="naoImprimir"
+          className="naoImprimir appTopo"
           style={{
             height: 52,
             background: COLORS.paperRaised,
@@ -4061,8 +4156,11 @@ function AppPrincipal({ onSair }) {
             zIndex: 5,
           }}
         >
-          <div style={{ fontSize: 13.5, color: COLORS.slate }}>
-            {page === "apagados" ? "Configuração" : (secoes.find((sx) => sx.itens.some((x) => x.key === page)) || { grupo: "Gestão" }).grupo} · <strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
+          <button className="soMovel press" onClick={() => setMenuMovel(true)} aria-label="Abrir menu" style={{ background: "transparent", border: "none", padding: 6, margin: "0 -4px 0 -6px", color: COLORS.ink, cursor: "pointer", alignItems: "center" }}>
+            <Menu size={21} />
+          </button>
+          <div className="appTopoTitulo" style={{ fontSize: 13.5, color: COLORS.slate, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span className="soPc">{page === "apagados" || page === "copia" ? "Configuração" : (secoes.find((sx) => sx.itens.some((x) => x.key === page)) || { grupo: "Gestão" }).grupo} · </span><strong style={{ color: COLORS.ink, fontWeight: 600 }}>{titulo}</strong>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
             {areaDaPagina && (
@@ -4085,7 +4183,7 @@ function AppPrincipal({ onSair }) {
                 }}
               >
                 <ShieldAlert size={14} />
-                <span>Listas</span>
+                <span className="soPc">Listas</span>
               </button>
             )}
             <button
@@ -4106,8 +4204,8 @@ function AppPrincipal({ onSair }) {
               }}
             >
               <Search size={14} />
-              <span>Procurar</span>
-              <span style={{ display: "flex", gap: 3 }}>
+              <span className="soPc">Procurar</span>
+              <span className="soPc" style={{ display: "flex", gap: 3 }}>
                 <kbd style={{ fontFamily: "inherit", fontSize: 11, fontWeight: 600, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "1px 5px" }}>⌘</kbd>
                 <kbd style={{ fontFamily: "inherit", fontSize: 11, fontWeight: 600, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 4, padding: "1px 5px" }}>K</kbd>
               </span>
@@ -4133,13 +4231,13 @@ function AppPrincipal({ onSair }) {
                   cursor: "pointer",
                 }}
               >
-                <Plus size={15} /> Nova reclamação
+                <Plus size={15} /> <span className="soPc">Nova reclamação</span>
               </button>
             )}
           </div>
         </div>
 
-      <div key={page} className="pageIn" style={{ padding: "20px 22px 56px", maxWidth: 1360, minWidth: 0 }}>
+      <div key={page} className="pageIn appPagina" style={{ padding: "20px 22px 56px", maxWidth: 1360, minWidth: 0 }}>
         {page === "auditorias" ? (
           <AuditsPage
             audits={auditsVista}
@@ -4244,6 +4342,8 @@ function AppPrincipal({ onSair }) {
           <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "formacao" ? (
           <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} />
+        ) : page === "copia" ? (
+          <CopiaSegurancaPage ultima={ultimaCopia} onFeita={setUltimaCopia} notificar={notificar} />
         ) : page === "apagados" ? (
           <ApagadosPage lista={apagados} onRepor={reporApagados} onApagarDeVez={(id) => guardarApagados(apagadosRef.current.filter((a) => a.id !== id))} />
         ) : page === "avaliacoes" ? (

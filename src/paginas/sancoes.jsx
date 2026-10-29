@@ -802,7 +802,7 @@ export function SanctionsPage({ sanctions, onNew, onOpen }) {
         </div>
       )}
 
-      <div style={panelTitle}>Sanções a Pais / Encarregados de Educação</div>
+      <div style={panelTitle}>Sanções a encarregados de educação</div>
       {familia.length === 0 ? (
         <div style={{ marginBottom: 26 }}>
           <Vazio icon={Scale} titulo="Sem ocorrências com pais ou encarregados" texto="As que registares aparecem aqui, com o motivo e a sanção aplicada." />
