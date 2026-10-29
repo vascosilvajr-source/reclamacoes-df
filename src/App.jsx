@@ -2071,6 +2071,19 @@ function AppPrincipal({ onSair }) {
         notificar(dias === null ? "Ainda não há cópia de segurança dos dados." : `A última cópia de segurança foi há ${Math.floor(dias)} dias.`, "aviso", 9000, { rotulo: "Fazer cópia", fn: () => setPage("copia") });
     })();
   }, [loading, notificar]);
+  // Escape fecha a janela que está por cima (o mesmo que clicar fora dela).
+  useEffect(() => {
+    const tecla = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const veus = document.querySelectorAll(".veil:not([data-saida])");
+      const topo = veus[veus.length - 1];
+      if (!topo) return;
+      e.preventDefault();
+      topo.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, []);
   // Saída suave dos popups e avisos: quando um é retirado, fica uma cópia a desvanecer durante 200 ms.
   useEffect(() => {
     if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
@@ -3516,7 +3529,7 @@ function AppPrincipal({ onSair }) {
     },
     { id: "a-auditoria", grupo: "Ações", titulo: "Nova auditoria", icon: Plus, acao: () => { setPage("auditorias"); setShowAuditForm(true); } },
     { id: "a-ocorrencia", grupo: "Ações", titulo: "Nova ocorrência disciplinar", icon: Plus, acao: () => { setPage("sancoes"); setShowSanctionForm(true); } },
-    { id: "a-listas", grupo: "Ações", titulo: "Escolas e listas", icon: ShieldAlert, acao: () => setShowManage(true) },
+    { id: "a-listas", grupo: "Ações", titulo: "Escolas e listas", icon: ShieldAlert, acao: () => setListaAberta("__indice") },
     { id: "a-analise", grupo: "Ações", titulo: "Análise de reclamações", icon: BarChart3, acao: () => { setPage("registo"); setReclamacoesView("analise"); } },
     {
       id: "a-tema",
@@ -5015,26 +5028,45 @@ function AppPrincipal({ onSair }) {
 
 // Conta partilhada da equipa: cria este utilizador no Supabase
 // (Authentication → Users → Add user) com a palavra-passe que quiseres.
-const EMAIL_ENTRADA = "equipa@qualidade-df.app";
+// O e-mail não fica no código público da app: guarda-se só neste dispositivo depois de entrar.
+const LS_EMAIL_ENTRADA = "df-email-entrada";
+const lerLS = (k) => {
+  try {
+    return window.localStorage.getItem(k) || "";
+  } catch (e) {
+    return "";
+  }
+};
+const gravarLS = (k, v) => {
+  try {
+    if (v) window.localStorage.setItem(k, v);
+    else window.localStorage.removeItem(k);
+  } catch (e) {
+    /* sem armazenamento local */
+  }
+};
 
 // Fotografia do muro "Foot-Ball Club do Porto", em monocromático azul, para o fundo do ecrã de entrada.
 
-function EcraEntrada({ onEntrar, aVerificar }) {
+function EcraEntrada({ onEntrar, aVerificar, aviso }) {
+  const lembrado = lerLS(LS_EMAIL_ENTRADA);
   const [pass, setPass] = useState("");
-  const [email, setEmail] = useState(EMAIL_ENTRADA);
-  const [outroEmail, setOutroEmail] = useState(false);
+  const [email, setEmail] = useState(lembrado);
+  const [outroEmail, setOutroEmail] = useState(!lembrado);
   const [ver, setVer] = useState(false);
   const [erro, setErro] = useState("");
   const [aEntrar, setAEntrar] = useState(false);
 
   const entrar = async (e) => {
     e.preventDefault();
+    if (!email.trim()) return setErro("Escreve o e-mail.");
     if (!pass) return setErro("Escreve a palavra-passe.");
     setAEntrar(true);
     setErro("");
     try {
       const { error } = await onEntrar(email.trim(), pass);
-      if (error) setErro(/invalid/i.test(error.message || "") ? "Palavra-passe incorreta." : `Não foi possível entrar: ${error.message}`);
+      if (error) setErro(/invalid/i.test(error.message || "") ? "E-mail ou palavra-passe incorretos." : /rate|many/i.test(error.message || "") ? "Demasiadas tentativas. Espera uns minutos." : `Não foi possível entrar: ${error.message}`);
+      else gravarLS(LS_EMAIL_ENTRADA, email.trim());
     } catch (err) {
       setErro("Sem ligação ao servidor. Tenta de novo daqui a pouco.");
     } finally {
@@ -5152,6 +5184,7 @@ function EcraEntrada({ onEntrar, aVerificar }) {
               <input className="entradaInput" type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
             )}
             {!outroEmail && <input type="hidden" autoComplete="username" value={email} readOnly />}
+            {aviso && !erro && <div className="entradaErro" style={{ color: "#F0B27A" }}>{aviso}</div>}
             <div className="entradaCampo">
               <input
                 className="entradaInput"
@@ -5173,9 +5206,11 @@ function EcraEntrada({ onEntrar, aVerificar }) {
             <div className="entradaErro" role="alert">
               {erro}
             </div>
-            <button type="button" className="entradaLink" onClick={() => setOutroEmail((v) => !v)}>
-              {outroEmail ? "Usar a conta da equipa" : "Entrar com outro e-mail"}
-            </button>
+            {lembrado && (
+              <button type="button" className="entradaLink" onClick={() => { setOutroEmail((v) => !v); setEmail(outroEmail ? lembrado : ""); }}>
+                {outroEmail ? "Usar a conta guardada neste dispositivo" : "Entrar com outro e-mail"}
+              </button>
+            )}
           </form>
         )}
         <div className="entradaRodape">FC PORTO · DRAGON FORCE</div>
@@ -5232,12 +5267,50 @@ export default function App() {
     };
   }, [cortina]);
 
+  // Sessão termina ao fim de 4 h sem uso (também se a app for reaberta depois disso, ex.: num PC partilhado).
+  const [avisoEntrada, setAvisoEntrada] = useState("");
+  useEffect(() => {
+    if (!sessao) return undefined;
+    const CHAVE = "df-ultima-atividade";
+    const LIMITE = 4 * 60 * 60 * 1000;
+    const ultima = () => Number(lerLS(CHAVE)) || 0;
+    let gravada = 0;
+    const marcar = () => {
+      const agora = Date.now();
+      if (agora - gravada < 30000) return;
+      gravada = agora;
+      gravarLS(CHAVE, String(agora));
+    };
+    const verificar = () => {
+      const u = ultima();
+      if (u && Date.now() - u > LIMITE) {
+        gravarLS(CHAVE, "");
+        setAvisoEntrada("A sessão terminou por estar 4 horas sem uso. Entra outra vez.");
+        supabase.auth.signOut();
+        return true;
+      }
+      return false;
+    };
+    if (!verificar()) marcar();
+    const eventos = ["pointerdown", "keydown", "wheel", "touchstart"];
+    eventos.forEach((e) => window.addEventListener(e, marcar, { passive: true }));
+    const aoVoltar = () => document.visibilityState === "visible" && verificar();
+    document.addEventListener("visibilitychange", aoVoltar);
+    const relogio = setInterval(verificar, 60000);
+    return () => {
+      eventos.forEach((e) => window.removeEventListener(e, marcar));
+      document.removeEventListener("visibilitychange", aoVoltar);
+      clearInterval(relogio);
+    };
+  }, [sessao]);
+
   // Ao sair, a app desvanece primeiro e só depois termina a sessão.
   const sair = () => {
     const raiz = document.documentElement;
     raiz.classList.add("aSair");
     setTimeout(async () => {
       try {
+        gravarLS("df-ultima-atividade", "");
         await supabase.auth.signOut();
       } finally {
         raiz.classList.remove("aSair");
@@ -5251,7 +5324,7 @@ export default function App() {
       {sessao && <AppPrincipal onSair={sair} />}
       {mostrarEntrada && (
         <div className={sessao && aDesvanecer ? "entradaSaida" : undefined}>
-          <EcraEntrada aVerificar={sessao === undefined || cortina === "verificar"} onEntrar={(email, password) => supabase.auth.signInWithPassword({ email, password })} />
+          <EcraEntrada aVerificar={sessao === undefined || cortina === "verificar"} aviso={avisoEntrada} onEntrar={(email, password) => { setAvisoEntrada(""); gravarLS("df-ultima-atividade", String(Date.now())); return supabase.auth.signInWithPassword({ email, password }); }} />
         </div>
       )}
     </>

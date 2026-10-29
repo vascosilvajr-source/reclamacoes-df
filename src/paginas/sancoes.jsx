@@ -637,7 +637,6 @@ export function SanctionsPage({ sanctions, onNew, onOpen }) {
   const sancoesAplicadasFamilia = familia.filter((s) => s.sanctionApplied === true).length;
   const semSancaoFamilia = familia.filter((s) => s.sanctionApplied === false).length;
   const sancoesFinaisDF = elementosDF.filter((s) => s.stage === "decisao_suspensao" || s.stage === "decisao_expulsao").length;
-  const semSancaoDF = elementosDF.filter((s) => s.stage === "decisao_arquivado").length;
 
   const motivoData = Object.entries(MOTIVO_META).map(([key, meta]) => ({
     name: meta.label,

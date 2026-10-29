@@ -23,6 +23,7 @@ const urlLink = (l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`);
 async function abrirFicheiroDoc(f, notificar) {
   // A janela abre já (senão o browser bloqueia) e recebe o endereço temporário a seguir.
   const w = window.open("", "_blank");
+  if (w) w.opener = null; // a página aberta não consegue mexer nesta
   const { data, error } = await supabase.storage.from(BUCKET_DOCS).createSignedUrl(f.path, 300);
   if (error || !data) {
     if (w) w.close();

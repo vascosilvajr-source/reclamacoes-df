@@ -130,7 +130,6 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
   const [escola, setEscola] = useState(escolas[0] || "");
   const [turma, setTurma] = useState("");
   const [motivo, setMotivo] = useState(motivos[0] || "");
-  const [n, setN] = useState("1");
   const [erro, setErro] = useState("");
 
   const [fEsc, setFEsc] = useState("todas");
@@ -438,7 +437,6 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
   const avaliar = (id, resultado) => setAviso(onUpdate(id, resultado) || "");
   const [escola, setEscola] = useState(escolas[0] || "");
   const [turma, setTurma] = useState("");
-  const [n, setN] = useState("1");
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
   const [erro, setErro] = useState("");
 
@@ -1327,7 +1325,6 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
   const linhas = plano ? plano.treinos.map((t, i) => ({ ...t, i, k: chaveNomePlano(t), n: nomes[chaveNomePlano(t)] })) : [];
   const incluidas = linhas.filter((l) => l.n && l.n.incluir && !(l.dia === "Sábado" && /competi|sele/i.test(l.secao)));
   const semTurmas = [...new Set(incluidas.filter((l) => !l.n.turmas.length).map((l) => l.nome))];
-  const semHora = incluidas.filter((l) => !horaDe(l, l.i));
   const incertas = linhas.filter((l) => l.n && l.n.incluir && l.horaIncerta);
   const nomesUnicos = Object.keys(nomes).map((k) => ({ k, ...nomes[k], exemplo: linhas.find((l) => l.k === k), dias: [...new Set(linhas.filter((l) => l.k === k).map((l) => DIA_APP[l.dia].slice(0, 3)))] }));
   const porSecao = {};
@@ -2538,7 +2535,6 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
 
   // Análise: por defeito mostra a época atual (ou a mais recente com eventos).
   const epocasEv = [...new Set(novos.map((e) => epocaDe(e.data)).filter(Boolean))].sort().reverse();
-  const epAtual = epocaDe(hoje);
   const epSel = fEpRaw ?? selecaoInicial(epocasEv);
   const daEpoca = novos.filter((e) => naSelecao(epSel, epocaDe(e.data)));
   const evSel = fEv !== "todos" && daEpoca.some((e) => e.id === fEv) ? fEv : "todos";

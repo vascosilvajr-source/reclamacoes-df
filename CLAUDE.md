@@ -59,12 +59,14 @@ Claude-Session: https://claude.ai/code/session_01Tj5HwVs4WGxkiC96R9RioF
 | `src/foto.js` | `imprimirBalanco()`: PDF via impressão (A4, `vertical` opcional) |
 | `src/imagens.js` | `LOGO_BRANCO`, `FOTO_ESTADIO` |
 | `src/sgq.js` | Lógica de qualidade: estados, metas, derivações |
-| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `notebooklm.sql` (resumo anonimizado para o NotebookLM) |
+| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `notebooklm.sql` (resumo anonimizado para o NotebookLM), `endurecer.sql` (links expirados sem dados; pré-visualização só com sessão) |
 | `wrangler.jsonc` | Config do deploy Cloudflare (serve `dist/`, modo SPA) |
 
 - **Encontrar código:** `grep -rn "function Nome" src`. Uma página nova ou componente grande vai para `src/paginas/<area>.jsx` e entra em `CARREGAR_PAGINA` + `aMedida` no `nucleo.jsx`. O que é usado por várias páginas vai para `partilhado.jsx` (ou `nucleo.jsx` se o App/Hoje também usa). `nucleo.jsx` nunca importa de `App.jsx` nem das páginas.
 - **Variáveis `let` reatribuídas** (estilos do tema, `CAUSAS_ATUAIS`…) só se mudam no ficheiro onde estão declaradas (um `import` não pode ser reatribuído): usar as funções `definir…`.
 - **PDFs:** usar `BotaoFoto` + `useRef` no nó a exportar. Botões e menus levam a classe `semFoto` para ficarem fora do PDF.
+- **Sessão:** termina ao fim de 4 h sem uso. O e-mail de entrada não está no código (fica guardado só no dispositivo).
+- **CSP:** em `public/_headers`. Um domínio externo novo (API, fontes, imagens) tem de entrar lá, senão o browser bloqueia.
 - **Acesso:** só contas em `privado.equipa` leem e escrevem (`public.e_equipa()` nas políticas; ver `supabase/seguranca.sql`). Conta nova: inserir o `user_id` nessa tabela.
 - **Supabase:** todas as chamadas são RPCs `SECURITY DEFINER`. Chave pública (publishable) em `sb_publishable_KLx3medCXPqV-JZC9NXW-Q_K62OUHCu`. Variáveis de build: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. O token interno é verificado contra `privado.segredos.radar_token`.
 - **Pedidos operacionais:** tabela `pedidos_operacionais`; tipos pelo `itens.tipo`: semanal (sem tipo), `eficacia`, `reclamacao` (só leitura).

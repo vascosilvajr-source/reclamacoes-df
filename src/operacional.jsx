@@ -435,7 +435,7 @@ export default function Operacional({ token }) {
   const corpo = useMemo(() => {
     if (estado === "a carregar") return <div style={{ color: CINZA, fontSize: 14 }}>A abrir o pedido…</div>;
     if (estado === "invalido") return <Aviso titulo="Link inválido" texto="Este link não existe ou foi copiado incompleto. Abre-o outra vez a partir do e-mail." />;
-    if (estado === "expirado") return <Aviso titulo="Pedido expirado" texto="Este pedido já não aceita respostas. O próximo chega no e-mail da semana." />;
+    if (estado === "expirado") return <Aviso titulo="Link expirado" texto="Por segurança, este link já não mostra dados. O próximo chega no e-mail da semana." />;
     if (estado === "pronto" && pedido && pedido.itens && pedido.itens.tipo === "painel") return <PainelRede d={pedido.itens.dados || {}} gerado={pedido.itens.gerado} expira={pedido.expira} />;
     if (estado === "enviado" && pedido && pedido.itens && pedido.itens.tipo === "eficacia")
       return <Aviso titulo="Obrigado, a avaliação ficou registada" texto={`Podes voltar a abrir o link para a corrigir até ${dataPT(String(pedido.expira).slice(0, 10))}.`} cor={VERDE} />;

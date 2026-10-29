@@ -464,6 +464,10 @@ begin
   if length(coalesce(p_token, '')) < 32 then return null; end if;
   -- Primeira abertura do link: deixa de precisar de lembrete.
   update pedidos_operacionais set aberto_em = now() where token = p_token and aberto_em is null;
+  -- Link expirado: só diz que expirou (não devolve turmas, alunos nem reclamações).
+  select jsonb_build_object('escola', p.escola, 'expira', p.expira, 'expirado', true)
+    into v from pedidos_operacionais p where p.token = p_token and p.expira < now();
+  if v is not null then return v; end if;
   select jsonb_build_object('escola', p.escola, 'itens', p.itens, 'respostas', p.respostas, 'respondido_em', p.respondido_em,
     'expira', p.expira, 'expirado', p.expira < now(),
     'propostas', (select coalesce(jsonb_agg(jsonb_build_object('id', c.aluno, 'de', c.de, 'para', c.para) order by c.id), '[]'::jsonb)
@@ -622,7 +626,7 @@ begin
     return v_det::jsonb;
   end;
 end $$;
-revoke all on function public.op_previa(text, text) from public;
+revoke all on function public.op_previa(text, text) from public, anon;
 grant execute on function public.op_previa(text, text) to authenticated;
 
 -- 5b. Alterações de turma propostas pelo operacional: ficam sempre pendentes até validares na app.

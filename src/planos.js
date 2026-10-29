@@ -25,7 +25,7 @@ export async function linhasDoPdf(dados) {
   if (typeof window !== "undefined" && !pdfjs.GlobalWorkerOptions.workerSrc) {
     pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
   }
-  const doc = await pdfjs.getDocument({ data: dados }).promise;
+  const doc = await pdfjs.getDocument({ data: dados, isEvalSupported: false }).promise;
   const pg = await doc.getPage(1);
   const H = pg.getViewport({ scale: 1 }).height;
   const tc = await pg.getTextContent();

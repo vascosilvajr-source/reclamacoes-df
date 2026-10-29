@@ -658,7 +658,7 @@ const LINHAS_EPOCA = [
 ];
 
 function RelatorioGeral({ escolas, periodo, comparar, dados, niveis, notas, onGuardarNota, seccoes, epocasComparar }) {
-  const { reclamacoes, audits, sanctions, inscritos, turmasAlunos, epocaAnterior, desistencias, experiencias, satisfacao, inqueritos } = dados;
+  const { reclamacoes, audits, desistencias, inqueritos } = dados;
   const ver = (k) => seccoes.has(k);
   const hoje = isoDe(new Date());
   const epocaAtual = epocaDe(hoje);
@@ -1506,7 +1506,6 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
 
   const ver = (k) => seccoes.has(k);
   const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
-  const corEstado = (e) => (e === "melhor" ? COLORS.ok : e === "pior" ? COLORS.danger : COLORS.slate);
   const txtComp = (c) => {
     if (!comparar || c.med === null) return null;
     const pos = c.p ? `${ordinal(c.p.pos)} de ${c.p.de}` : "";

@@ -74,21 +74,6 @@ function assuntoGeral_(g) {
   return `Dragon Force · Resumo semanal da rede: ${a} ${a === 1 ? 'ponto de atenção' : 'pontos de atenção'}, ${d} em destaque`;
 }
 
-function agrupar_(lista) {
-  const m = {};
-  (lista || []).forEach((x) => (m[x.escola] = (m[x.escola] || []).concat(x.texto)));
-  return Object.keys(m).sort().map((e) => ({ escola: e, textos: m[e] }));
-}
-
-function blocoEscolas_(titulo, lista, cor, vazio) {
-  const g = agrupar_(lista);
-  const corpo = g.length
-    ? g.map((x) => `<tr><td style="${td_()};width:34%"><b>${esc_(x.escola)}</b></td><td style="${td_()}">${x.textos.map((t) => `<div style="margin:0 0 3px">${esc_(t)}</div>`).join('')}</td></tr>`).join('')
-    : `<tr><td style="${td_()};color:#5B6577">${vazio}</td></tr>`;
-  return `<p style="margin:18px 0 6px;font-weight:700;color:${cor}">${titulo}</p>
-    <table style="border-collapse:collapse;width:100%;font-size:13px;border-top:2px solid ${cor}">${corpo}</table>`;
-}
-
 function htmlGeral_(g) {
   const r = g.rede || {};
   const a = (g.atencao || []).length;
