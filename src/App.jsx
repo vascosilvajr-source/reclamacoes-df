@@ -2048,6 +2048,32 @@ function AppPrincipal({ onSair }) {
     setNotificacoes((l) => [...l, { id, texto, tipo, acao }]);
     if (duracao) setTimeout(() => setNotificacoes((l) => l.filter((n) => n.id !== id)), duracao);
   }, []);
+  // Aviso de nova versão: compara a versão desta página com /versao.json (de 5 em 5 minutos e ao voltar ao separador).
+  const avisouVersao = useRef(false);
+  useEffect(() => {
+    if (typeof __VERSAO__ === "undefined" || __VERSAO__ === "dev") return;
+    const ver = async () => {
+      if (avisouVersao.current) return;
+      try {
+        const r = await fetch(`/versao.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j && j.v && j.v !== __VERSAO__) {
+          avisouVersao.current = true;
+          notificar("Há uma nova versão da app. Atualiza quando acabares o que estás a fazer.", "aviso", 0, { rotulo: "Atualizar", fn: () => window.location.reload() });
+        }
+      } catch (e) {
+        // sem rede: tenta na próxima
+      }
+    };
+    const t = setInterval(ver, 5 * 60 * 1000);
+    const foco = () => document.visibilityState === "visible" && ver();
+    document.addEventListener("visibilitychange", foco);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", foco);
+    };
+  }, [notificar]);
   const fecharNotificacao = (id) => setNotificacoes((l) => l.filter((n) => n.id !== id));
 
   const [tema, setTemaState] = useState(() => {
