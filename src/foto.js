@@ -187,12 +187,36 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome })
   const altP = vertical ? 1123 : 794;
   const faixa = 45; // 12 mm
   const paginas = [];
+  // Blocos que não se podem cortar: linhas, tabelas pequenas, gráficos, cartões e blocos de texto (até 20% da página).
+  const topoFolha = folha.getBoundingClientRect().top;
+  const livreMax = altP - faixa * 2;
+  const blocos = [];
+  folha.querySelectorAll("*").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.height < 3 || r.height > livreMax * 0.2) return;
+    blocos.push([r.top - topoFolha, r.bottom - topoFolha]);
+  });
+  const corte = (y, livre) => {
+    let limite = y + livre;
+    if (limite >= h) return h - y;
+    for (let i = 0; i < 400; i++) {
+      let mexeu = false;
+      for (const [t, b] of blocos) {
+        if (t < limite - 0.5 && b > limite + 0.5 && t > y) {
+          limite = t;
+          mexeu = true;
+        }
+      }
+      if (!mexeu) break;
+    }
+    return limite - y < livre * 0.4 ? livre : limite - y; // se sobrasse uma página quase vazia, corta onde calhar
+  };
   let y = 0;
   let n = 0;
   while (y < h - 1) {
     const primeira = n === 0;
     const livre = altP - faixa - (primeira ? 0 : faixa);
-    const tomar = Math.min(livre, h - y);
+    const tomar = corte(y, livre);
     const c = document.createElement("canvas");
     c.width = Math.round(w * escala);
     c.height = Math.round(altP * escala);
