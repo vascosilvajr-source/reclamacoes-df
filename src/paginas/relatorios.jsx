@@ -1501,6 +1501,8 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
 
   // ---- Sanções ----
   const sanc = sanctions.filter((s) => s.school === escola && dentroPeriodo(periodo, s.date));
+  // Sanções da escola que ficam fora do período escolhido (outra época): o relatório avisa em vez de parecer que não existem.
+  const sancFora = sanctions.filter((s) => s.school === escola && !dentroPeriodo(periodo, s.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   const ver = (k) => seccoes.has(k);
   const geradoEm = new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "long", year: "numeric" }).format(new Date());
@@ -2216,7 +2218,7 @@ export function RelatorioEscolaPage({ escolas, reclamacoes, audits, sanctions, i
           <SeccaoRel titulo="Sanções" nota={`${sanc.length} ocorrência${sanc.length === 1 ? "" : "s"} no período`}>
             <TabelaRel
               colunas={["Data", "Envolvido", "Motivo", "Situação"]}
-              vazio="Sem ocorrências disciplinares no período."
+              vazio={sancFora.length ? `Sem ocorrências no período escolhido. Há ${sancFora.length} de outras épocas (a mais recente em ${sancFora[0].date ? fmt(new Date(String(sancFora[0].date).slice(0, 10) + "T00:00:00")) : "data desconhecida"}): escolhe a época anterior ou «Todo o histórico» para as ver.` : "Sem ocorrências disciplinares no período."}
               linhas={sanc
                 .sort((a, b) => String(b.date).localeCompare(String(a.date)))
                 .map((s) => [
