@@ -1390,23 +1390,22 @@ export function BotaoFoto({ alvo, titulo, subtitulo, nome, vertical, rotulo, con
       type="button"
       className="press semFoto"
       disabled={aTirar}
-      title="Abre a impressão: escolhe «Guardar como PDF»"
+      title="Descarrega o PDF"
       onClick={() => {
         setATirar(true);
         // Dois frames para o "A preparar…" aparecer antes do trabalho pesado (cópia da página e impressão).
         requestAnimationFrame(() =>
           requestAnimationFrame(() => {
-            try {
-              imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, vertical, logo: LOGO_BRANCO, html: conteudo ? conteudo() : "", tipo });
-            } finally {
-              setTimeout(() => setATirar(false), 800);
-            }
+            Promise.resolve()
+              .then(() => imprimirBalanco(alvo.current, { titulo, subtitulo, nome: nome || titulo, vertical, logo: LOGO_BRANCO, html: conteudo ? conteudo() : "", tipo, modo: "pdf" }))
+              .catch(() => {})
+              .finally(() => setTimeout(() => setATirar(false), 400));
           })
         );
       }}
       style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}
     >
-      <Printer size={14} /> {aTirar ? "A preparar…" : rotulo || "PDF do balanço"}
+      <Printer size={14} /> {aTirar ? "A gerar PDF…" : rotulo || "PDF do balanço"}
     </button>
   );
 }

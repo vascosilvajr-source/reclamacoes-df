@@ -42,8 +42,9 @@ export async function tirarFoto(no, { titulo, subtitulo, fundo = "#ffffff", tint
 // PDF do balanço: copia o que está à vista para uma folha própria e abre a impressão
 // ("Guardar como PDF"). Margem zero na folha (o browser deixa de imprimir data e endereço);
 // a moldura (faixa azul, título e rodapé em todas as páginas) é feita aqui. O texto fica nítido.
-export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", vertical = false, logo = "", html = "", tipo = "Balanço" }) {
-  if (!no && !html) return;
+export function imprimirBalanco(no, opcoes) {
+  const { titulo, subtitulo, nome = "balanco", vertical = false, logo = "", html = "", tipo = "Balanço", modo = "imprimir" } = opcoes;
+  if (!no && !html) return Promise.resolve();
   const AZUL = "#0B2A5B";
   const AZUL2 = "#1D4F9A";
   const TINTA = "#0F1B2D";
@@ -139,6 +140,19 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
   document.body.appendChild(folha);
   // Depois das regras de impressão da app, para a folha A4 deitada prevalecer.
   document.body.appendChild(estilo);
+  if (modo === "pdf") {
+    // Descarrega o PDF logo (sem janela de impressão). Se algo falhar, cai para a impressão.
+    return gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome })
+      .catch(() => {
+        folha.remove();
+        estilo.remove();
+        return imprimirBalanco(no, { ...opcoes, modo: "imprimir" });
+      })
+      .finally(() => {
+        folha.remove();
+        estilo.remove();
+      });
+  }
   const tituloAntes = document.title;
   document.title = String(nome).replace(/[\\/:*?"<>|]/g, "-");
   const limpar = () => {
@@ -156,4 +170,99 @@ export function imprimirBalanco(no, { titulo, subtitulo, nome = "balanco", verti
       setTimeout(() => document.getElementById("folhaBalanco") && limpar(), 1500);
     }
   }, 80);
+}
+
+
+// PDF feito aqui, sem bibliotecas: a folha é fotografada, cortada em páginas A4 e cada página vai como JPEG para o PDF.
+async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome }) {
+  const { toCanvas } = await import("html-to-image");
+  const tf = folha.querySelector("tfoot");
+  if (tf) tf.remove();
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  const w = pagina;
+  const h = folha.scrollHeight;
+  let escala = 2;
+  while (h * escala > 15000 && escala > 1) escala -= 0.25;
+  const src = await toCanvas(folha, { backgroundColor: "#ffffff", pixelRatio: escala, width: w, height: h, cacheBust: true, style: { position: "static", left: "0", top: "0" } });
+  const altP = vertical ? 1123 : 794;
+  const faixa = 45; // 12 mm
+  const paginas = [];
+  let y = 0;
+  let n = 0;
+  while (y < h - 1) {
+    const primeira = n === 0;
+    const livre = altP - faixa - (primeira ? 0 : faixa);
+    const tomar = Math.min(livre, h - y);
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * escala);
+    c.height = Math.round(altP * escala);
+    const g = c.getContext("2d");
+    g.scale(escala, escala);
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, w, altP);
+    g.drawImage(src, 0, y * escala, w * escala, tomar * escala, 0, primeira ? 0 : faixa, w, tomar);
+    g.strokeStyle = "#D5DBE5";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(margem, altP - faixa + 0.5);
+    g.lineTo(w - margem, altP - faixa + 0.5);
+    g.stroke();
+    g.fillStyle = "#6B7A90";
+    g.font = "10px Arial, sans-serif";
+    g.textBaseline = "middle";
+    g.textAlign = "left";
+    g.fillText("FC Porto · Dragon Force · Gestão da Qualidade", margem, altP - faixa / 2);
+    g.textAlign = "right";
+    g.fillText(`${titulo} · ${hoje}`, w - margem, altP - faixa / 2);
+    paginas.push({ url: c.toDataURL("image/jpeg", 0.92), w: c.width, h: c.height });
+    y += tomar;
+    n++;
+  }
+  const blob = pdfDeJpegs(paginas, vertical ? 595.28 : 841.89, vertical ? 841.89 : 595.28);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${String(nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\\/:*?"<>|]/g, "-")}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function pdfDeJpegs(paginas, ptW, ptH) {
+  const enc = new TextEncoder();
+  const partes = [];
+  const pos = [];
+  let tam = 0;
+  const push = (d) => {
+    const b = typeof d === "string" ? enc.encode(d) : d;
+    partes.push(b);
+    tam += b.length;
+  };
+  const obj = (num, corpo) => {
+    pos[num] = tam;
+    push(`${num} 0 obj\n${corpo}\nendobj\n`);
+  };
+  push("%PDF-1.4\n");
+  const nP = paginas.length;
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, `<< /Type /Pages /Count ${nP} /Kids [${paginas.map((_, i) => `${3 + i * 3} 0 R`).join(" ")}] >>`);
+  paginas.forEach((p, i) => {
+    const base = 3 + i * 3;
+    const bin = atob(p.url.split(",")[1]);
+    const bytes = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+    obj(base, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${ptW} ${ptH}] /Resources << /XObject << /Im0 ${base + 2} 0 R >> >> /Contents ${base + 1} 0 R >>`);
+    const cont = `q ${ptW} 0 0 ${ptH} 0 0 cm /Im0 Do Q`;
+    obj(base + 1, `<< /Length ${cont.length} >>\nstream\n${cont}\nendstream`);
+    pos[base + 2] = tam;
+    push(`${base + 2} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`);
+    push(bytes);
+    push("\nendstream\nendobj\n");
+  });
+  const total = 3 + nP * 3;
+  const xref = tam;
+  let x = `xref\n0 ${total}\n0000000000 65535 f \n`;
+  for (let i = 1; i < total; i++) x += `${String(pos[i]).padStart(10, "0")} 00000 n \n`;
+  push(x + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  return new Blob(partes, { type: "application/pdf" });
 }
