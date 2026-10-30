@@ -1518,8 +1518,13 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
   const enviados = daEpoca.filter((p) => p.estado !== "Por enviar").length;
   const futuro = daEpoca.filter((p) => p.envio && p.envio >= hoje && p.estado === "Por enviar");
   const prox = futuro[0];
-  const comResp = daEpoca.filter((p) => p.respostas !== null && p.respostas !== undefined && p.inscritos);
-  const taxa = comResp.length ? Math.round((comResp.reduce((n, p) => n + p.respostas, 0) / comResp.reduce((n, p) => n + p.inscritos, 0)) * 100) : null;
+  // Os enviados do inquérito ligado substituem os inscritos do plano.
+  const enviadosDe = (p) => {
+    const l = p.inqueritoId && inqueritos.find((i) => i.id === p.inqueritoId);
+    return (l && l.enviados) || p.inscritos;
+  };
+  const comResp = daEpoca.filter((p) => p.respostas !== null && p.respostas !== undefined && enviadosDe(p));
+  const taxa = comResp.length ? Math.round((comResp.reduce((n, p) => n + p.respostas, 0) / comResp.reduce((n, p) => n + enviadosDe(p), 0)) * 100) : null;
   const atrasados = daEpoca.filter((p) => situacaoPlano(p, p.envio).label === "Atrasado");
   const em14 = futuro.filter((p) => (dataLocal(p.envio) - dataLocal(hoje)) / 86400000 <= 14);
   const porFechar = daEpoca.filter((p) => p.estado === "Enviado" && p.envio && (dataLocal(hoje) - dataLocal(p.envio)) / 86400000 > 14);
@@ -1608,7 +1613,7 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
               subtitle={prox ? `${prox.evento} · ${prox.edicao}` : "Nada por enviar"}
               color={COLORS.navy}
             />
-            <StatCard label="Taxa de resposta global" value={taxa ?? "—"} subtitle={taxa !== null ? `% · ${comResp.length} inquéritos com respostas` : "Preenche inscritos e respostas"} anel={taxa} color={COLORS.ok} />
+            <StatCard label="Taxa de resposta global" value={taxa ?? "—"} subtitle={taxa !== null ? `% · ${comResp.length} inquéritos com respostas` : "Preenche enviados e respostas"} anel={taxa} color={COLORS.ok} />
           </div>
 
           <Observacoes
@@ -1663,7 +1668,7 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 980 }}>
                 <thead>
                   <tr style={{ background: COLORS.paperSunken }}>
-                    {["Nº", "Evento", "Público", "Datas", "Envio", "Resp.", "Estado", "Inscritos", "Respostas", "Taxa", ""].map((c, i) => (
+                    {["Nº", "Evento", "Público", "Datas", "Envio", "Resp.", "Estado", "Enviados", "Respostas", "Taxa", ""].map((c, i) => (
                       <th key={i} style={{ textAlign: "left", fontSize: 11, fontWeight: 600, color: COLORS.slate, padding: "9px 10px", whiteSpace: "nowrap" }}>
                         {c}
                       </th>
@@ -1681,7 +1686,8 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
                       {g.itens.map((p) => {
                         const s = situacaoPlano(p, p.envio);
                         const alerta = proximos(p);
-                        const tx = p.inscritos && p.respostas !== null && p.respostas !== undefined ? Math.round((p.respostas / p.inscritos) * 100) : null;
+                        const env = enviadosDe(p);
+                        const tx = env && p.respostas !== null && p.respostas !== undefined ? Math.round((p.respostas / env) * 100) : null;
                         const ligado = p.inqueritoId && inqueritos.find((i) => i.id === p.inqueritoId);
                         return (
                           <tr key={p.id} className="rowHover" style={{ borderTop: `1px solid ${COLORS.ruleSoft}` }}>
@@ -1725,7 +1731,7 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
                               </select>
                               {s.label === "Atrasado" && <div style={{ fontSize: 11, color: COLORS.danger, fontWeight: 600, marginTop: 3 }}>Atrasado</div>}
                             </td>
-                            <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums" }}>{p.inscritos ?? "—"}</td>
+                            <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums" }}>{env || "—"}</td>
                             <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums" }}>{p.respostas ?? "—"}</td>
                             <td style={{ padding: "9px 10px", fontVariantNumeric: "tabular-nums", fontWeight: 600, color: tx === null ? COLORS.slate : tx < 20 ? COLORS.danger : tx < 35 ? COLORS.warn : COLORS.ok }}>{tx === null ? "—" : `${tx}%`}</td>
                             <td style={{ padding: "9px 10px", whiteSpace: "nowrap", textAlign: "right" }}>

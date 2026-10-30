@@ -3249,7 +3249,7 @@ function AppPrincipal({ onSair }) {
     if (planoId) {
       persistPlanoInq(
         planoInq.map((p) =>
-          p.id === planoId ? { ...p, estado: "Analisado", respostas: reg.respostas, inscritos: p.inscritos ?? reg.enviados ?? null, inqueritoId: reg.id } : p
+          p.id === planoId ? { ...p, estado: "Analisado", respostas: reg.respostas, inscritos: reg.enviados ?? p.inscritos ?? null, inqueritoId: reg.id } : p
         )
       );
     }
