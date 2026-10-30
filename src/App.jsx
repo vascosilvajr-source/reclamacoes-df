@@ -5052,7 +5052,6 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
   const lembrado = lerLS(LS_EMAIL_ENTRADA);
   const [pass, setPass] = useState("");
   const [email, setEmail] = useState(lembrado);
-  const [outroEmail, setOutroEmail] = useState(!lembrado);
   const [ver, setVer] = useState(false);
   const [erro, setErro] = useState("");
   const [aEntrar, setAEntrar] = useState(false);
@@ -5180,10 +5179,7 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
           </div>
         ) : (
           <form className="entradaForm" onSubmit={entrar}>
-            {outroEmail && (
-              <input className="entradaInput" type="email" autoComplete="username" placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
-            )}
-            {!outroEmail && <input type="hidden" autoComplete="username" value={email} readOnly />}
+            <input className="entradaInput" type="email" autoComplete="username" inputMode="email" autoCapitalize="none" spellCheck={false} placeholder="E-mail" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" autoFocus={!lembrado} />
             {aviso && !erro && <div className="entradaErro" style={{ color: "#F0B27A" }}>{aviso}</div>}
             <div className="entradaCampo">
               <input
@@ -5193,7 +5189,7 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
                 placeholder="Palavra-passe"
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
-                autoFocus
+                autoFocus={!!lembrado}
                 aria-label="Palavra-passe"
               />
               <button type="button" className="entradaOlho" onClick={() => setVer((v) => !v)} aria-label={ver ? "Esconder palavra-passe" : "Mostrar palavra-passe"}>
@@ -5206,11 +5202,6 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
             <div className="entradaErro" role="alert">
               {erro}
             </div>
-            {lembrado && (
-              <button type="button" className="entradaLink" onClick={() => { setOutroEmail((v) => !v); setEmail(outroEmail ? lembrado : ""); }}>
-                {outroEmail ? "Usar a conta guardada neste dispositivo" : "Entrar com outro e-mail"}
-              </button>
-            )}
           </form>
         )}
         <div className="entradaRodape">FC PORTO · DRAGON FORCE</div>
