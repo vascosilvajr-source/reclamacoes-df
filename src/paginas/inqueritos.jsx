@@ -1,6 +1,6 @@
 // Página carregada à medida (ver CARREGAR_PAGINA em src/nucleo.jsx).
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Plus, X, Search, Trash2, ClipboardList, MessageSquareText } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LineChart, Line, ReferenceLine } from "recharts";
 import { COLORS, DEFAULT_REGRAS_ENVIO, StatCard, Tag, dataEnvioPlano, dataLocal, epocaDe, fmt, iconBtnStyle, inputStyle, isoDe, labelStyle, linkBtnStyle, normChave, panelStyle, panelTitle, pergEscala, primaryBtnStyle, resumoContagens, satisfacaoDe, secondaryBtnStyle } from "../nucleo.jsx";
@@ -1782,7 +1782,17 @@ function PlaneamentoInqueritos({ plano, regras, tipologias, tiposEvento, inqueri
 }
 
 // ---------- Página ----------
-export function InqueritosPage({ inqueritos, tiposEvento, dimensoes, onGuardar, onAtualizar, onRemover, onGerirLista, notificar, plano, regrasEnvio, tipologias, onGuardarItemPlano, onRemoverItemPlano, onImportarPlano, onGuardarRegras }) {
+export function InqueritosPage({ inqueritos: inqueritosGuardados, tiposEvento, dimensoes, onGuardar, onAtualizar, onRemover, onGerirLista, notificar, plano, regrasEnvio, tipologias, onGuardarItemPlano, onRemoverItemPlano, onImportarPlano, onGuardarRegras }) {
+  // Sem "enviados" próprios, usa os inscritos do item do plano ligado (para a taxa de resposta).
+  const inqueritos = useMemo(
+    () =>
+      inqueritosGuardados.map((i) => {
+        if (i.enviados) return i;
+        const p = (plano || []).find((x) => x.inqueritoId === i.id || (i.planoId && x.id === i.planoId));
+        return p && p.inscritos ? { ...i, enviados: Number(p.inscritos) } : i;
+      }),
+    [inqueritosGuardados, plano]
+  );
   const [view, setView] = useState("planeamento");
   const [importar, setImportar] = useState(false);
   const [aberto, setAberto] = useState(null);
