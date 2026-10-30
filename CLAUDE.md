@@ -59,7 +59,7 @@ Claude-Session: https://claude.ai/code/session_01Tj5HwVs4WGxkiC96R9RioF
 | `src/foto.js` | `imprimirBalanco()`: PDF via impressão (A4, `vertical` opcional) |
 | `src/imagens.js` | `LOGO_BRANCO`, `FOTO_ESTADIO` |
 | `src/sgq.js` | Lógica de qualidade: estados, metas, derivações |
-| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `notebooklm.sql` (resumo anonimizado para o NotebookLM), `endurecer.sql` (links expirados sem dados; pré-visualização só com sessão) |
+| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `remover_notebooklm.sql` (apaga a função `nlm_resumo`, já sem uso), `endurecer.sql` (links expirados sem dados; pré-visualização só com sessão) |
 | `wrangler.jsonc` | Config do deploy Cloudflare (serve `dist/`, modo SPA) |
 
 - **Encontrar código:** `grep -rn "function Nome" src`. Uma página nova ou componente grande vai para `src/paginas/<area>.jsx` e entra em `CARREGAR_PAGINA` + `aMedida` no `nucleo.jsx`. O que é usado por várias páginas vai para `partilhado.jsx` (ou `nucleo.jsx` se o App/Hoje também usa). `nucleo.jsx` nunca importa de `App.jsx` nem das páginas.
@@ -76,7 +76,6 @@ Claude-Session: https://claude.ai/code/session_01Tj5HwVs4WGxkiC96R9RioF
 Correm no Google Apps Script, não nesta app. Não fazer pesquisa web aqui.
 - **Emails_Escolas.gs:** corre de 5 em 5 minutos numa conta Gmail separada, chama `op_preparar` e envia e-mails a operacionais, coordenadores técnicos e coordenador geral. `replyTo` aponta para o @fcporto.pt. Tem o `TOKEN_APP`, por isso **nunca vai para o repo**. `URL_APP` tem de coincidir com o endereço de produção.
 - **Radar_Gemini.gs:** Gemini + Tavily para o radar de mercado.
-- **NotebookLM_Fonte.gs:** na conta do NotebookLM; todos os dias às 7h chama `nlm_resumo` e reescreve o Google Doc usado como fonte. Também tem o `TOKEN_APP`.
 
 # Ao mudar o endereço de produção
 Atualizar: Supabase Auth (Site URL e Redirect URLs), `URL_APP` no `.gs` e este ficheiro.
