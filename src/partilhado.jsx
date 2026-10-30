@@ -807,8 +807,8 @@ export async function lerExcelInq(ficheiro, opcoes = {}) {
   const partilhadas = [];
   const sst = await ler("xl/sharedStrings.xml");
   if (sst) {
-    [...xml(sst).getElementsByTagName("si")].forEach((si) => {
-      partilhadas.push([...si.getElementsByTagName("t")].map((t) => t.textContent).join(""));
+    [...xml(sst).getElementsByTagNameNS("*", "si")].forEach((si) => {
+      partilhadas.push([...si.getElementsByTagNameNS("*", "t")].map((t) => t.textContent).join(""));
     });
   }
 
@@ -817,8 +817,8 @@ export async function lerExcelInq(ficheiro, opcoes = {}) {
   const wb = await ler("xl/workbook.xml");
   const rels = await ler("xl/_rels/workbook.xml.rels");
   if (wb && rels) {
-    const relsXml = [...xml(rels).getElementsByTagName("Relationship")];
-    const lista = [...xml(wb).getElementsByTagName("sheet")]
+    const relsXml = [...xml(rels).getElementsByTagNameNS("*", "Relationship")];
+    const lista = [...xml(wb).getElementsByTagNameNS("*", "sheet")]
       .map((folha) => {
         const rid = folha.getAttribute("r:id") || folha.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
         const rel = relsXml.find((r) => r.getAttribute("Id") === rid);
@@ -879,7 +879,8 @@ export async function lerExcelInq(ficheiro, opcoes = {}) {
     };
     let resto = "";
     const consumir = (texto, fim) => {
-      resto += texto;
+      // Ficheiros de alguns exportadores usam prefixo (<x:row>, <x:c>): tira-o.
+      resto = (resto + texto).replace(/<(\/?)x:/g, "<$1");
       let i = 0;
       for (;;) {
         const ab = resto.indexOf("<row", i);
