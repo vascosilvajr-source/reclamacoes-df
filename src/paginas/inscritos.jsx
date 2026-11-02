@@ -3800,7 +3800,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       emFalta: emFalta.length,
       // Quem são, para se poder confirmar à mão no sistema de inscrições.
       emFaltaLista: emFalta
-        .map((a) => ({ id: a.id, escola: a.escola, turma: a.turma, semCodigo: !!a.semCodigo }))
+        .map((a) => ({ id: a.id, escola: a.escola, turma: a.turma, semCodigo: !!a.semCodigo, porConfirmar: !!a.porConfirmar }))
         .sort((a, b) => (a.escola || "").localeCompare(b.escola || "", "pt") || String(a.id).localeCompare(String(b.id), "pt", { numeric: true })),
       convertidas,
       pendentesExp: Object.values(experiencias).filter((x) => x.resultado === "pendente").length,
@@ -3997,6 +3997,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                               <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: 90, userSelect: "all" }}>{a.semCodigo ? "sem código" : a.id}</span>
                               <span style={{ color: COLORS.ink2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {a.escola} · {a.turma}
+                                {a.porConfirmar && <span style={{ color: COLORS.warn }}> · converteu e ainda não está no mapa</span>}
                               </span>
                               <select
                                 value={faltaPorAluno[a.id] || faltaComo}
@@ -4296,7 +4297,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                     <td style={td}>{ROTULO_RUBRICA[a.rubrica] || "—"}</td>
                     <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
                     <td style={{ ...td, color: a.estado === "desistiu" ? COLORS.danger : a.emFalta ? COLORS.warn : COLORS.ok }}>
-                      {a.estado === "desistiu" ? `Desistiu a ${fmt(new Date(a.saida + "T00:00:00"))} · ${a.motivo}` : a.emFalta ? "Em falta na última importação" : "Inscrito"}
+                      {a.estado === "desistiu" ? `Desistiu a ${fmt(new Date(a.saida + "T00:00:00"))} · ${a.motivo}` : a.emFalta ? "Em falta na última importação" : a.porConfirmar ? "Converteu · por confirmar no mapa" : "Inscrito"}
                     </td>
                   </tr>
                 ))}

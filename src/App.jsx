@@ -2621,6 +2621,18 @@ function AppPrincipal({ onSair }) {
     if (st.epAnt !== epocaAnterior) persistEpocaAnterior(st.epAnt);
   };
 
+  // Experiência que converteu: o aluno entra nos inscritos já, "por confirmar" até aparecer no mapa
+  // de acompanhamento (a importação avisa se não aparecer). Se deixar de converter, sai.
+  const sincronizarConvertida = (alunos, regExp, ep, s1, { id, escola, turma, data, resultado }) => {
+    const a = alunos[id];
+    if (resultado === "sucesso" && !a) {
+      const entrada = data || isoDe(new Date());
+      const e = regExp[id] || {};
+      alunos[id] = { id, escola, turma: turma || "Sem turma", ano: e.ano || null, genero: e.genero || "", rubrica: "", entrada, semEntrada: semanaDaEpoca(entrada, s1), estado: "ativo", semCodigo: false, saida: null, motivo: null, porConfirmar: isoDe(new Date()) };
+    } else if (resultado !== "sucesso" && a && a.porConfirmar) delete alunos[id];
+    else if (resultado === "sucesso" && a && a.porConfirmar && turma && a.turma !== turma) alunos[id] = { ...a, turma };
+  };
+
   // Recalcula o que sai do registo de uma época: turmas e balanço semanal (época em curso),
   // totais da época passada, desistências e experiências importadas. reg null = época apagada.
   const derivarEpoca = (st0, ep, reg) => {
@@ -3081,6 +3093,17 @@ function AppPrincipal({ onSair }) {
   const updateExperiencia = (id, resultado) => {
     const x = experiencias.find((e) => e.id === id);
     if (!x) return;
+    const reg = x.alunoId && x.epoca && registoAlunos[x.epoca];
+    if (reg) {
+      // Experiência ligada ao registo da época: o aluno entra (ou sai) dos inscritos e tudo é recalculado.
+      const alunos = { ...reg.alunos };
+      const regExp = { ...reg.experiencias };
+      sincronizarConvertida(alunos, regExp, x.epoca, reg.semana1 || semana1Padrao(x.epoca), { id: x.alunoId, escola: x.escola, turma: x.turmaFicou || x.turma, data: x.data, resultado });
+      regExp[x.alunoId] = { ...(regExp[x.alunoId] || { id: x.alunoId, escola: x.escola, data: x.data }), resultado };
+      const exps = experiencias.map((e) => (e.id === id ? { ...e, resultado, entraram: resultado === "sucesso" ? 1 : 0, manual: true } : e));
+      gravarEstadoAlunos(derivarEpoca({ ...estadoAlunos(), exps }, x.epoca, { ...reg, alunos, experiencias: regExp }));
+      return null;
+    }
     const t = turmasAlunos.find((y) => y.escola === x.escola && y.turma === x.turma);
     let entraram = x.entraram || 0;
     let aviso = null;
@@ -3109,7 +3132,17 @@ function AppPrincipal({ onSair }) {
     }
   };
   const removeExperiencia = (id) => persistExperiencias(experiencias.filter((e) => e.id !== id));
-  const turmaFicouExperiencia = (id, turma) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, turmaFicou: turma || undefined } : e)));
+  const turmaFicouExperiencia = (id, turma) => {
+    const x = experiencias.find((e) => e.id === id);
+    const reg = x && x.alunoId && x.epoca && registoAlunos[x.epoca];
+    const exps = experiencias.map((e) => (e.id === id ? { ...e, turmaFicou: turma || undefined } : e));
+    // Aluno ainda por confirmar no mapa: passa para a equipa indicada.
+    if (reg && turma && reg.alunos[x.alunoId] && reg.alunos[x.alunoId].porConfirmar) {
+      gravarEstadoAlunos(derivarEpoca({ ...estadoAlunos(), exps }, x.epoca, { ...reg, alunos: { ...reg.alunos, [x.alunoId]: { ...reg.alunos[x.alunoId], turma } } }));
+      return;
+    }
+    persistExperiencias(exps);
+  };
   const motivoExperiencia = (id, motivo) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, motivo: motivo || undefined, manual: true } : e)));
   // Códigos que os operacionais indicaram para as turmas sem alunos: o aluno passa para essa turma (e escola).
   const aplicarIdsOperacional = (pedido) => {
@@ -3167,6 +3200,7 @@ function AppPrincipal({ onSair }) {
             } else {
               exps.push({ id: `x_${ep}_${i.id}`, alunoId: i.id, epoca: ep, escola: i.escola, turma: v.turma, n: 1, data: v.data, resultado: res, manual, origem: "operacional", decididoPor: "operacional", motivo: v.motivo || undefined, nota: v.nota || undefined, entraram: 0, turmaFicou: res === "sucesso" ? v.turmaFicou || undefined : undefined });
             }
+            sincronizarConvertida(alunos, regExp, ep, reg.semana1 || semana1Padrao(ep), { id: i.id, escola: i.escola, turma: v.turmaFicou || v.turma, data: v.data, resultado: res });
             regExp[i.id] = regExp[i.id] ? { ...regExp[i.id], resultado: res, motivo: v.motivo || undefined, turma: regExp[i.id].turma || v.turma } : { id: i.id, escola: i.escola, data: v.data, turma: v.turma, resultado: res, motivo: v.motivo || undefined };
             r[i.tipo]++;
           } else if (i.tipo === "turma") (i.ids || []).forEach((id) => mudaTurma(id, i.turma, i.escola));
