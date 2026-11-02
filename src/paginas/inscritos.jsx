@@ -3219,6 +3219,7 @@ export function InscritosPage({
   onCapacidade,
   onMudarTurma,
   onMudarGenero,
+  onMudarMotivo,
   gestaoDados,
   onGuardarMapaEscaloes,
   notificar,
@@ -3388,6 +3389,7 @@ export function InscritosPage({
           espacos={espacos}
           onMudarTurma={onMudarTurma}
           onMudarGenero={onMudarGenero}
+          onMudarMotivo={onMudarMotivo}
         />
       ) : (
         <AnaliseInscritos registoAlunos={registoAlunos} options={options} escolas={escolas} inscritos={inscritos} epocaAnterior={epocaAnterior} experiencias={experiencias} turmasAlunos={turmasAlunos} gestaoDados={gestaoDados} />
@@ -3749,7 +3751,8 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
         // Sem data: na época em curso conta hoje; numa época passada, o fim da época.
         saida: saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || (emCurso ? hoje : fimEpoca),
         semSaida: semanaDaEpoca(saidaDe(r) || (prev && prev.estado === "desistiu" && prev.saida) || (emCurso ? hoje : fimEpoca), s1),
-        motivo: r.motivo || "Não definido",
+        motivo: prev?.motivoManual ? prev.motivo : r.motivo || "Não definido",
+        ...(prev?.motivoManual ? { motivoManual: true } : {}),
       };
     });
     const emFalta = Object.values(anterior.alunos).filter((a) => a.estado === "ativo" && !vistos.has(a.id) && !alunos[a.id]);
@@ -4065,8 +4068,33 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
   );
 }
 
+// Escolher o motivo de desistência de um aluno, ou acrescentar um novo à lista.
+function SeletorMotivo({ valor, motivos, onChange, negrito }) {
+  const lista = [...new Set([...(motivos || []), ...(valor ? [valor] : [])])];
+  return (
+    <select
+      value={valor || ""}
+      onChange={(e) => {
+        if (e.target.value !== "__novo__") return onChange(e.target.value);
+        const m = (window.prompt("Novo motivo de desistência:") || "").trim();
+        if (m) onChange(m);
+      }}
+      aria-label="Motivo da desistência"
+      title={negrito ? "Mudado à mão" : "Mudar motivo"}
+      style={{ ...inputStyle, width: "auto", maxWidth: 220, padding: "3px 6px", fontSize: 12, fontWeight: negrito ? 700 : 400, color: COLORS.ink }}
+    >
+      {lista.map((m) => (
+        <option key={m} value={m}>
+          {m}
+        </option>
+      ))}
+      <option value="__novo__">+ Novo motivo…</option>
+    </select>
+  );
+}
+
 // Escola em detalhe: turmas (lotação) e alunos pelo código.
-function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma, onMudarGenero }) {
+function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma, onMudarGenero, motivos, onMudarMotivo }) {
   const [aEditar, setAEditar] = useState(null);
   const [aba, setAba] = useState("turmas");
   const [procura, setProcura] = useState("");
@@ -4297,7 +4325,12 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                     <td style={td}>{ROTULO_RUBRICA[a.rubrica] || "—"}</td>
                     <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
                     <td style={{ ...td, color: a.estado === "desistiu" ? COLORS.danger : a.emFalta ? COLORS.warn : COLORS.ok }}>
-                      {a.estado === "desistiu" ? `Desistiu a ${fmt(new Date(a.saida + "T00:00:00"))} · ${a.motivo}` : a.emFalta ? "Em falta na última importação" : a.porConfirmar ? "Converteu · por confirmar no mapa" : "Inscrito"}
+                      {a.estado === "desistiu" ? (
+                        <>
+                          Desistiu a {fmt(new Date(a.saida + "T00:00:00"))} ·{" "}
+                          {onMudarMotivo ? <SeletorMotivo valor={a.motivo} motivos={motivos} onChange={(m) => onMudarMotivo(epoca, a.id, m)} negrito={a.motivoManual} /> : a.motivo}
+                        </>
+                      ) : a.emFalta ? "Em falta na última importação" : a.porConfirmar ? "Converteu · por confirmar no mapa" : "Inscrito"}
                     </td>
                   </tr>
                 ))}
@@ -4801,7 +4834,7 @@ async function gerarExcelAlunos(reg, epoca, escola, niveis) {
   return todos.length;
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma, onMudarGenero }) {
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma, onMudarGenero, onMudarMotivo }) {
   const [gerir, setGerir] = useState(false);
   const [aGerarExcel, setAGerarExcel] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
@@ -5243,7 +5276,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
                               <td style={td}>{a.turma || "—"}</td>
                               <td style={td}>{a.entrada ? fmt(new Date(a.entrada + "T00:00:00")) : "—"}</td>
                               <td style={td}>{a.saida ? fmt(new Date(a.saida + "T00:00:00")) : "—"}</td>
-                              <td style={{ ...td, fontSize: 12.5 }}>{a.motivo || "Não definido"}</td>
+                              <td style={{ ...td, fontSize: 12.5 }}>{onMudarMotivo ? <SeletorMotivo valor={a.motivo || "Não definido"} motivos={options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA} onChange={(m) => onMudarMotivo(epoca, a.id, m)} negrito={a.motivoManual} /> : a.motivo || "Não definido"}</td>
                             </tr>
                           ))}
                           {listaDesist.length > 300 && (
@@ -5343,7 +5376,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           }}
         />
       )}
-      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onMudarGenero={onMudarGenero} onFechar={() => setEscolaAberta(null)} />}
+      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onMudarGenero={onMudarGenero} motivos={options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA} onMudarMotivo={onMudarMotivo} onFechar={() => setEscolaAberta(null)} />}
       {gerir && <GerirDadosAlunos registoAlunos={registoAlunos} options={options} g={gestaoDados} epocaInicial={epoca} abaInicial={typeof gerir === "string" ? gerir : "apagar"} onFechar={() => setGerir(false)} />}
     </div>
   );

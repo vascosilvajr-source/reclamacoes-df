@@ -3259,6 +3259,18 @@ function AppPrincipal({ onSair }) {
     notificar(`Género do aluno ${id} alterado.`);
   };
 
+  // Motivo de desistência corrigido à mão (pode ser novo: entra na lista). A importação respeita-o.
+  const mudarMotivoAluno = (ep, id, motivo) => {
+    const reg = registoAlunos[ep];
+    const a = reg && reg.alunos[id];
+    const m = (motivo || "").trim();
+    if (!a || !m || a.motivo === m) return;
+    const atuais = options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA;
+    if (!atuais.includes(m)) persistOptions({ ...options, motivosDesistencia: [...atuais, m] });
+    gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos: { ...reg.alunos, [id]: { ...a, motivo: m, motivoManual: true } } }));
+    notificar(`Motivo do aluno ${id} alterado.`);
+  };
+
   const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
   const updateDesvinc = (id, patch) =>
     persistDesvinc(
@@ -4371,6 +4383,7 @@ function AppPrincipal({ onSair }) {
             onCapacidade={definirCapacidade}
             onMudarTurma={mudarTurmaAluno}
             onMudarGenero={mudarGeneroAluno}
+            onMudarMotivo={mudarMotivoAluno}
             gestaoDados={{ apagar: apagarDadosAlunos, renomear: renomearTurmaEpoca, renomearTurma: renomearTurmaLivre, turmasAtuais: turmasAlunos, distintas: marcarTurmasDistintas, renomearEscola: renomearEscolaEpoca, estadoEscola: definirEstadoEscola, epocas: epocasComDados, escolasComDados }}
             onGuardarMapaEscaloes={guardarMapaEscaloes}
             notificar={notificar}
