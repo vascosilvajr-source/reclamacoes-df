@@ -3554,6 +3554,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
   const [aEscrever, setAEscrever] = useState({});
   const [procuraTurma, setProcuraTurma] = useState("");
   const [faltaComo, setFaltaComo] = useState("manter");
+  const [faltaPorAluno, setFaltaPorAluno] = useState({});
   const [copiadoFalta, setCopiadoFalta] = useState(false);
   const [erro, setErro] = useState("");
   const [aLer, setALer] = useState(false);
@@ -3754,7 +3755,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
     const emFalta = Object.values(anterior.alunos).filter((a) => a.estado === "ativo" && !vistos.has(a.id) && !alunos[a.id]);
     emFalta.forEach((a) => {
       alunos[a.id] =
-        faltaComo === "desistencia"
+        (faltaPorAluno[a.id] || faltaComo) === "desistencia"
           ? { ...a, estado: "desistiu", saida: hoje, semSaida: semHoje, motivo: "Saiu sem registo (não consta do ficheiro)" }
           : { ...a, emFalta: hoje };
     });
@@ -3807,7 +3808,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       nTurmas: turmasFinais.size,
       importacoes: [...(anterior.importacoes || []), { data: hoje, ficheiro: nomeFicheiro, ativos, novos, desist: desistNovas, exp: eF.length }],
     };
-  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, registoAtual, epocaManual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [folhas, papel, mapaEscola, mapaTurma, faltaComo, faltaPorAluno, registoAtual, epocaManual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const novasEscolas = [...new Set(Object.values(mapaEscola).filter((x) => x.startsWith("__nova__")).map((x) => x.slice(8)))];
   const opcoesNovas = [...new Set([...escolasBrutas.map(([b]) => nomeEscolaProposto(b)), ...novasEscolas])].filter((n) => !escolas.includes(n)).sort((a, b) => a.localeCompare(b, "pt"));
@@ -3996,6 +3997,14 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                               <span style={{ color: COLORS.ink2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {a.escola} · {a.turma}
                               </span>
+                              <select
+                                value={faltaPorAluno[a.id] || faltaComo}
+                                onChange={(e) => setFaltaPorAluno((m) => ({ ...m, [a.id]: e.target.value }))}
+                                style={{ ...inputStyle, width: 190, padding: "3px 6px", fontSize: 12 }}
+                              >
+                                <option value="manter">Manter como inscrito</option>
+                                <option value="desistencia">Registar desistência</option>
+                              </select>
                             </div>
                           ))}
                         </div>
@@ -4003,10 +4012,10 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                     )}
                     <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
                       <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
-                        <input type="radio" checked={faltaComo === "manter"} onChange={() => setFaltaComo("manter")} /> Manter como inscritos (assinalados "em falta")
+                        <input type="radio" checked={faltaComo === "manter"} onChange={() => { setFaltaComo("manter"); setFaltaPorAluno({}); }} /> Manter todos como inscritos (assinalados "em falta")
                       </label>
                       <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
-                        <input type="radio" checked={faltaComo === "desistencia"} onChange={() => setFaltaComo("desistencia")} /> Registar como desistência
+                        <input type="radio" checked={faltaComo === "desistencia"} onChange={() => { setFaltaComo("desistencia"); setFaltaPorAluno({}); }} /> Registar todos como desistência
                       </label>
                     </div>
                   </div>
