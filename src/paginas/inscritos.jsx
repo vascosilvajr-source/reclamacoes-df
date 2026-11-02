@@ -3795,6 +3795,7 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
       experiencias,
       ativos,
       novos,
+      novosLista: aF.filter((r) => !anterior.alunos[r.id]).map((r) => ({ id: r.id, semCodigo: !!r.semCodigo })),
       desistNovas,
       emFalta: emFalta.length,
       // Quem são, para se poder confirmar à mão no sistema de inscrições.
@@ -4026,6 +4027,12 @@ function ImportarInscritos({ escolas, niveis, registoAtual, mapaTurmasGuardado, 
                   </div>
                   <div style={{ color: COLORS.ink2 }}>Época de 01/08/{resultado.epoca.slice(0, 4)} a 31/07/{Number(resultado.epoca.slice(0, 4)) + 1}; a semana 1 começa a 1 de agosto.</div>
                   {resultado.primeira ? "Primeira importação desta época." : `${resultado.novos} entradas novas desde a última importação.`} {resultado.desistNovas} desistências novas · {expF.length} experiências na folha · {resultado.convertidas} convertidas (extrainscrições) · {resultado.pendentesExp} por decidir (últimas 3 semanas).
+                  {resultado.novosLista && resultado.novosLista.length > 0 && !resultado.primeira && (
+                    <details style={{ marginTop: 4 }}>
+                      <summary style={{ cursor: "pointer", color: COLORS.ink2 }}>Ver os {resultado.novosLista.length} códigos novos</summary>
+                      <div style={{ marginTop: 4, fontVariantNumeric: "tabular-nums", userSelect: "all" }}>{resultado.novosLista.map((x) => (x.semCodigo ? "(sem código)" : x.id)).join(", ")}</div>
+                    </details>
+                  )}
                   {novasEscolas.length > 0 && <div>Escolas novas a criar: {novasEscolas.join(", ")}</div>}
                   {textosAvisoEpoca(resultado.avisos, resultado.epoca).map((x) => (
                     <div key={x} style={{ color: COLORS.warn }}>
