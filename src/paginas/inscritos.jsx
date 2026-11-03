@@ -4110,7 +4110,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
   const lot = gruposLotacao(escola, turmas, espacos, capacidades, niveis);
   const exps = Object.values(reg?.experiencias || {}).filter((x) => x.escola === escola);
   const lista = alunos
-    .filter((a) => fEstado === "todos" || a.estado === fEstado || (fEstado === "emFalta" && a.emFalta && a.estado === "ativo"))
+    .filter((a) => fEstado === "todos" || a.estado === fEstado || (fEstado === "emFalta" && a.emFalta && a.estado === "ativo") || (fEstado === "porConfirmar" && a.porConfirmar && a.estado === "ativo"))
     .filter((a) => fTurma === "todas" || a.turma === fTurma)
     .filter((a) => !procura.trim() || String(a.id).includes(procura.trim()))
     .sort((a, b) => ordemTurma(niveis)(a.turma, b.turma) || String(a.id).localeCompare(String(b.id)));
@@ -4247,6 +4247,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                 <option value="ativo">Inscritos</option>
                 <option value="desistiu">Desistiram</option>
                 <option value="emFalta">Em falta na última importação</option>
+                <option value="porConfirmar">Converteu, por confirmar no mapa</option>
                 <option value="todos">Todos</option>
               </select>
               <select value={fTurma} onChange={(e) => setFTurma(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "7px 9px" }}>
