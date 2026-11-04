@@ -2027,6 +2027,7 @@ function AppPrincipal({ onSair, email }) {
   const [areasAud, setAreasAud] = useState(false);
   const [preencherAud, setPreencherAud] = useState(false);
   const [isoAud, setIsoAud] = useState(false);
+  const [dicaNav, setDicaNav] = useState(null);
   const [viewingAudit, setViewingAudit] = useState(null);
   const [viewingDetail, setViewingDetail] = useState(null);
   const [showSanctionForm, setShowSanctionForm] = useState(false);
@@ -3728,6 +3729,45 @@ function AppPrincipal({ onSair, email }) {
     },
   ];
 
+  // Cartão que aparece ao passar o rato num item do menu: o que é e, quando há, um número útil.
+  const dicasNav = {
+    hoje: ["O que precisa de atenção hoje"],
+    registo: ["Registo e acompanhamento das reclamações", stats.atrasadas || stats.porPegar ? `${stats.atrasadas} atrasadas · ${stats.porPegar} por iniciar` : ""],
+    auditorias: ["Auditorias internas e constatações"],
+    sancoes: ["Sanções a escolas e treinadores"],
+    inscritos: ["Alunos, turmas, espaços e treinadores"],
+    inqueritos: ["Inquéritos de satisfação e cronograma"],
+    ocorrencias: ["Incidentes, avarias e questões das instalações"],
+    avaliacoes: ["Avaliação do staff"],
+    emails: ["Envios às escolas, pré-visualização e histórico"],
+    riscos: ["Riscos, oportunidades e avisos"],
+    objetivos: ["Objetivos e metas da época"],
+    documentos: ["Documentos e versões em vigor"],
+    formacao: ["Ações de formação"],
+    relatorio: ["Relatórios e PDFs"],
+    listas: ["Escolas, temas, motivos e outras listas da app"],
+    apagados: ["O que foi apagado, por quem, e repor (30 dias)"],
+    copia: ["Descarregar uma cópia de todos os dados"],
+  };
+  const botaoNav = ({ k, ativo, onClick, Icon, label, contador, extra }) => (
+    <button
+      key={k}
+      className={`navItem navBtn press${ativo ? " ativo" : ""}`}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        const d = dicasNav[k];
+        if (d) setDicaNav({ top: e.currentTarget.getBoundingClientRect().top, titulo: label, desc: d[0], stat: d[1] || "" });
+      }}
+      onMouseLeave={() => setDicaNav(null)}
+    >
+      <span className="navBarra" />
+      <Icon size={16} className="navIco" />
+      <span className="navLab">{label}</span>
+      {contador ? <span className="navCnt">{contador}</span> : null}
+      {extra}
+    </button>
+  );
+
   return (
     <div
       style={{
@@ -3747,6 +3787,26 @@ function AppPrincipal({ onSair, email }) {
         .spin { animation: spin 0.9s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .navItem:hover { background: ${COLORS.paperSunken}; }
+        .navGrupo { padding: 14px 16px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: ${COLORS.slate}; }
+        .navBtn { position: relative; display: flex; align-items: center; gap: 10px; width: calc(100% - 16px); margin: 1px 8px; padding: 7px 10px; border: none; border-radius: 9px; background: transparent; color: ${COLORS.ink2}; font-size: 13.5px; font-weight: 450; text-align: left; cursor: pointer; transition: background 180ms ease, color 180ms ease, transform 180ms ease; }
+        .navBtn .navBarra { position: absolute; left: -8px; top: 50%; width: 3px; height: 0; border-radius: 0 3px 3px 0; background: ${COLORS.navySoft}; transform: translateY(-50%); transition: height 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+        .navBtn .navIco { flex: none; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), color 180ms ease; }
+        .navBtn .navLab { flex: 1; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+        .navBtn .navCnt { font-size: 11px; font-weight: 600; color: ${COLORS.slate}; background: ${COLORS.paperSunken}; padding: 1px 7px; border-radius: 99px; transition: background 180ms ease, color 180ms ease; }
+        .navBtn:hover { background: linear-gradient(90deg, ${tema === "dark" ? "rgba(138,180,255,0.12)" : "rgba(10,82,199,0.10)"}, transparent 92%); color: ${COLORS.ink}; }
+        .navBtn:hover .navBarra { height: 16px; }
+        .navBtn:hover .navIco { color: ${COLORS.navySoft}; transform: scale(1.12) rotate(-4deg); }
+        .navBtn:hover .navLab { transform: translateX(2px); }
+        .navBtn:hover .navCnt { background: ${COLORS.navyWash}; color: ${COLORS.navySoft}; }
+        .navBtn:active { transform: scale(0.985); }
+        .navBtn.ativo { background: ${COLORS.navyWash}; color: ${COLORS.navySoft}; font-weight: 600; }
+        .navBtn.ativo .navBarra { height: 20px; }
+        .navBtn.ativo .navCnt { background: ${COLORS.paperRaised}; color: ${COLORS.navySoft}; }
+        @keyframes navDicaIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+        .navDica { position: fixed; left: 256px; width: 232px; pointer-events: none; z-index: 90; background: ${COLORS.paperRaised}; border: 1px solid ${COLORS.rule}; border-radius: 11px; padding: 10px 13px; box-shadow: 0 14px 34px -14px rgba(14, 20, 32, 0.35); animation: navDicaIn 160ms ease both; }
+        .navDica b { font-size: 13px; }
+        .navDica p { margin: 3px 0 0; font-size: 12px; color: ${COLORS.ink2}; line-height: 1.4; }
+        .navDica i { display: block; margin-top: 7px; padding-top: 7px; border-top: 1px solid ${COLORS.rule}; font-style: normal; font-size: 11.5px; font-weight: 600; color: ${COLORS.navySoft}; }
         .appLado { scrollbar-width: none; -ms-overflow-style: none; }
         .appLado::-webkit-scrollbar { display: none; }
         .rowHover:hover { background: ${COLORS.paperSunken}; }
@@ -3812,6 +3872,7 @@ function AppPrincipal({ onSair, email }) {
         @media (max-width: 899px) {
           .soMovel { display: inline-flex !important; }
           .soPc { display: none !important; }
+          .navDica { display: none !important; }
           .appLado {
             position: fixed !important; left: 0; top: 0; bottom: 0; height: 100dvh !important; width: min(300px, 86vw) !important;
             z-index: 85 !important; transform: translateX(-104%); transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -4051,120 +4112,28 @@ function AppPrincipal({ onSair, email }) {
 
         {secoes.map((sec) => (
           <div key={sec.grupo}>
-            <div style={{ padding: "9px 16px 3px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>{sec.grupo}</div>
-            {sec.itens.map(({ key, label, icon: Icon, contador }) => {
-              const ativo = page === key;
-              return (
-                <button
-                  key={key}
-                  className="navItem press"
-                  onClick={() => setPage(key)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 9,
-                    width: "calc(100% - 16px)",
-                    margin: "0 8px",
-                    padding: "6px 9px",
-                    borderRadius: 7,
-                    border: "none",
-                    background: ativo ? COLORS.navyWash : "transparent",
-                    color: ativo ? COLORS.navySoft : COLORS.ink2,
-                    fontWeight: ativo ? 600 : 450,
-                    fontSize: 13.5,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <Icon size={15} />
-                  <span style={{ flex: 1 }}>{label}</span>
-                  {contador ? (
-                    <span style={{ fontSize: 11.5, fontWeight: 500, color: ativo ? COLORS.navySoft : COLORS.slate }}>{contador}</span>
-                  ) : null}
-                </button>
-              );
-            })}
+            <div className="navGrupo">{sec.grupo}</div>
+            {sec.itens.map(({ key, label, icon: Icon, contador }) => botaoNav({ k: key, ativo: page === key, onClick: () => setPage(key), Icon, label, contador }))}
           </div>
         ))}
 
-        <div style={{ padding: "9px 16px 3px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
-        <button
-          className="navItem press"
-          onClick={() => setListaAberta("__indice")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            width: "calc(100% - 16px)",
-            margin: "0 8px",
-            padding: "6px 9px",
-            borderRadius: 7,
-            border: "none",
-            background: "transparent",
-            color: COLORS.ink2,
-            fontWeight: 450,
-            fontSize: 13.5,
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <ShieldAlert size={15} />
-          <span>Todas as listas</span>
-        </button>
+        <div className="navGrupo">Configuração</div>
+        {botaoNav({ k: "listas", ativo: false, onClick: () => setListaAberta("__indice"), Icon: ShieldAlert, label: "Todas as listas" })}
         {eAdmin && (
           <>
-        <button
-          className="navItem press"
-          onClick={() => setPage("apagados")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            width: "calc(100% - 16px)",
-            margin: "0 8px",
-            padding: "6px 9px",
-            borderRadius: 7,
-            border: "none",
-            background: page === "apagados" ? COLORS.navyWash : "transparent",
-            color: page === "apagados" ? COLORS.navy : COLORS.ink2,
-            fontWeight: page === "apagados" ? 600 : 450,
-            fontSize: 13.5,
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <RotateCcw size={15} />
-          <span style={{ flex: 1 }}>Apagados</span>
-          {apagados.length > 0 && <span style={{ fontSize: 11.5, color: COLORS.slate }}>{apagados.length}</span>}
-        </button>
-        <button
-          className="navItem press"
-          onClick={() => setPage("copia")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            width: "calc(100% - 16px)",
-            margin: "0 8px",
-            padding: "6px 9px",
-            borderRadius: 7,
-            border: "none",
-            background: page === "copia" ? COLORS.navyWash : "transparent",
-            color: page === "copia" ? COLORS.navy : COLORS.ink2,
-            fontWeight: page === "copia" ? 600 : 450,
-            fontSize: 13.5,
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <HardDriveDownload size={15} />
-          <span style={{ flex: 1 }}>Cópia de segurança</span>
-          {copiaAtrasada && <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.warn }} />}
-        </button>
+            {botaoNav({ k: "apagados", ativo: page === "apagados", onClick: () => setPage("apagados"), Icon: RotateCcw, label: "Apagados", contador: apagados.length > 0 ? apagados.length : null })}
+            {botaoNav({ k: "copia", ativo: page === "copia", onClick: () => setPage("copia"), Icon: HardDriveDownload, label: "Cópia de segurança", extra: copiaAtrasada ? <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.warn }} /> : null })}
           </>
         )}
-
       </div>
+
+      {dicaNav && (
+        <div className="navDica naoImprimir" style={{ top: Math.max(8, dicaNav.top - 6) }}>
+          <b>{dicaNav.titulo}</b>
+          <p>{dicaNav.desc}</p>
+          {dicaNav.stat ? <i>{dicaNav.stat}</i> : null}
+        </div>
+      )}
 
       {/* ---------- conteúdo ---------- */}
       <div ref={conteudoRef} className="appConteudo" style={{ flex: 1, minWidth: 0, maxWidth: "100%", height: "100%", overflowX: "hidden", overflowY: "auto", display: "flex", flexDirection: "column" }}>
