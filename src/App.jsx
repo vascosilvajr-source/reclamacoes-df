@@ -4988,11 +4988,13 @@ function AppPrincipal({ onSair }) {
 
       {contactosAbertos && (
         <ContactosEscolas
-          escolas={options.schools || []}
+          escolas={(options.schools || []).filter((e) => !(options.estadoEscolas || {})[e]?.encerrada)}
           options={options}
           onFechar={() => setContactosAbertos(false)}
           onGuardar={(c) => {
-            persistOptions({ ...options, ...c });
+            // Escolas encerradas não aparecem na lista, mas os contactos delas guardam-se (para quando reabrirem).
+            const dasEncerradas = (m) => Object.fromEntries(Object.entries(m || {}).filter(([e]) => (options.estadoEscolas || {})[e]?.encerrada));
+            persistOptions({ ...options, ...c, emailsOperacionais: { ...dasEncerradas(options.emailsOperacionais), ...c.emailsOperacionais }, emailsCoordenadores: { ...dasEncerradas(options.emailsCoordenadores), ...c.emailsCoordenadores } });
             setContactosAbertos(false);
             notificar("Contactos das escolas guardados.");
           }}
