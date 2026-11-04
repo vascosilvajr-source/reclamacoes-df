@@ -83,8 +83,19 @@ function gruposLotacao(escola, nomesTurmas, espacos, capacidades, niveis) {
     grupos.push(g);
     grupoDe[t] = g;
   });
+  // Todos os treinos conjuntos (um por combinação de turmas em cada horário), mesmo que uma turma
+  // treine com turmas diferentes noutros dias (B1 + D1 e B1 + D2): cada um tem a sua lotação.
+  const sessoes = [
+    ...Object.values(conjuntos).map((c) => {
+      const chave = `grupo:${c.turmas.join(" + ")}`;
+      const propria = caps[`${escola}|${chave}`];
+      return { chave, turmas: c.turmas, cap: propria || Math.min(...c.turmas.map(capTurma)), propria: !!propria, horarios: c.n };
+    }),
+    ...grupos.filter((g) => g.sozinha),
+  ];
   return {
     grupos,
+    sessoes,
     grupoDe,
     // Parte da lotação do grupo que cabe a uma turma (para somas por escalão).
     parte: (t) => (grupoDe[t] ? grupoDe[t].cap / grupoDe[t].turmas.length : capTurma(t)),
@@ -4142,9 +4153,9 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
         </div>
         {aba === "turmas" ? (
           <>
-          {lot.grupos.some((g) => g.turmas.length > 1) && (
+          {lot.sessoes.some((g) => g.turmas.length > 1) && (
             <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 10, lineHeight: 1.5 }}>
-              As turmas e equipas que treinam no mesmo horário (aba Espaços) partilham a lotação: o número do grupo é para todas juntas, não para cada uma.
+              As turmas e equipas que treinam no mesmo horário (aba Espaços) partilham a lotação: o número do grupo é para todas juntas, não para cada uma. Se uma turma treina com turmas diferentes noutros dias, aparece em cada treino conjunto, cada um com a sua lotação.
             </div>
           )}
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -4158,9 +4169,9 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
               </tr>
             </thead>
             <tbody>
-              {lot.grupos
+              {lot.sessoes
                 .filter((g) => g.turmas.some((t) => ativos.some((a) => a.turma === t)))
-                .sort((x, y) => x.turmas[0].localeCompare(y.turmas[0], "pt", { numeric: true }))
+                .sort((x, y) => x.turmas[0].localeCompare(y.turmas[0], "pt", { numeric: true }) || x.chave.localeCompare(y.chave, "pt", { numeric: true }))
                 .map((g) => {
                   const atG = ativos.filter((a) => g.turmas.includes(a.turma));
                   const p = g.cap ? Math.round((atG.length / g.cap) * 100) : null;
@@ -4224,7 +4235,7 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
                       {g.turmas.map((t) => {
                         const at = ativos.filter((a) => a.turma === t);
                         return (
-                          <tr key={t}>
+                          <tr key={`${g.chave}|${t}`}>
                             <td style={{ ...td, paddingLeft: 22, color: COLORS.ink2 }}>{t}</td>
                             <td style={{ ...td, color: COLORS.slate }}>{escalaoDaTurma(t, niveis)}</td>
                             {contagem(at)}
