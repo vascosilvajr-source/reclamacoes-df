@@ -1,6 +1,5 @@
 // Animação de carregamento: a bola do emblema salta uma vez, pousa no sítio dela e o emblema abre-se
-// em círculo à volta; a barra corre por baixo. Há uma segunda versão (o emblema a acender de baixo para cima)
-// e cada carregamento mostra a que não saiu da última vez. Usada no arranque e na verificação da sessão.
+// em círculo à volta; a barra corre por baixo. Usada no arranque e na verificação da sessão.
 import { useEffect, useState } from "react";
 import { BOLA_DF, SIMBOLO_DF } from "./imagens";
 
@@ -37,34 +36,15 @@ const CSS = `
     100%   { opacity: 0; clip-path: circle(140px at 50% 65.4%); }
   }
   @keyframes cdfHalo { 0%,40% { opacity: 0; transform: scale(.5); } 44% { opacity: 1; transform: scale(1); } 62% { opacity: 0; transform: scale(3.2); } 100% { opacity: 0; } }
-  .cdf .acende { position: relative; width: 120px; margin: 25px 0 11px; }
-  .cdf .acende img { width: 100%; height: auto; display: block; }
-  .cdf .acende .cinza { filter: grayscale(1) brightness(.5); }
-  .cdf .acende .cor { position: absolute; inset: 0; animation: cdfEnche 3.2s ease-in-out infinite; }
-  .cdf .acende .cor img { filter: drop-shadow(0 0 24px rgba(240,138,75,.55)); }
-  @keyframes cdfEnche { 0% { clip-path: inset(100% 0 0 0); } 70%, 100% { clip-path: inset(0 0 0 0); } }
   @keyframes cdfCorre { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
   @media (prefers-reduced-motion: reduce) {
     .cdf .chao, .cdf .bola, .cdf .sombra, .cdf .halo, .cdf .prog i { animation: none; }
     .cdf .bola, .cdf .sombra, .cdf .chao, .cdf .halo { display: none; }
     .cdf .simb { animation: none; opacity: 1; clip-path: none; }
-    .cdf .acende .cor { animation: none; clip-path: none; }
   }
 `;
 
-// Alterna entre as duas versões: guarda a última no dispositivo.
-function escolherVersao() {
-  try {
-    const nova = localStorage.getItem("df-carregamento") === "bola" ? "acende" : "bola";
-    localStorage.setItem("df-carregamento", nova);
-    return nova;
-  } catch (e) {
-    return Math.random() < 0.5 ? "bola" : "acende";
-  }
-}
-
 export default function CarregamentoDF({ frases = FRASES }) {
-  const [versao] = useState(escolherVersao);
   const [i, setI] = useState(0);
   const [visivel, setVisivel] = useState(true);
   useEffect(() => {
@@ -80,24 +60,15 @@ export default function CarregamentoDF({ frases = FRASES }) {
   return (
     <div className="cdf">
       <style>{CSS}</style>
-      {versao === "bola" ? (
-        <div className="combo" aria-hidden="true">
-          <div className="chao" />
-          <div className="sombra" />
-          <div className="halo" />
-          <div className="simb">
-            <img src={SIMBOLO_DF} alt="" />
-          </div>
-          <div className="bola" />
+      <div className="combo" aria-hidden="true">
+        <div className="chao" />
+        <div className="sombra" />
+        <div className="halo" />
+        <div className="simb">
+          <img src={SIMBOLO_DF} alt="" />
         </div>
-      ) : (
-        <div className="acende" aria-hidden="true">
-          <img className="cinza" src={SIMBOLO_DF} alt="" />
-          <div className="cor">
-            <img src={SIMBOLO_DF} alt="" />
-          </div>
-        </div>
-      )}
+        <div className="bola" />
+      </div>
       <div className="prog" aria-hidden="true">
         <i />
       </div>
