@@ -3289,7 +3289,11 @@ function AppPrincipal({ onSair, email }) {
   const removeDesvinc = (id) => persistDesvinc(desvinculacoes.filter((v) => v.id !== id));
 
   const saveEspaco = (reg) => persistEspacos([...espacos, reg]);
-  const removeEspaco = (id) => persistEspacos(espacos.filter((s2) => s2.id !== id));
+  // Aceita um id ou uma lista de ids (apagar vários horários numa só gravação).
+  const removeEspaco = (id) => {
+    const ids = new Set(Array.isArray(id) ? id : [id]);
+    persistEspacos(espacos.filter((s2) => !ids.has(s2.id)));
+  };
   // Aceita também uma lista [{ id, campos }] para mudar vários horários numa só gravação.
   const updateEspaco = (id, campos) => {
     const mud = Array.isArray(id) ? Object.fromEntries(id.map((m) => [m.id, m.campos])) : { [id]: campos };

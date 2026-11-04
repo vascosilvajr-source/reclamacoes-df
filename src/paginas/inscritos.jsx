@@ -1986,6 +1986,19 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         <button className="press" onClick={() => setImportar(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
           <FileText size={14} /> Importar plano semanal
         </button>
+        {doEscola.length > 0 && (
+          <button
+            className="press semFoto"
+            onClick={() => {
+              const quem = modoRecinto ? `o recinto ${recintoSel}` : `${escola}${fRecinto ? ` · ${fRecinto}` : ""}`;
+              if (window.confirm(`Apagar os ${doEscola.length} horários de ${quem}? Depois podes importar o plano outra vez. Esta ação não se desfaz.`)) onRemove(doEscola.map((x) => x.id));
+            }}
+            title="Apaga todos os horários que estão à vista (escola e recinto escolhidos)"
+            style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6, color: COLORS.warn }}
+          >
+            <Trash2 size={14} /> Apagar todos ({doEscola.length})
+          </button>
+        )}
         {!aCriar && !modoRecinto && (
           <button className="press" onClick={() => setACriar(true)} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Plus size={14} /> Novo horário
