@@ -3,7 +3,7 @@ import { dbStorage, supabase } from "./supabaseClient";
 import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { detetarRiscos, idRecorrencia } from "./riscos";
-import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star } from "lucide-react";
+import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star, Moon, LogOut } from "lucide-react";
 import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, AvaliacoesPage, BibliotecaRespostas, CopiaSegurancaPage, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
 
 // Toda a gravação passa por aqui: guarda a última versão de cada chave para perceber
@@ -3734,6 +3734,8 @@ function AppPrincipal({ onSair }) {
         .spin { animation: spin 0.9s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .navItem:hover { background: ${COLORS.paperSunken}; }
+        .appLado { scrollbar-width: none; -ms-overflow-style: none; }
+        .appLado::-webkit-scrollbar { display: none; }
         .rowHover:hover { background: ${COLORS.paperSunken}; }
         select, input, textarea, button { font-family: inherit; }
         ::placeholder { color: ${COLORS.slate}; }
@@ -4026,17 +4028,17 @@ function AppPrincipal({ onSair }) {
           zIndex: 6,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px 16px" }}>
-          <img src={SIMBOLO_DF} alt="Dragon Force" style={{ height: 38, width: "auto", flex: "none" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "0 16px 14px" }}>
+          <img src={SIMBOLO_DF} alt="Dragon Force" style={{ height: 46, width: "auto", flex: "none" }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: 1.25 }}>Gestão da Qualidade</div>
-            <div style={{ fontSize: 11.5, color: COLORS.slate }}>Dragon Force</div>
+            <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.015em", lineHeight: 1.15, color: COLORS.ink }}>Gestão da Qualidade</div>
+            <div style={{ fontSize: 13.5, color: COLORS.slate, marginTop: 2 }}>Dragon Force</div>
           </div>
         </div>
 
         {secoes.map((sec) => (
           <div key={sec.grupo}>
-            <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>{sec.grupo}</div>
+            <div style={{ padding: "9px 16px 3px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>{sec.grupo}</div>
             {sec.itens.map(({ key, label, icon: Icon, contador }) => {
               const ativo = page === key;
               return (
@@ -4049,8 +4051,8 @@ function AppPrincipal({ onSair }) {
                     alignItems: "center",
                     gap: 9,
                     width: "calc(100% - 16px)",
-                    margin: "1px 8px",
-                    padding: "8px 9px",
+                    margin: "0 8px",
+                    padding: "6px 9px",
                     borderRadius: 7,
                     border: "none",
                     background: ativo ? COLORS.navyWash : "transparent",
@@ -4072,7 +4074,7 @@ function AppPrincipal({ onSair }) {
           </div>
         ))}
 
-        <div style={{ padding: "12px 16px 5px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
+        <div style={{ padding: "9px 16px 3px", fontSize: 11, fontWeight: 600, color: COLORS.slate }}>Configuração</div>
         <button
           className="navItem press"
           onClick={() => setListaAberta("__indice")}
@@ -4081,8 +4083,8 @@ function AppPrincipal({ onSair }) {
             alignItems: "center",
             gap: 9,
             width: "calc(100% - 16px)",
-            margin: "1px 8px",
-            padding: "8px 9px",
+            margin: "0 8px",
+            padding: "6px 9px",
             borderRadius: 7,
             border: "none",
             background: "transparent",
@@ -4104,8 +4106,8 @@ function AppPrincipal({ onSair }) {
             alignItems: "center",
             gap: 9,
             width: "calc(100% - 16px)",
-            margin: "1px 8px",
-            padding: "8px 9px",
+            margin: "0 8px",
+            padding: "6px 9px",
             borderRadius: 7,
             border: "none",
             background: page === "apagados" ? COLORS.navyWash : "transparent",
@@ -4128,8 +4130,8 @@ function AppPrincipal({ onSair }) {
             alignItems: "center",
             gap: 9,
             width: "calc(100% - 16px)",
-            margin: "1px 8px",
-            padding: "8px 9px",
+            margin: "0 8px",
+            padding: "6px 9px",
             borderRadius: 7,
             border: "none",
             background: page === "copia" ? COLORS.navyWash : "transparent",
@@ -4145,44 +4147,6 @@ function AppPrincipal({ onSair }) {
           {copiaAtrasada && <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.warn }} />}
         </button>
 
-        {/* alternador de tema */}
-        <div style={{ marginTop: "auto", padding: "12px 16px 0", borderTop: `1px solid ${COLORS.rule}` }}>
-          <div style={{ display: "flex", background: COLORS.segTrack, borderRadius: 9, padding: 2, gap: 2 }}>
-            {[
-              ["light", "Claro"],
-              ["dark", "Escuro"],
-            ].map(([t, l]) => (
-              <button
-                key={t}
-                className="press"
-                onClick={() => setTema(t)}
-                style={{
-                  flex: 1,
-                  background: tema === t ? COLORS.paperRaised : "transparent",
-                  border: "none",
-                  borderRadius: 7,
-                  padding: "5px 4px",
-                  fontSize: 11.5,
-                  fontWeight: tema === t ? 600 : 500,
-                  color: tema === t ? COLORS.ink : COLORS.ink2,
-                  cursor: "pointer",
-                  boxShadow: tema === t ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
-                }}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-          {onSair && (
-            <button
-              onClick={onSair}
-              className="navItem"
-              style={{ width: "100%", marginTop: 8, background: "transparent", border: "none", borderRadius: 7, padding: "6px 8px", fontSize: 12, color: COLORS.ink2, cursor: "pointer", textAlign: "left" }}
-            >
-              Sair
-            </button>
-          )}
-        </div>
       </div>
 
       {/* ---------- conteúdo ---------- */}
@@ -4278,6 +4242,14 @@ function AppPrincipal({ onSair }) {
                 }}
               >
                 <Plus size={15} /> <span className="soPc">Nova reclamação</span>
+              </button>
+            )}
+            <button className="press" onClick={() => setTema(tema === "dark" ? "light" : "dark")} title={tema === "dark" ? "Passar a tema claro" : "Passar a tema escuro"} aria-label="Mudar tema" style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", borderRadius: 8, padding: 7, color: COLORS.ink2, cursor: "pointer" }}>
+              {tema === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+            {onSair && (
+              <button className="press" onClick={onSair} title="Sair" aria-label="Sair" style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", borderRadius: 8, padding: 7, color: COLORS.ink2, cursor: "pointer" }}>
+                <LogOut size={17} />
               </button>
             )}
           </div>
