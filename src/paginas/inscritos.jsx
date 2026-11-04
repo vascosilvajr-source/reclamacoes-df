@@ -1723,6 +1723,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const [verRecintos, setVerRecintos] = useState(false);
   const [recintoNovo, setRecintoNovo] = useState("");
   const [editRec, setEditRec] = useState(null);
+  const [addT, setAddT] = useState(null);
   const [semAlunosTodas, setSemAlunosTodas] = useState(false);
   const [verVistosSA, setVerVistosSA] = useState(false);
   const recintosUsados = [...new Set(espacos.map((s) => s.recinto).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt"));
@@ -2338,30 +2339,71 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                   </>
                                 ) : null}
                                 <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5, fontSize: 11, color: COLORS.ink2 }}>
-                                  <button onClick={() => onUpdate(b.id, { treinadores: Math.max(1, nT - 1) })} disabled={nT <= 1} aria-label="Menos um treinador" style={{ ...iconBtnStyle, padding: "0 5px", fontSize: 12, lineHeight: "16px", border: `1px solid ${COLORS.rule}`, borderRadius: 4, opacity: nT <= 1 ? 0.4 : 1 }}>
+                                  <button onClick={() => onUpdate(b.id, { treinadores: Math.max(1, nT - 1) })} disabled={nT <= 1 || sigT.length > 0} aria-label="Menos um treinador" title={sigT.length ? "Tira uma sigla (×) para mudar o número" : undefined} style={{ ...iconBtnStyle, padding: "0 5px", fontSize: 12, lineHeight: "16px", border: `1px solid ${COLORS.rule}`, borderRadius: 4, opacity: nT <= 1 || sigT.length ? 0.4 : 1 }}>
                                     −
                                   </button>
                                   <span style={{ fontVariantNumeric: "tabular-nums" }}>
                                     {nT} {nT === 1 ? "treinador" : "treinadores"}
                                   </span>
-                                  {sigT.map((sg, ix) => (
-                                    <SiglaTreinador key={`${sg}${ix}`} s={sg} cor={((normalizacao && normalizacao.treinadores) || {})[sg]?.cor} />
-                                  ))}
-                                  <input
-                                    key={`${b.id}|${sigT.join(",")}`}
-                                    defaultValue={sigT.join(", ")}
-                                    placeholder="siglas"
-                                    title="Siglas dos treinadores, separadas por vírgula (ex.: JM, RP). O número de treinadores passa a ser o das siglas."
-                                    aria-label="Siglas dos treinadores"
-                                    onBlur={(e) => {
-                                      const l = e.target.value.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
-                                      if (l.join(",") !== sigT.join(",")) onUpdate(b.id, { siglasTreinadores: l, treinadores: Math.max(1, l.length || nT) });
-                                    }}
-                                    style={{ ...inputStyle, width: 86, padding: "1px 5px", fontSize: 11, textTransform: "uppercase" }}
-                                  />
-                                  <button onClick={() => onUpdate(b.id, { treinadores: nT + 1 })} aria-label="Mais um treinador" style={{ ...iconBtnStyle, padding: "0 5px", fontSize: 12, lineHeight: "16px", border: `1px solid ${COLORS.rule}`, borderRadius: 4 }}>
+                                  <button onClick={() => onUpdate(b.id, { treinadores: nT + 1 })} disabled={sigT.length > 0} aria-label="Mais um treinador" title={sigT.length ? "Acrescenta uma sigla com + sigla" : undefined} style={{ ...iconBtnStyle, padding: "0 5px", fontSize: 12, lineHeight: "16px", border: `1px solid ${COLORS.rule}`, borderRadius: 4, opacity: sigT.length ? 0.4 : 1 }}>
                                     +
                                   </button>
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                                  {sigT.map((sg, ix) => (
+                                    <span key={`${sg}${ix}`} style={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+                                      <SiglaTreinador s={sg} cor={coresT[sg]} />
+                                      <button
+                                        onClick={() => {
+                                          const l = sigT.filter((_, j) => j !== ix);
+                                          onUpdate(b.id, { siglasTreinadores: l, treinadores: Math.max(1, l.length) });
+                                        }}
+                                        aria-label={`Tirar ${sg}`}
+                                        title={`Tirar ${sg}`}
+                                        style={{ ...iconBtnStyle, padding: 0 }}
+                                      >
+                                        <X size={10} />
+                                      </button>
+                                    </span>
+                                  ))}
+                                  {addT && addT.id === b.id ? (
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                      <input
+                                        autoFocus
+                                        value={addT.sigla}
+                                        maxLength={4}
+                                        placeholder="sigla"
+                                        aria-label="Sigla do treinador"
+                                        onChange={(e) => {
+                                          const sg = e.target.value.toUpperCase().replace(/[^A-ZÇ]/g, "");
+                                          setAddT({ ...addT, sigla: sg, cor: coresT[sg] || addT.cor });
+                                        }}
+                                        style={{ ...inputStyle, width: 52, padding: "1px 5px", fontSize: 11, textTransform: "uppercase" }}
+                                      />
+                                      <input type="color" value={/^#[0-9a-f]{6}$/i.test(addT.cor || "") ? addT.cor : "#c5d9f1"} onChange={(e) => setAddT({ ...addT, cor: e.target.value })} aria-label="Cor do treinador" style={{ width: 22, height: 18, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
+                                      <button
+                                        disabled={addT.sigla.length < 2}
+                                        onClick={() => {
+                                          const l = sigT.includes(addT.sigla) ? sigT : [...sigT, addT.sigla];
+                                          onUpdate(b.id, { siglasTreinadores: l, treinadores: Math.max(l.length, sigT.length ? 0 : nT) });
+                                          const cor = /^#[0-9a-f]{6}$/i.test(addT.cor || "") ? addT.cor : coresT[addT.sigla] || "#c5d9f1";
+                                          if (cor !== coresT[addT.sigla]) onGuardarNormalizacao({ ...(normalizacao || {}), treinadores: { ...((normalizacao || {}).treinadores || {}), [addT.sigla]: { ...(((normalizacao || {}).treinadores || {})[addT.sigla] || {}), cor } } });
+                                          setAddT(null);
+                                        }}
+                                        aria-label="Guardar treinador"
+                                        style={{ ...iconBtnStyle, padding: 1, opacity: addT.sigla.length < 2 ? 0.4 : 1 }}
+                                      >
+                                        <Check size={13} />
+                                      </button>
+                                      <button onClick={() => setAddT(null)} aria-label="Cancelar" style={{ ...iconBtnStyle, padding: 1 }}>
+                                        <X size={12} />
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <button onClick={() => setAddT({ id: b.id, sigla: "", cor: "" })} className="semFoto" style={{ ...linkBtnStyle, marginTop: 0, fontSize: 10.5 }}>
+                                      + sigla
+                                    </button>
+                                  )}
                                 </div>
                                 {g.semRegisto.length > 0 && <div style={{ fontSize: 11, color: COLORS.warn }}>sem alunos importados: {g.semRegisto.join(", ")}</div>}
                               </div>
