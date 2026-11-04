@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { dbStorage, supabase } from "./supabaseClient";
 import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
+import CarregamentoDF from "./carregamento.jsx";
 import { detetarRiscos, idRecorrencia } from "./riscos";
 import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star, Moon, LogOut, UserCog } from "lucide-react";
 import { RecursosHumanosPage } from "./nucleo.jsx";
@@ -4082,7 +4083,6 @@ function AppPrincipal({ onSair, email }) {
           transition: opacity 500ms ease;
         }
         .splashOverlay.sair { animation: splashSai 500ms ease forwards; }
-        .splashOverlay img { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(240,138,75,0.4)); }
         .splashChama { transform-origin: center bottom; animation: splashChama 2s ease-in-out infinite; }
         .splashTexto { font-size: 12px; color: #8FA3BF; letter-spacing: 0.14em; text-transform: uppercase; animation: splashTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
@@ -4094,8 +4094,7 @@ function AppPrincipal({ onSair, email }) {
       {/* ---- splash enquanto os dados carregam do Supabase ---- */}
       {loading && (
         <div className="splashOverlay naoImprimir" aria-live="polite" aria-label="A carregar dados…">
-          <img src={SIMBOLO_DF} alt="" style={{ width: 96, height: "auto" }} />
-          <span className="splashTexto">A carregar…</span>
+          <CarregamentoDF />
         </div>
       )}
 
@@ -5194,8 +5193,7 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
         <div className="entradaSub">Dragon Force · acesso reservado</div>
         {aVerificar ? (
           <div className="dfLoading" aria-label="A verificar sessão…">
-            <img src={SIMBOLO_DF} alt="" style={{ width: 92, height: "auto" }} />
-            <span className="dfCarregando">A carregar…</span>
+            <CarregamentoDF frases={["A verificar a sessão…"]} />
           </div>
         ) : (
           <form className="entradaForm" onSubmit={entrar}>
