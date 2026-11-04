@@ -611,6 +611,20 @@ export function PainelEmailsEscolas({ op, escolas }) {
           Contactos das escolas
         </button>
         {pendente && <span style={{ fontSize: 12.5, color: COLORS.warn, fontWeight: 600 }}>Pedido às {quando(pedidoEm)} · sai em poucos minutos</span>}
+        {[["operacional", "emailsOperacionais", comOp, "operacionais"], ["coordenador", "emailsCoordenadores", comCt, "coordenadores técnicos"]].map(([papel, chave, n, rot]) => (
+          <button
+            key={papel}
+            disabled={!n}
+            title={`Envia só aos ${rot} (${n} ${n === 1 ? "escola" : "escolas"})`}
+            onClick={() => {
+              if (!window.confirm(`Enviar o e-mail a todos os ${rot} (${n} ${n === 1 ? "escola" : "escolas"})?`)) return;
+              op.onPedirEnvioA(escolas.filter((e) => ((op.contactos[chave] || {})[e] || []).length).map((e) => ({ papel, escola: e })), null, !!pendente);
+            }}
+            style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: n ? 1 : 0.5 }}
+          >
+            Enviar só a {rot}
+          </button>
+        ))}
         <button onClick={() => op.onPedirEnvio()} disabled={!comOp && !comCt && !comGeral} className="press" style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, opacity: comOp || comCt || comGeral ? 1 : 0.5 }}>
           Enviar agora a todos
         </button>
