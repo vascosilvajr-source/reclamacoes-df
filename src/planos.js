@@ -157,14 +157,15 @@ export function lerPlanoSemanal(L) {
         .map((l) => l.t)
         .join(" ");
       // Treinadores: as siglas (2 letras) à esquerda do nome, na mesma linha do plano.
-      const siglas = new Set(corpo.filter((l) => /^[A-ZÇ]{2}$/.test(l.t) && dia(l.x0) === d && l.x1 <= e.x0 + 1 && l.y0 >= e.y0 - 6 && l.y0 < Math.min(proxima(e), e.y0 + 14)).map((l) => `${l.t}@${Math.round(l.x0)}`));
+      const siglasL = corpo.filter((l) => /^[A-ZÇ]{2}$/.test(l.t) && dia(l.x0) === d && l.x1 <= e.x0 + 1 && l.y0 >= e.y0 - 6 && l.y0 < Math.min(proxima(e), e.y0 + 14));
+      const siglas = new Set(siglasL.map((l) => `${l.t}@${Math.round(l.x0)}`));
       // Hora escrita no próprio nome ("SUB 11 (18H10)") manda sobre a do bloco.
       const noNome = e.t.match(/\((\d{1,2}[Hh:]\d{2})\)/);
       if (noNome) {
         hora = noNome[1];
         origem = "linha";
       }
-      treinos.push({ treinadores: siglas.size, dia: DIAS_PLANO[d], hora: normalizarHora(hora), horaIncerta: !hora || (origem === "bloco" && /^SUB/i.test(e.t) && !/^TURMAS$/i.test(sec)), secao: titulo1(sec), nome: e.t.replace(/\s+/g, " ").trim(), local });
+      treinos.push({ treinadores: siglas.size, siglas: siglasL.slice().sort((a, b) => a.x0 - b.x0).map((l) => l.t), dia: DIAS_PLANO[d], hora: normalizarHora(hora), horaIncerta: !hora || (origem === "bloco" && /^SUB/i.test(e.t) && !/^TURMAS$/i.test(sec)), secao: titulo1(sec), nome: e.t.replace(/\s+/g, " ").trim(), local });
     });
   // Repetidos (mesma turma, dia e hora) ficam uma vez só.
   const vistos = new Set();

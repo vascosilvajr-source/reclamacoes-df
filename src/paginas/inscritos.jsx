@@ -1367,7 +1367,8 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
         recinto: recintoDe(l),
         dia: DIA_APP[l.dia],
         hora: horaDe(l, l.i),
-        treinadores: Math.max(1, l.treinadores || 1),
+        treinadores: Math.max(1, (l.siglas || []).length || l.treinadores || 1),
+        ...((l.siglas || []).length ? { siglasTreinadores: l.siglas } : {}),
         turmas: turmasDaLinha(l),
         turma: turmasDaLinha(l).join(" + "),
         ...(l.n.turmas.length ? {} : { semTurmaApp: true }),
@@ -1871,7 +1872,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                             </div>
                             <div style={{ color: g.estado === "acima" ? COLORS.danger : g.estado === "tolerado" ? COLORS.warn : COLORS.slate }}>
                               {g.limite ? `${g.total}/${g.limite}` : "sem lotação"}
-                              {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
+                              {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.siglasTreinadores || []).length ? b.siglasTreinadores.join(" ") : (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
                             </div>
                             {g.limite ? (
                               <div style={{ marginTop: 3 }}>
@@ -2222,6 +2223,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                         ) : (
                           blocos.map((b) => {
                             const nomes = turmasDoBloco(b);
+                            const sigT = b.siglasTreinadores || [];
                             const nT = b.treinadores || 1;
                             const g = grupo(nomes, nT, b.escola);
                             return (
@@ -2308,6 +2310,18 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                   <span style={{ fontVariantNumeric: "tabular-nums" }}>
                                     {nT} {nT === 1 ? "treinador" : "treinadores"}
                                   </span>
+                                  <input
+                                    key={`${b.id}|${sigT.join(",")}`}
+                                    defaultValue={sigT.join(", ")}
+                                    placeholder="siglas"
+                                    title="Siglas dos treinadores, separadas por vírgula (ex.: JM, RP). O número de treinadores passa a ser o das siglas."
+                                    aria-label="Siglas dos treinadores"
+                                    onBlur={(e) => {
+                                      const l = e.target.value.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+                                      if (l.join(",") !== sigT.join(",")) onUpdate(b.id, { siglasTreinadores: l, treinadores: Math.max(1, l.length || nT) });
+                                    }}
+                                    style={{ ...inputStyle, width: 86, padding: "1px 5px", fontSize: 11, textTransform: "uppercase" }}
+                                  />
                                   <button onClick={() => onUpdate(b.id, { treinadores: nT + 1 })} aria-label="Mais um treinador" style={{ ...iconBtnStyle, padding: "0 5px", fontSize: 12, lineHeight: "16px", border: `1px solid ${COLORS.rule}`, borderRadius: 4 }}>
                                     +
                                   </button>
