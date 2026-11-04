@@ -3985,7 +3985,7 @@ function AppPrincipal({ onSair }) {
           transition: opacity 500ms ease;
         }
         .splashOverlay.sair { animation: splashSai 500ms ease forwards; }
-        .splashOverlay img { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(33,150,201,0.45)); }
+        .splashOverlay img { animation: splashPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 22px rgba(240,138,75,0.4)); }
         .splashChama { transform-origin: center bottom; animation: splashChama 2s ease-in-out infinite; }
         .splashTexto { font-size: 12px; color: #8FA3BF; letter-spacing: 0.14em; text-transform: uppercase; animation: splashTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
@@ -3997,7 +3997,7 @@ function AppPrincipal({ onSair }) {
       {/* ---- splash enquanto os dados carregam do Supabase ---- */}
       {loading && (
         <div className="splashOverlay naoImprimir" aria-live="polite" aria-label="A carregar dados…">
-          <img src={SIMBOLO_DF} alt="" width="110" height="129" />
+          <img src={SIMBOLO_DF} alt="" style={{ width: 96, height: "auto" }} />
           <span className="splashTexto">A carregar…</span>
         </div>
       )}
@@ -4029,10 +4029,10 @@ function AppPrincipal({ onSair }) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "0 16px 14px" }}>
-          <img src={SIMBOLO_DF} alt="Dragon Force" style={{ height: 46, width: "auto", flex: "none" }} />
+          <img src={SIMBOLO_DF} alt="Dragon Force" style={{ height: 42, width: "auto", flex: "none" }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.015em", lineHeight: 1.15, color: COLORS.ink }}>Gestão da Qualidade</div>
-            <div style={{ fontSize: 13.5, color: COLORS.slate, marginTop: 2 }}>Dragon Force</div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.2, color: COLORS.ink }}>Gestão da Qualidade</div>
+            <div style={{ fontSize: 11.5, fontWeight: 400, color: COLORS.slate, marginTop: 2, opacity: 0.9 }}>Dragon Force</div>
           </div>
         </div>
 
@@ -5161,7 +5161,7 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
         @keyframes dfHalo { 0%, 100% { opacity: 0; r: 52px; } 50% { opacity: 0.18; r: 62px; } }
         @keyframes dfTexto { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
         .dfLoading { display: flex; flex-direction: column; align-items: center; gap: 18px; margin-top: 8px; }
-        .dfLoading img { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(33, 150, 201, 0.45)); }
+        .dfLoading img { animation: dfPulso 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(240, 138, 75, 0.4)); }
         .dfLoading .chama { transform-origin: center bottom; animation: dfChama 2s ease-in-out infinite; }
         .dfCarregando { font-size: 12px; color: #8FA3BF; letter-spacing: 0.12em; text-transform: uppercase; animation: dfTexto 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
@@ -5182,7 +5182,7 @@ function EcraEntrada({ onEntrar, aVerificar, aviso }) {
         <div className="entradaSub">Dragon Force · acesso reservado</div>
         {aVerificar ? (
           <div className="dfLoading" aria-label="A verificar sessão…">
-            <img src={SIMBOLO_DF} alt="" width="100" height="118" />
+            <img src={SIMBOLO_DF} alt="" style={{ width: 92, height: "auto" }} />
             <span className="dfCarregando">A carregar…</span>
           </div>
         ) : (
