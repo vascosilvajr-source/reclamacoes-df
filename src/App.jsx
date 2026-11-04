@@ -4027,22 +4027,9 @@ function AppPrincipal({ onSair }) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px 16px" }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: COLORS.navy,
-              display: "grid",
-              placeItems: "center",
-              flex: "none",
-              overflow: "hidden",
-            }}
-          >
-            <img src={LOGO_BRANCO} alt="Dragon Force" style={{ height: 24, width: "auto" }} />
-          </div>
+          <img src={SIMBOLO_DF} alt="Dragon Force" style={{ height: 38, width: "auto", flex: "none" }} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: 1.25 }}>Qualidade</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: 1.25 }}>Gestão da Qualidade</div>
             <div style={{ fontSize: 11.5, color: COLORS.slate }}>Dragon Force</div>
           </div>
         </div>
