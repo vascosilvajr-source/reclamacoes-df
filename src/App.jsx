@@ -1907,7 +1907,7 @@ function ApagadosPage({ lista, onRepor, onApagarDeVez }) {
             <div style={{ flex: "1 1 280px", minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.rotulo}</div>
               <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2 }}>
-                {LISTAS_COM_LIXO[a.chave] || a.chave} · apagado a {quando(a.em)} · sai daqui a {diasRestam(a.em)} {diasRestam(a.em) === 1 ? "dia" : "dias"}
+                {LISTAS_COM_LIXO[a.chave] || a.chave} · apagado{a.por ? ` por ${a.por}` : ""} a {quando(a.em)} · sai daqui a {diasRestam(a.em)} {diasRestam(a.em) === 1 ? "dia" : "dias"}
               </div>
             </div>
             <button className="press" onClick={() => onRepor([a])} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -1950,7 +1950,12 @@ const DEFAULT_CATEGORIAS_OCORRENCIA = [
   "Outra",
 ];
 
-function AppPrincipal({ onSair }) {
+// Conta de administração: só ela vê Apagados, Cópia de segurança e a associação de requisitos ISO.
+// (É uma divisão da interface; quem apaga fica registado em Apagados, com o e-mail.)
+const EMAIL_ADMIN = "df.auditoriainterna1@fcporto.pt";
+
+function AppPrincipal({ onSair, email }) {
+  const eAdmin = String(email || "").trim().toLowerCase() === EMAIL_ADMIN;
   // Depois de a app abrir, as outras páginas descarregam em segundo plano: mudar de página fica instantâneo.
   useEffect(() => {
     const t = setTimeout(precarregarPaginas, 2500);
@@ -2067,10 +2072,10 @@ function AppPrincipal({ onSair }) {
       }
       setUltimaCopia(reg);
       const dias = reg && reg.em ? (Date.now() - new Date(reg.em).getTime()) / 86400000 : null;
-      if (dias === null || dias > 7)
+      if (eAdmin && (dias === null || dias > 7))
         notificar(dias === null ? "Ainda não há cópia de segurança dos dados." : `A última cópia de segurança foi há ${Math.floor(dias)} dias.`, "aviso", 9000, { rotulo: "Fazer cópia", fn: () => setPage("copia") });
     })();
-  }, [loading, notificar]);
+  }, [loading, notificar, eAdmin]);
   // Escape fecha a janela que está por cima (o mesmo que clicar fora dela).
   useEffect(() => {
     const tecla = (e) => {
@@ -2331,7 +2336,7 @@ function AppPrincipal({ onSair }) {
   };
   definirAoRemoverRegistos((chave, rem) => {
     const em = new Date().toISOString();
-    const novos = rem.map((r, k) => ({ id: `ap_${Date.now().toString(36)}_${k}_${Math.random().toString(36).slice(2, 6)}`, chave, caminho: r.caminho, posicao: r.posicao, item: r.item, rotulo: rotuloApagado(chave, r.item, r.caminho), em }));
+    const novos = rem.map((r, k) => ({ id: `ap_${Date.now().toString(36)}_${k}_${Math.random().toString(36).slice(2, 6)}`, chave, caminho: r.caminho, posicao: r.posicao, item: r.item, rotulo: rotuloApagado(chave, r.item, r.caminho), em, por: String(email || "") }));
     guardarApagados(limparAntigos([...novos, ...apagadosRef.current]));
     const txt = novos.length === 1 ? `Apagado: ${novos[0].rotulo}` : `${novos.length} registos apagados (${LISTAS_COM_LIXO[chave]}).`;
     notificar(txt, "ok", 9000, { rotulo: "Desfazer", fn: () => reporApagados(novos) });
@@ -4098,6 +4103,8 @@ function AppPrincipal({ onSair }) {
           <ShieldAlert size={15} />
           <span>Todas as listas</span>
         </button>
+        {eAdmin && (
+          <>
         <button
           className="navItem press"
           onClick={() => setPage("apagados")}
@@ -4146,6 +4153,8 @@ function AppPrincipal({ onSair }) {
           <span style={{ flex: 1 }}>Cópia de segurança</span>
           {copiaAtrasada && <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.warn }} />}
         </button>
+          </>
+        )}
 
       </div>
 
@@ -4267,7 +4276,7 @@ function AppPrincipal({ onSair }) {
             }}
             onAreas={() => setAreasAud(true)}
             onPreencher={() => setPreencherAud(true)}
-            onIso={() => setIsoAud(true)}
+            onIso={eAdmin ? () => setIsoAud(true) : undefined}
             onOpenAudit={(a) => setViewingAudit(a)}
             schoolOptions={options.schools}
             areaOptions={options.auditAreas}
@@ -4361,7 +4370,7 @@ function AppPrincipal({ onSair }) {
           <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "formacao" ? (
           <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} />
-        ) : page === "copia" ? (
+        ) : (page === "copia" || page === "apagados") && !eAdmin ? null : page === "copia" ? (
           <CopiaSegurancaPage ultima={ultimaCopia} onFeita={setUltimaCopia} notificar={notificar} />
         ) : page === "apagados" ? (
           <ApagadosPage lista={apagados} onRepor={reporApagados} onApagarDeVez={(id) => guardarApagados(apagadosRef.current.filter((a) => a.id !== id))} />
@@ -5320,7 +5329,7 @@ export default function App() {
   const mostrarEntrada = !sessao || cortina;
   return (
     <>
-      {sessao && <AppPrincipal onSair={sair} />}
+      {sessao && <AppPrincipal onSair={sair} email={sessao.user && sessao.user.email} />}
       {mostrarEntrada && (
         <div className={sessao && aDesvanecer ? "entradaSaida" : undefined}>
           <EcraEntrada aVerificar={sessao === undefined || cortina === "verificar"} aviso={avisoEntrada} onEntrar={(email, password) => { setAvisoEntrada(""); gravarLS("df-ultima-atividade", String(Date.now())); return supabase.auth.signInWithPassword({ email, password }); }} />
