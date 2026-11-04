@@ -1234,6 +1234,17 @@ const horaFmt = (h) => {
   return m ? `${String(Number(m[1])).padStart(2, "0")}:${m[2] || "00"}` : String(h || "");
 };
 
+// Sigla de um treinador com a cor que tem no plano (o texto vira claro ou escuro conforme o fundo).
+function SiglaTreinador({ s, cor }) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(cor || "");
+  const lum = m ? (0.299 * parseInt(m[1].slice(0, 2), 16) + 0.587 * parseInt(m[1].slice(2, 4), 16) + 0.114 * parseInt(m[1].slice(4, 6), 16)) / 255 : 1;
+  return (
+    <span style={{ display: "inline-block", padding: "0 5px", borderRadius: 4, fontSize: 10.5, fontWeight: 700, lineHeight: "16px", background: m ? `#${m[1]}` : COLORS.paperSunken, color: lum > 0.6 ? "#0F1B2D" : "#fff", border: m ? "none" : `1px solid ${COLORS.rule}` }}>
+      {s}
+    </span>
+  );
+}
+
 // ---------- Importar o plano semanal (PDF DFF.013) para os Espaços ----------
 // Lê o PDF, propõe a correspondência de cada turma/equipa do plano com as turmas da app
 // e deixa corrigir tudo antes de guardar. As correções ficam guardadas para a semana seguinte.
@@ -1337,7 +1348,9 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
   const incluidas = linhas.filter((l) => l.n && l.n.incluir && !(l.dia === "Sábado" && /competi|sele/i.test(l.secao)));
   const semTurmas = [...new Set(incluidas.filter((l) => !l.n.turmas.length).map((l) => l.nome))];
   const incertas = linhas.filter((l) => l.n && l.n.incluir && l.horaIncerta);
-  const nomesUnicos = Object.keys(nomes).map((k) => ({ k, ...nomes[k], exemplo: linhas.find((l) => l.k === k), dias: [...new Set(linhas.filter((l) => l.k === k).map((l) => DIA_APP[l.dia].slice(0, 3)))] }));
+  const nomesUnicos = Object.keys(nomes).map((k) => ({ k, ...nomes[k], exemplo: linhas.find((l) => l.k === k), dias: [...new Set(linhas.filter((l) => l.k === k).map((l) => DIA_APP[l.dia].slice(0, 3)))], siglas: [...new Set(linhas.filter((l) => l.k === k).flatMap((l) => l.siglas || []))] }));
+  // Cores dos treinadores: as que já tinhas (corrigidas por ti) mandam sobre as do plano.
+  const coresTreinadores = Object.fromEntries(Object.entries({ ...((plano && plano.coresTreinadores) || {}), ...Object.fromEntries(Object.entries(norm0.treinadores || {}).map(([k, v]) => [k, v.cor])) }));
   const porSecao = {};
   nomesUnicos.forEach((x) => (porSecao[x.exemplo.secao] = porSecao[x.exemplo.secao] || []).push(x));
 
@@ -1391,7 +1404,7 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
     Object.entries(nomes).forEach(([k, v]) => (nomesG[`${chavePlano(escola)}|${chavePlano(recinto)}|${k}`] = { escola: v.escola, turmas: v.turmas, ignorar: !v.incluir }));
     const locaisG = { ...(norm0.locais || {}) };
     Object.entries(locais).forEach(([l, r]) => r && (locaisG[chavePlano(l)] = r));
-    onGuardarNormalizacao({ ...norm0, nomes: nomesG, locais: locaisG, titulos: { ...(norm0.titulos || {}), [chavePlano(plano.titulo)]: { escola, recinto, recintos: [...new Set([...(((norm0.titulos || {})[chavePlano(plano.titulo)] || {}).recintos || []), recinto].filter(Boolean))] } } });
+    onGuardarNormalizacao({ ...norm0, nomes: nomesG, locais: locaisG, treinadores: Object.fromEntries(Object.entries(coresTreinadores).map(([k, cor]) => [k, { ...((norm0.treinadores || {})[k] || {}), cor }])), titulos: { ...(norm0.titulos || {}), [chavePlano(plano.titulo)]: { escola, recinto, recintos: [...new Set([...(((norm0.titulos || {})[chavePlano(plano.titulo)] || {}).recintos || []), recinto].filter(Boolean))] } } });
     onImportar(novos, substituir ? aSubstituir.map((s) => s.id) : []);
   };
 
@@ -1528,6 +1541,13 @@ function ImportarPlanoSemanal({ escolas, turmas, espacos, recintosUsados, normal
                           {x.dias.join(", ")}
                           {x.guardado ? " · correspondência guardada" : ""}
                         </div>
+                        {x.siglas.length > 0 && (
+                          <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 3 }}>
+                            {x.siglas.map((sg) => (
+                              <SiglaTreinador key={sg} s={sg} cor={coresTreinadores[sg]} />
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div style={{ fontSize: 11.5, color: COLORS.slate, fontVariantNumeric: "tabular-nums" }}>{x.turmas.length ? `${total} alunos` : ""}</div>
                       <select value={x.escola} onChange={(e) => mudaNome(x.k, { escola: e.target.value, turmas: sugerirTurmasApp(x.exemplo.nome, turmasDe(e.target.value), recinto) })} style={sel} aria-label="Escola das turmas">
@@ -1734,6 +1754,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const listaTurmas = Object.values(porTurma).sort((a, b) => ordemTurma(niveis)(a.turma, b.turma));
   const recintosDaEscola = [...new Set(espacos.filter((s) => s.escola === escola).map((s) => s.recinto).filter(Boolean))];
   const doEscola = modoRecinto ? espacos.filter((s) => s.recinto === recintoSel) : espacos.filter((s) => s.escola === escola && (!fRecinto || (s.recinto || "") === fRecinto));
+  const siglasUsadas = [...new Set(doEscola.flatMap((b) => b.siglasTreinadores || []))].sort();
   // Linhas do mapa: as horas com treinos nesta escola.
   const horas = [...new Set(doEscola.map((s) => horaFmt(s.hora)))].sort();
   // Lista curta: das 15:00 às 21:00 de 15 em 15 minutos, mais as horas que esta escola já usa (ex.: 18:50, sábados de manhã).
@@ -1759,6 +1780,7 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   // Turmas/equipas que estão nos horários (planos semanais) mas sem alunos na app:
   // pista para alunos inscritos na turma errada. Confirmar com cada escola.
   const vistosSemAlunos = (normalizacao && normalizacao.semAlunosVistos) || {};
+  const coresT = Object.fromEntries(Object.entries((normalizacao && normalizacao.treinadores) || {}).map(([k, v]) => [k, v.cor]));
   const escolasSemAlunos = semAlunosTodas ? [...new Set(espacos.map((s) => s.escola))] : modoRecinto ? [...new Set(doEscola.map((s) => s.escola))] : [escola];
   const semAlunos = (() => {
     const out = {};
@@ -1962,6 +1984,18 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
           </button>
         )}
       </div>
+
+      {siglasUsadas.length > 0 && (
+        <div className="semFoto" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "0 0 10px", fontSize: 12, color: COLORS.slate }}>
+          <span>Treinadores:</span>
+          {siglasUsadas.map((sg) => (
+            <label key={sg} style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Muda a cor desta sigla">
+              <SiglaTreinador s={sg} cor={coresT[sg]} />
+              <input type="color" value={/^#[0-9a-f]{6}$/i.test(coresT[sg] || "") ? coresT[sg] : "#cccccc"} onChange={(e) => onGuardarNormalizacao({ ...(normalizacao || {}), treinadores: { ...((normalizacao || {}).treinadores || {}), [sg]: { ...(((normalizacao || {}).treinadores || {})[sg] || {}), cor: e.target.value } } })} aria-label={`Cor de ${sg}`} style={{ width: 22, height: 18, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
+            </label>
+          ))}
+        </div>
+      )}
 
       {importar && (
         <ImportarPlanoSemanal
@@ -2310,6 +2344,9 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                   <span style={{ fontVariantNumeric: "tabular-nums" }}>
                                     {nT} {nT === 1 ? "treinador" : "treinadores"}
                                   </span>
+                                  {sigT.map((sg, ix) => (
+                                    <SiglaTreinador key={`${sg}${ix}`} s={sg} cor={((normalizacao && normalizacao.treinadores) || {})[sg]?.cor} />
+                                  ))}
                                   <input
                                     key={`${b.id}|${sigT.join(",")}`}
                                     defaultValue={sigT.join(", ")}

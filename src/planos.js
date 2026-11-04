@@ -29,15 +29,100 @@ export async function linhasDoPdf(dados) {
   const pg = await doc.getPage(1);
   const H = pg.getViewport({ scale: 1 }).height;
   const tc = await pg.getTextContent();
-  return linhasDeItens(tc.items, H);
+  // Cor de fundo das células (os treinadores têm cada um a sua cor no plano). Se falhar, segue sem cores.
+  let rects = [];
+  try {
+    rects = await retangulosDaPagina(pg, pdfjs.OPS, H);
+  } catch (e) {
+    rects = [];
+  }
+  return linhasDeItens(tc.items, H, rects);
 }
-export function linhasDeItens(items, H) {
+
+// Retângulos preenchidos da página (x0, x1, y0, y1 como no papel, y a crescer para baixo) com a cor, em #rrggbb.
+async function retangulosDaPagina(pg, O, H) {
+  const ol = await pg.getOperatorList();
+  const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+  const hex = (a) => `#${Array.from(a).map((x) => Number(x).toString(16).padStart(2, "0")).join("")}`;
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const pilha = [];
+  let fill = "#000000";
+  let caixas = [];
+  const rects = [];
+  for (let k = 0; k < ol.fnArray.length; k++) {
+    const f = ol.fnArray[k];
+    const a = ol.argsArray[k];
+    if (f === O.save) pilha.push([ctm.slice(), fill]);
+    else if (f === O.restore) {
+      const s = pilha.pop();
+      if (s) [ctm, fill] = s;
+    } else if (f === O.transform) ctm = mul(ctm, a);
+    else if (f === O.setFillRGBColor) fill = hex(a);
+    else if (f === O.constructPath) {
+      const ops = a[0];
+      const co = a[1];
+      let ci = 0;
+      let sub = [];
+      caixas = [];
+      const fecha = () => {
+        if (sub.length >= 3) {
+          const xs = sub.map((q) => q[0]);
+          const ys = sub.map((q) => q[1]);
+          caixas.push([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+        }
+        sub = [];
+      };
+      for (const op of ops) {
+        if (op === O.moveTo) {
+          fecha();
+          sub.push([co[ci], co[ci + 1]]);
+          ci += 2;
+        } else if (op === O.lineTo) {
+          sub.push([co[ci], co[ci + 1]]);
+          ci += 2;
+        } else if (op === O.curveTo) ci += 6;
+        else if (op === O.curveTo2 || op === O.curveTo3) ci += 4;
+        else if (op === O.rectangle) {
+          caixas.push([co[ci], co[ci + 1], co[ci] + co[ci + 2], co[ci + 1] + co[ci + 3]]);
+          ci += 4;
+        } else if (op === O.closePath) fecha();
+      }
+      fecha();
+    } else if (f === O.fill || f === O.eoFill || f === O.fillStroke) {
+      caixas.forEach(([bx0, by0, bx1, by1]) => {
+        const p = [[bx0, by0], [bx1, by1]].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]]);
+        rects.push({ x0: Math.min(p[0][0], p[1][0]), x1: Math.max(p[0][0], p[1][0]), y0: H - Math.max(p[0][1], p[1][1]), y1: H - Math.min(p[0][1], p[1][1]), c: fill });
+      });
+      caixas = [];
+    }
+  }
+  return rects;
+}
+// Cor da célula mais pequena que contém o ponto (null se não houver).
+function fundoEm(rects, x, y) {
+  let melhor = null;
+  let area = Infinity;
+  rects.forEach((r) => {
+    if (x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) {
+      const a = (r.x1 - r.x0) * (r.y1 - r.y0);
+      if (a < area) {
+        area = a;
+        melhor = r.c;
+      }
+    }
+  });
+  return melhor;
+}
+export function linhasDeItens(items, H, rects = []) {
   const itens = items
     .filter((i) => i.str && i.str.trim() && Math.abs(i.transform[1]) < 0.01)
     .map((i) => {
       const h = Math.abs(i.transform[3]) || i.height || 4;
       const base = H - i.transform[5];
-      return { x0: i.transform[4], x1: i.transform[4] + i.width, y0: base - h, y1: base + h * 0.2, h, t: i.str.replace(/\s+/g, " ").trim() };
+      const t = i.str.replace(/\s+/g, " ").trim();
+      const o = { x0: i.transform[4], x1: i.transform[4] + i.width, y0: base - h, y1: base + h * 0.2, h, t };
+      if (rects.length && /^[A-ZÇ]{2}$/.test(t)) o.fundo = fundoEm(rects, i.transform[4] + i.width / 2, base - h * 0.3);
+      return o;
     });
   return juntarLinhas(itens);
 }
@@ -53,6 +138,7 @@ function juntarLinhas(itens) {
       ult.x1 = Math.max(ult.x1, i.x1);
       ult.y0 = Math.min(ult.y0, i.y0);
       ult.h = Math.max(ult.h, i.h);
+      if (!ult.fundo && i.fundo) ult.fundo = i.fundo;
     } else out.push({ ...i });
   });
   return out;
@@ -137,6 +223,7 @@ export function lerPlanoSemanal(L) {
   const vert = grupos.filter((g) => g.length >= 4).map((g) => ({ t: g.map((c) => c.t).join(""), y0: g[0].y0, y1: g[g.length - 1].y1 }));
 
   const treinos = [];
+  const votosCor = {};
   [...ents]
     .sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0)
     .forEach((e) => {
@@ -159,6 +246,11 @@ export function lerPlanoSemanal(L) {
       // Treinadores: as siglas (2 letras) à esquerda do nome, na mesma linha do plano.
       const siglasL = corpo.filter((l) => /^[A-ZÇ]{2}$/.test(l.t) && dia(l.x0) === d && l.x1 <= e.x0 + 1 && l.y0 >= e.y0 - 6 && l.y0 < Math.min(proxima(e), e.y0 + 14));
       const siglas = new Set(siglasL.map((l) => `${l.t}@${Math.round(l.x0)}`));
+      siglasL.forEach((l) => {
+        if (!l.fundo || l.fundo === "#ffffff") return;
+        votosCor[l.t] = votosCor[l.t] || {};
+        votosCor[l.t][l.fundo] = (votosCor[l.t][l.fundo] || 0) + 1;
+      });
       // Hora escrita no próprio nome ("SUB 11 (18H10)") manda sobre a do bloco.
       const noNome = e.t.match(/\((\d{1,2}[Hh:]\d{2})\)/);
       if (noNome) {
@@ -175,7 +267,9 @@ export function lerPlanoSemanal(L) {
     vistos.add(k);
     return true;
   });
-  return { titulo, semana, ano, treinos: unicos };
+  // Cor de cada treinador no plano: a que mais se repete atrás da sigla.
+  const coresTreinadores = Object.fromEntries(Object.entries(votosCor).map(([sg, v]) => [sg, Object.entries(v).sort((a, b) => b[1] - a[1])[0][0]]));
+  return { titulo, semana, ano, treinos: unicos, coresTreinadores };
 }
 const titulo1 = (s) => {
   const t = String(s || "").trim();
