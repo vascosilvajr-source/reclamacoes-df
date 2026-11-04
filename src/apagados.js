@@ -25,6 +25,7 @@ export const LISTAS_COM_LIXO = {
   "reclamacoes:inqueritos-plano": "Cronograma de inquéritos",
   "reclamacoes:inqueritos-eventos": "Inquéritos",
   "reclamacoes:respostas-tipo": "Respostas-tipo",
+  "reclamacoes:rh": "Recursos humanos",
 };
 
 const temId = (x) => x && typeof x === "object" && !Array.isArray(x) && x.id !== undefined && x.id !== null;

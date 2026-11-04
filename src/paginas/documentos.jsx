@@ -5,19 +5,16 @@ import { supabase } from "../supabaseClient";
 import { lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "../sgq";
 import { Plus, X, AlertTriangle, Search, FileText, Printer, Paperclip, ExternalLink, Link2 } from "lucide-react";
 import { COLORS, StatCard, Vazio, fmt, iconBtnStyle, inputStyle, isoDe, labelStyle, linkBtnStyle, normChave, panelStyle, primaryBtnStyle, secondaryBtnStyle, segSGQ } from "../nucleo.jsx";
-import { JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, nomeComVersao, tdStyle, thStyle } from "../partilhado.jsx";
+import { BUCKET_DOCS, JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, ficheirosDoc, nomeComVersao, tdStyle, thStyle } from "../partilhado.jsx";
 
 // ======================= CONTROLO DOCUMENTAL =======================
 // ---------- ficheiros dos documentos: pasta privada no Supabase, só descarregados ao abrir ----------
-const BUCKET_DOCS = "documentos";
 const nomeFicheiroSeguro = (n) =>
   String(n || "ficheiro")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9._-]+/g, "_")
     .slice(-120);
-// Um documento pode ter vários ficheiros (ex.: ficha de inscrição + dados médicos).
-const ficheirosDoc = (d) => (d && Array.isArray(d.ficheiros) ? d.ficheiros : d && d.ficheiro && d.ficheiro.path ? [d.ficheiro] : []).filter((f) => f && f.path);
 const temAnexo = (d) => !!(ficheirosDoc(d).length || d.link);
 const urlLink = (l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`);
 async function abrirFicheiroDoc(f, notificar) {

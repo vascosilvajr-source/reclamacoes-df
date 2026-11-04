@@ -3,7 +3,9 @@ import { dbStorage, supabase } from "./supabaseClient";
 import { STORAGE_APAGADOS_KEY, LISTAS_COM_LIXO, registosRemovidos, aceitaRemocao, rotuloApagado, limparAntigos, reporEm, DIAS_APAGADOS } from "./apagados";
 import { LOGO_BRANCO, FOTO_ESTADIO, SIMBOLO_DF } from "./imagens";
 import { detetarRiscos, idRecorrencia } from "./riscos";
-import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star, Moon, LogOut } from "lucide-react";
+import { HardDriveDownload, Menu, Plus, X, Check, AlertTriangle, Clock, Search, Trash2, Pencil, ShieldAlert, LayoutGrid, BarChart3, Inbox, Play, ClipboardList, Scale, Mail, Sparkles, Users, MessageSquareText, FileText, Sun, Target, GraduationCap, RotateCcw, Star, Moon, LogOut, UserCog } from "lucide-react";
+import { RecursosHumanosPage } from "./nucleo.jsx";
+import { limparRH, porIntegrar } from "./rh";
 import { AnalysisDashboard, AreasConstatacoes, AssociarISO, AuditDetail, AuditForm, AuditsPage, AvaliacoesPage, BibliotecaRespostas, CopiaSegurancaPage, CANAL_META, COLORS, ComplaintDetail, ContactosEscolas, DEFAULT_CAUSAS_RAIZ, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, DEFAULT_REGRAS_ENVIO, DocumentosPage, EntryForm, EsqueletoPagina, FormacaoPage, HistoricoEmailsEscolas, ImportarAuditorias, InqueritosPage, InscritosPage, MOTIVOS_EXPERIENCIA_PADRAO, MOTIVO_META, ObjetivosPage, OcorrenciasPage, PainelEmailsEscolas, PreencherAreasCategorias, RelatorioEscolaPage, RiscosPage, SEVERITY_META, SanctionDetail, SanctionForm, SanctionsPage, Stamp, StatCard, Tag, Vazio, aplicarTema, balancoSemanal, capacidadeSugerida, classificarCrescimento, colorForLabel, contasEvento, dataAud, dataEnvioPlano, definirCausasAtuais, definirCurvaEpocaAnterior, epAntDe, epocaAud, epocaDaSemanaISO, epocaDe, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, linkBtnStyle, nomeCausa, nomeOcorrencia, normChave, panelStyle, panelTitle, precarregarPaginas, previsoesEscolas, primaryBtnStyle, satisfacaoDe, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaISO, semanaLabel, tokenize, turmasDoBloco } from "./nucleo.jsx";
 
 // Toda a gravação passa por aqui: guarda a última versão de cada chave para perceber
@@ -64,6 +66,7 @@ const STORAGE_AVALIACOES_KEY = "reclamacoes:avaliacoes";
 const STORAGE_OBJETIVOS_KEY = "reclamacoes:objetivos";
 const STORAGE_DOCUMENTOS_KEY = "reclamacoes:documentos";
 const STORAGE_FORMACAO_KEY = "reclamacoes:formacao";
+const STORAGE_RH_KEY = "reclamacoes:rh";
 const STORAGE_RADAR_KEY = "reclamacoes:radar";
 
 function startOfDay(d) {
@@ -2014,6 +2017,7 @@ function AppPrincipal({ onSair, email }) {
   const apagadosRef = useRef([]);
   const [ocorrencias, setOcorrencias] = useState([]);
   const [avaliacoes, setAvaliacoes] = useState({ itens: [], roster: {}, criteriosTecnica: [] });
+  const [rh, setRh] = useState({ colaboradores: [] });
   const [radar, setRadar] = useState(null);
   const [inqueritos, setInqueritos] = useState([]);
   const [notasRelatorio, setNotasRelatorio] = useState({});
@@ -2247,6 +2251,7 @@ function AppPrincipal({ onSair, email }) {
   const persistObjetivos = fazPersist(setObjetivos, STORAGE_OBJETIVOS_KEY, "o mapa de objetivos");
   const persistDocumentos = fazPersist(setDocumentos, STORAGE_DOCUMENTOS_KEY, "o controlo documental");
   const persistFormacao = fazPersist(setFormacao, STORAGE_FORMACAO_KEY, "o plano de formação");
+  const persistRh = fazPersist(setRh, STORAGE_RH_KEY, "os recursos humanos");
   const persistOcorrencias = fazPersist(setOcorrencias, STORAGE_OCORRENCIAS_KEY, "as ocorrências");
   const persistAvaliacoes = fazPersist(setAvaliacoes, STORAGE_AVALIACOES_KEY, "as avaliações");
   const guardarOcorrencia = (o) => persistOcorrencias(ocorrencias.some((x) => x.id === o.id) ? ocorrencias.map((x) => (x.id === o.id ? o : x)) : [...ocorrencias, o]);
@@ -2308,6 +2313,7 @@ function AppPrincipal({ onSair, email }) {
     [STORAGE_OBJETIVOS_KEY]: persistObjetivos,
     [STORAGE_DOCUMENTOS_KEY]: persistDocumentos,
     [STORAGE_FORMACAO_KEY]: persistFormacao,
+    [STORAGE_RH_KEY]: persistRh,
     [STORAGE_ESPACOS_KEY]: persistEspacos,
     [STORAGE_EVENTOS_KEY]: persistEventos,
     [STORAGE_DESISTENCIAS_KEY]: persistDesistencias,
@@ -2437,6 +2443,18 @@ function AppPrincipal({ onSair, email }) {
         [STORAGE_OBJETIVOS_KEY, setObjetivos],
         [STORAGE_DOCUMENTOS_KEY, setDocumentos],
         [STORAGE_FORMACAO_KEY, setFormacao],
+        [
+          STORAGE_RH_KEY,
+          (v) => {
+            // Saídas com mais de 2 anos saem (os impedidos ficam só com o mínimo). Não vai para Apagados.
+            const limpo = limparRH(v);
+            setRh(limpo || v);
+            if (limpo) {
+              ultimoGuardado[STORAGE_RH_KEY] = limpo;
+              dbStorage.set(STORAGE_RH_KEY, JSON.stringify(limpo)).catch((e) => console.error("Erro ao limpar RH:", e));
+            }
+          },
+        ],
         [STORAGE_APAGADOS_KEY, (v) => setApagados(limparAntigos(v))],
         [STORAGE_OCORRENCIAS_KEY, setOcorrencias],
         [STORAGE_AVALIACOES_KEY, setAvaliacoes],
@@ -3432,7 +3450,9 @@ function AppPrincipal({ onSair, email }) {
       : page === "documentos"
       ? "Controlo documental"
       : page === "formacao"
-      ? "Plano de formação"
+      ? "Integração e formação"
+      : page === "rh"
+      ? "Recursos humanos"
       : page === "apagados"
       ? "Apagados"
       : page === "copia"
@@ -3571,7 +3591,8 @@ function AppPrincipal({ onSair, email }) {
     { id: "p-riscos", grupo: "Ir para", titulo: "Riscos e oportunidades", icon: ShieldAlert, acao: () => setPage("riscos") },
     { id: "p-objetivos", grupo: "Ir para", titulo: "Mapa de objetivos", icon: Target, acao: () => setPage("objetivos") },
     { id: "p-documentos", grupo: "Ir para", titulo: "Controlo documental", icon: FileText, acao: () => setPage("documentos") },
-    { id: "p-formacao", grupo: "Ir para", titulo: "Plano de formação", icon: GraduationCap, acao: () => setPage("formacao") },
+    { id: "p-formacao", grupo: "Ir para", titulo: "Integração e formação", icon: GraduationCap, acao: () => setPage("formacao") },
+    { id: "p-rh", grupo: "Ir para", titulo: "Recursos humanos", icon: UserCog, acao: () => setPage("rh") },
     { id: "p-ocorrencias", grupo: "Ir para", titulo: "Ocorrências", icon: AlertTriangle, acao: () => setPage("ocorrencias") },
     { id: "p-avaliacoes", grupo: "Ir para", titulo: "Avaliações do staff", icon: Star, acao: () => setPage("avaliacoes") },
     { id: "p-emails", grupo: "Ir para", titulo: "E-mails às escolas", icon: Mail, acao: () => setPage("emails") },
@@ -3711,6 +3732,7 @@ function AppPrincipal({ onSair, email }) {
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
         { key: "ocorrencias", label: "Ocorrências", icon: AlertTriangle, contador: ocorrencias.filter((o) => (o.estado || "aberta") === "aberta").length || null },
         { key: "avaliacoes", label: "Avaliações do staff", icon: Star, contador: null },
+        { key: "rh", label: "Recursos humanos", icon: UserCog, contador: (rh.colaboradores || []).filter((c) => !c.saida).length || null },
         { key: "emails", label: "E-mails às escolas", icon: Mail, contador: null },
       ],
     },
@@ -3720,7 +3742,7 @@ function AppPrincipal({ onSair, email }) {
         { key: "riscos", label: "Riscos e oportunidades", icon: ShieldAlert, contador: avisosRiscos && avisosRiscos.n ? `${avisosRiscos.n} ⚠` : null },
         { key: "objetivos", label: "Objetivos", icon: Target, contador: null },
         { key: "documentos", label: "Controlo documental", icon: FileText, contador: (documentos.itens || []).length ? (documentos.itens || []).filter((d) => !d.obsoleto).length : null },
-        { key: "formacao", label: "Plano de formação", icon: GraduationCap, contador: null },
+        { key: "formacao", label: "Integração e formação", icon: GraduationCap, contador: porIntegrar(rh).length || null },
       ],
     },
     {
@@ -3743,7 +3765,8 @@ function AppPrincipal({ onSair, email }) {
     riscos: ["Riscos, oportunidades e avisos"],
     objetivos: ["Objetivos e metas da época"],
     documentos: ["Documentos e versões em vigor"],
-    formacao: ["Ações de formação"],
+    formacao: ["Integração do pessoal novo e plano de formação", porIntegrar(rh).length ? `${porIntegrar(rh).length} por integrar` : ""],
+    rh: ["Colaboradores, saídas e impedidos de voltar"],
     relatorio: ["Relatórios e PDFs"],
     listas: ["Escolas, temas, motivos e outras listas da app"],
     apagados: ["O que foi apagado, por quem, e repor (30 dias)"],
@@ -4266,6 +4289,7 @@ function AppPrincipal({ onSair, email }) {
           </>
         ) : page === "inscritos" ? (
           <InscritosPage
+            rh={rh}
             op={opEmails}
             inscritos={inscritosVista}
             turmasAlunos={turmasAlunos}
@@ -4346,7 +4370,9 @@ function AppPrincipal({ onSair, email }) {
         ) : page === "documentos" ? (
           <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "formacao" ? (
-          <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} />
+          <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} rh={rh} onGuardarRh={persistRh} documentos={documentos} />
+        ) : page === "rh" ? (
+          <RecursosHumanosPage dados={rh} escolas={(options.schools || []).filter((e) => !(options.estadoEscolas || {})[e]?.encerrada)} avaliacoes={avaliacoes} espacos={espacos} onGuardar={persistRh} notificar={notificar} />
         ) : (page === "copia" || page === "apagados") && !eAdmin ? null : page === "copia" ? (
           <CopiaSegurancaPage ultima={ultimaCopia} onFeita={setUltimaCopia} notificar={notificar} />
         ) : page === "apagados" ? (

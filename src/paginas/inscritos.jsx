@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { linhasDoPdf, lerPlanoSemanal, escolaDoTitulo, unidadesDoNome, sugerirTurmasApp, sufixoDoRecinto, chavePlano, SECAO_EXTRA, DIA_APP } from "../planos";
 import { imprimirBalanco } from "../foto";
+import { semHorario } from "../rh";
 import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAcompanhamento } from "../inscritosAtuais";
 import { LOGO_BRANCO } from "../imagens";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
@@ -1711,7 +1712,7 @@ function GerirRecintos({ espacos, recintos, normalizacao, onRenomear, onGuardarN
   );
 }
 
-function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacidades, regras, onSave, onUpdate, onRemove, onGerirLista, onGuardarRegras, normalizacao, onImportarPlano, onGuardarNormalizacao, onRenomearRecinto }) {
+function SecaoEspacos({ rh, escolas, turmas, niveis, espacos, listaEspacos, capacidades, regras, onSave, onUpdate, onRemove, onGerirLista, onGuardarRegras, normalizacao, onImportarPlano, onGuardarNormalizacao, onRenomearRecinto }) {
   const regrasT = regras && regras.length ? regras : DEFAULT_REGRAS_TREINADORES;
   // "escola" pode ser uma escola ou um recinto ("rec:Porto"), que junta os treinos de várias escolas no mesmo campo.
   const [escolaSel, setEscola] = useState(escolas[0] || "");
@@ -1756,6 +1757,8 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
   const recintosDaEscola = [...new Set(espacos.filter((s) => s.escola === escola).map((s) => s.recinto).filter(Boolean))];
   const doEscola = modoRecinto ? espacos.filter((s) => s.recinto === recintoSel) : espacos.filter((s) => s.escola === escola && (!fRecinto || (s.recinto || "") === fRecinto));
   const siglasUsadas = [...new Set(doEscola.flatMap((b) => b.siglasTreinadores || []))].sort();
+  // Treinadores dos Recursos humanos associados a esta escola que não estão em nenhum horário (pela sigla).
+  const semHorarioEsc = rh && escola ? semHorario(rh, espacos, escola) : [];
   // Linhas do mapa: as horas com treinos nesta escola.
   const horas = [...new Set(doEscola.map((s) => horaFmt(s.hora)))].sort();
   // Lista curta: das 15:00 às 21:00 de 15 em 15 minutos, mais as horas que esta escola já usa (ex.: 18:50, sábados de manhã).
@@ -2006,6 +2009,15 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
         )}
       </div>
 
+      {!modoRecinto && semHorarioEsc.length > 0 && (
+        <div className="semFoto" style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, fontSize: 13, marginBottom: 10 }}>
+          <AlertTriangle size={15} style={{ flex: "none", marginTop: 2, color: COLORS.warn }} />
+          <div>
+            <b>{semHorarioEsc.length === 1 ? "1 treinador sem horário" : `${semHorarioEsc.length} treinadores sem horário`}</b> em {escola} (Recursos humanos):{" "}
+            {semHorarioEsc.map((c) => `${c.iniciais} (${c.nome})`).join(", ")}. Aloca-os num horário com "+ sigla" ou cria um "Novo horário".
+          </div>
+        </div>
+      )}
       {siglasUsadas.length > 0 && (
         <div className="semFoto" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", margin: "0 0 10px", fontSize: 12, color: COLORS.slate }}>
           <span>Treinadores:</span>
@@ -3331,6 +3343,7 @@ const SECOES_GESTAO = [
 ];
 
 export function InscritosPage({
+  rh = null,
   op = null,
   inscritos,
   turmasAlunos,
@@ -3495,6 +3508,7 @@ export function InscritosPage({
           regras={options.regrasTreinadores}
           onSave={onSaveEspaco}
           onUpdate={onUpdateEspaco}
+          rh={rh}
           onRemove={onRemoveEspaco}
           onGerirLista={onGerirLista}
           onGuardarRegras={onGuardarRegrasTreinadores}

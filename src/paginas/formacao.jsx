@@ -2,9 +2,12 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import { useState, useEffect, useMemo, useRef } from "react";
 import { lerFormacaoDoExcel, gerarExcelFormacao, resumoFormacao, epocaDaData, epocaAtualForm, mesesDaEpoca, FORMATOS_FORM, ESTADOS_FORM, MESES_CURTOS, MESES_LONGOS } from "../formacao";
-import { Plus, Search, FileText, Printer } from "lucide-react";
+import { Plus, Search, FileText, Printer, Download, ArrowUp, ArrowDown, X, Check } from "lucide-react";
+import { supabase } from "../supabaseClient";
+import { porIntegrar, pacoteDe, rhCompleto, saiu } from "../rh";
+import { zipDe } from "../zip";
 import { COLORS, StatCard, Tag, Vazio, iconBtnStyle, inputStyle, isoDe, labelStyle, linkBtnStyle, normChave, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle, segSGQ } from "../nucleo.jsx";
-import { BotaoFoto, JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, tdStyle, thStyle } from "../partilhado.jsx";
+import { BUCKET_DOCS, BotaoFoto, JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, ficheirosDoc, tdStyle, thStyle } from "../partilhado.jsx";
 
 // ======================= PLANO DE FORMAÇÃO =======================
 const pctForm = (v) => (v === null || v === undefined || v === "" ? "—" : `${Math.round(Number(v) * 100)}%`);
@@ -260,7 +263,7 @@ function CalendarioFormacao({ epoca, itens, onAbrir, onNovaNoDia }) {
   );
 }
 
-export function FormacaoPage({ dados, onGuardar, notificar }) {
+function PlanoFormacao({ dados, onGuardar, notificar }) {
   const itens = (dados && dados.itens) || [];
   const epocas = useMemo(() => {
     const s = new Set([epocaAtualForm(), ...itens.map(epocaDaAcao).filter(Boolean)]);
@@ -544,6 +547,272 @@ export function FormacaoPage({ dados, onGuardar, notificar }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ======================= INTEGRAÇÃO (pessoal novo dos Recursos humanos) =======================
+const novoIdInt = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
+const dataPTInt = (iso) => {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : "";
+};
+
+function Integracao({ rh, onGuardarRh, documentos, notificar }) {
+  const d = rhCompleto(rh);
+  const [todos, setTodos] = useState(false);
+  const [aZipar, setAZipar] = useState(null);
+  const [verConfig, setVerConfig] = useState(false);
+  const docs = ((documentos && documentos.itens) || []).filter((x) => !x.obsoleto);
+  const pendentes = porIntegrar(d);
+  const lista = (todos ? d.colaboradores.filter((c) => !saiu(c)) : pendentes).sort((a, b) => String(b.entrada || "").localeCompare(String(a.entrada || "")));
+  const guardar = (campos) => onGuardarRh({ ...d, ...campos });
+  const marcar = (c, passo, data) => guardar({ colaboradores: d.colaboradores.map((x) => (x.id === c.id ? { ...x, integracao: { ...(x.integracao || {}), [passo]: data || undefined } } : x)) });
+
+  // Zip com os documentos do pacote da função da pessoa (ficheiros da pasta privada + links num .txt).
+  const zipar = async (c, passo) => {
+    const pac = pacoteDe(d, c.funcao);
+    if (!pac || !(pac.docs || []).length) return notificar(`Não há pacote de documentos para a função "${c.funcao || "sem função"}". Cria-o em Checklist e pacotes.`, "aviso");
+    setAZipar(c.id);
+    try {
+      const escolhidos = docs.filter((x) => pac.docs.includes(x.id));
+      const ficheiros = [];
+      const links = [];
+      const falhas = [];
+      for (const doc of escolhidos) {
+        const nomeDoc = [doc.codigo && doc.codigo !== "-" ? doc.codigo : "", doc.identificacao].filter(Boolean).join(" - ");
+        for (const f of ficheirosDoc(doc)) {
+          const { data, error } = await supabase.storage.from(BUCKET_DOCS).download(f.path);
+          if (error || !data) falhas.push(f.nome || nomeDoc);
+          else ficheiros.push({ nome: `${nomeDoc} - ${f.nome || "ficheiro"}`.slice(0, 150), dados: new Uint8Array(await data.arrayBuffer()) });
+        }
+        if (doc.link) links.push(`${nomeDoc}: ${/^https?:\/\//i.test(doc.link) ? doc.link : `https://${doc.link}`}`);
+        if (!ficheirosDoc(doc).length && !doc.link) falhas.push(`${nomeDoc} (sem ficheiro nem link)`);
+      }
+      if (links.length) ficheiros.push({ nome: "links.txt", dados: links.join("\r\n") + "\r\n" });
+      if (!ficheiros.length) return notificar("Nenhum dos documentos do pacote tem ficheiro ou link anexado no Controlo documental.", "aviso");
+      const blob = zipDe(ficheiros);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `Documentos ${pac.nome} - ${c.nome}.zip`.replace(/[\\/:*?"<>|]/g, "-");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      marcar(c, passo, isoDe(new Date()));
+      notificar(falhas.length ? `Zip descarregado, mas faltaram: ${falhas.join(", ")}.` : `Zip descarregado (${ficheiros.length} ficheiros). Passo marcado.`, falhas.length ? "aviso" : "ok");
+    } catch (e) {
+      notificar(`Não consegui preparar o zip: ${e?.message || e}`, "erro");
+    } finally {
+      setAZipar(null);
+    }
+  };
+
+  const btn = { ...secondaryBtnStyle, width: "auto", flex: "none", padding: "5px 10px", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 5 };
+  return (
+    <div>
+      {pendentes.length > 0 && (
+        <div style={{ ...panelStyle, borderColor: COLORS.warn, background: COLORS.warnBg, padding: "12px 16px", fontSize: 13.5 }}>
+          <b>{pendentes.length === 1 ? "1 pessoa nova" : `${pendentes.length} pessoas novas`}</b> nos Recursos humanos {pendentes.length === 1 ? "precisa" : "precisam"} de integração / formação.
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: COLORS.ink2 }}>
+          <input type="checkbox" checked={todos} onChange={(e) => setTodos(e.target.checked)} /> Mostrar também quem já está integrado
+        </label>
+        <span style={{ flex: 1 }} />
+        <button onClick={() => setVerConfig(true)} style={{ ...btn, padding: "7px 12px", fontSize: 13 }}>
+          Checklist e pacotes de documentos
+        </button>
+      </div>
+      {lista.length === 0 ? (
+        <Vazio icon={Check} titulo="Ninguém por integrar" texto="Quem entra nos Recursos humanos aparece aqui até a checklist estar toda feita." />
+      ) : (
+        <div style={{ ...panelStyle, padding: 0, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                {["Pessoa", "Função", "Entrada", ...d.passos.map((p) => p.nome)].map((h, i) => (
+                  <th key={`${h}${i}`} style={{ ...thStyle, whiteSpace: "nowrap" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>
+                    {c.nome} <span style={{ fontWeight: 400, color: COLORS.slate }}>{c.iniciais}</span>
+                    <div style={{ fontSize: 11.5, fontWeight: 400, color: COLORS.slate }}>{(c.escolas || []).join(", ")}</div>
+                  </td>
+                  <td style={tdStyle}>{c.funcao || "—"}</td>
+                  <td style={tdStyle}>{dataPTInt(c.entrada) || "—"}</td>
+                  {d.passos.map((p) => {
+                    const feito = (c.integracao || {})[p.id];
+                    return (
+                      <td key={p.id} style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                        {feito ? (
+                          <button onClick={() => window.confirm(`Desmarcar "${p.nome}" de ${c.nome}?`) && marcar(c, p.id, null)} title="Desmarcar" style={{ ...btn, color: COLORS.ok, borderColor: COLORS.ok }}>
+                            <Check size={13} /> {dataPTInt(feito)}
+                          </button>
+                        ) : (
+                          <span style={{ display: "inline-flex", gap: 6 }}>
+                            {p.tipo === "docs" && (
+                              <button disabled={aZipar === c.id} onClick={() => zipar(c, p.id)} title={`Descarrega o pacote de documentos de ${c.funcao || "?"}`} style={btn}>
+                                <Download size={13} /> {aZipar === c.id ? "A preparar…" : "Zip"}
+                              </button>
+                            )}
+                            <button onClick={() => marcar(c, p.id, isoDe(new Date()))} style={btn}>
+                              Marcar
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {verConfig && <ConfigIntegracao d={d} docs={docs} onGuardar={(campos) => guardar(campos)} onFechar={() => setVerConfig(false)} />}
+    </div>
+  );
+}
+
+// Checklist da integração (passos personalizáveis) e pacotes de documentos por função.
+function ConfigIntegracao({ d, docs, onGuardar, onFechar }) {
+  const [passos, setPassos] = useState(() => d.passos.map((p) => ({ ...p })));
+  const [pacotes, setPacotes] = useState(() => (d.pacotes || []).map((p) => ({ ...p, funcoes: [...(p.funcoes || [])], docs: [...(p.docs || [])] })));
+  const [procura, setProcura] = useState({});
+  const mudaPasso = (i, campos) => setPassos((l) => l.map((p, j) => (j === i ? { ...p, ...campos } : p)));
+  const mexe = (i, k) => setPassos((l) => {
+    const n = [...l];
+    const j = i + k;
+    if (j < 0 || j >= n.length) return l;
+    [n[i], n[j]] = [n[j], n[i]];
+    return n;
+  });
+  const mudaPac = (i, campos) => setPacotes((l) => l.map((p, j) => (j === i ? { ...p, ...campos } : p)));
+  const rotDoc = (x) => [x.codigo && x.codigo !== "-" ? x.codigo : "", x.identificacao].filter(Boolean).join(" — ");
+  return (
+    <JanelaSGQ
+      titulo="Checklist e pacotes de documentos"
+      largura={860}
+      onFechar={onFechar}
+      rodape={
+        <>
+          <span style={{ flex: 1 }} />
+          <button onClick={onFechar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "9px 14px" }}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => {
+              onGuardar({ passos: passos.filter((p) => String(p.nome).trim()).map((p) => ({ ...p, nome: String(p.nome).trim() })), pacotes: pacotes.filter((p) => String(p.nome).trim()) });
+              onFechar();
+            }}
+            style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "9px 16px" }}
+          >
+            Guardar
+          </button>
+        </>
+      }
+    >
+      <div style={{ ...panelTitle, marginBottom: 6 }}>Checklist de integração</div>
+      <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+        {passos.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input value={p.nome} onChange={(e) => mudaPasso(i, { nome: e.target.value })} style={{ ...inputStyle, flex: 1, padding: "6px 8px" }} />
+            <select value={p.tipo || "simples"} onChange={(e) => mudaPasso(i, { tipo: e.target.value })} style={{ ...inputStyle, width: 190, padding: "6px 8px" }}>
+              <option value="simples">Marcar quando feito</option>
+              <option value="docs">Envio de documentos (zip)</option>
+            </select>
+            <button onClick={() => mexe(i, -1)} aria-label="Subir" style={iconBtnStyle}>
+              <ArrowUp size={14} />
+            </button>
+            <button onClick={() => mexe(i, 1)} aria-label="Descer" style={iconBtnStyle}>
+              <ArrowDown size={14} />
+            </button>
+            <button onClick={() => setPassos((l) => l.filter((_, j) => j !== i))} aria-label="Tirar passo" style={iconBtnStyle}>
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setPassos((l) => [...l, { id: novoIdInt("passo"), nome: "", tipo: "simples" }])} style={{ ...linkBtnStyle, marginTop: 0 }}>
+        + Passo
+      </button>
+
+      <div style={{ ...panelTitle, margin: "20px 0 6px" }}>Pacotes de documentos</div>
+      <div style={{ fontSize: 12, color: COLORS.slate, marginBottom: 8 }}>Cada pacote junta documentos do Controlo documental e vale para as funções escolhidas (ex.: pacote "Treinadores" para a função Treinador).</div>
+      <div style={{ display: "grid", gap: 12 }}>
+        {pacotes.map((p, i) => {
+          const q = String(procura[p.id] || "").toLowerCase();
+          return (
+            <div key={p.id} style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                <input value={p.nome} onChange={(e) => mudaPac(i, { nome: e.target.value })} placeholder="Nome do pacote (ex.: Treinadores)" style={{ ...inputStyle, flex: 1, padding: "6px 8px", fontWeight: 600 }} />
+                <span style={{ fontSize: 12, color: COLORS.slate }}>{p.docs.length} documentos</span>
+                <button onClick={() => window.confirm(`Apagar o pacote "${p.nome}"?`) && setPacotes((l) => l.filter((_, j) => j !== i))} aria-label="Apagar pacote" style={iconBtnStyle}>
+                  <X size={14} />
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {d.funcoes.map((f) => {
+                  const on = p.funcoes.includes(f);
+                  return (
+                    <button key={f} type="button" onClick={() => mudaPac(i, { funcoes: on ? p.funcoes.filter((x) => x !== f) : [...p.funcoes, f] })} style={chipSGQ(on)}>
+                      {f}
+                    </button>
+                  );
+                })}
+              </div>
+              <input value={procura[p.id] || ""} onChange={(e) => setProcura((x) => ({ ...x, [p.id]: e.target.value }))} placeholder="Procurar documento…" style={{ ...inputStyle, padding: "5px 8px", marginBottom: 6 }} />
+              <div style={{ maxHeight: 180, overflowY: "auto", border: `1px solid ${COLORS.ruleSoft}`, borderRadius: 8 }}>
+                {docs
+                  .filter((x) => !q || rotDoc(x).toLowerCase().includes(q) || p.docs.includes(x.id))
+                  .map((x) => {
+                    const on = p.docs.includes(x.id);
+                    const anexo = ficheirosDoc(x).length || x.link;
+                    return (
+                      <label key={x.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 8px", fontSize: 12.5, cursor: "pointer", background: on ? COLORS.navyWash : "transparent" }}>
+                        <input type="checkbox" checked={on} onChange={() => mudaPac(i, { docs: on ? p.docs.filter((y) => y !== x.id) : [...p.docs, x.id] })} />
+                        <span style={{ flex: 1 }}>{rotDoc(x)}</span>
+                        {!anexo && <span style={{ fontSize: 11, color: COLORS.warn }}>sem ficheiro</span>}
+                      </label>
+                    );
+                  })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={() => setPacotes((l) => [...l, { id: novoIdInt("pac"), nome: "", funcoes: [], docs: [] }])} style={{ ...linkBtnStyle, marginTop: 8 }}>
+        + Pacote
+      </button>
+    </JanelaSGQ>
+  );
+}
+
+// Página "Integração e formação": a integração do pessoal novo e o plano anual de formação.
+export function FormacaoPage({ dados, onGuardar, notificar, rh, onGuardarRh, documentos }) {
+  const n = porIntegrar(rh).length;
+  const [aba, setAba] = useState(n ? "integracao" : "plano");
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        {segSGQ(
+          [
+            ["integracao", `Integração${n ? ` · ${n}` : ""}`],
+            ["plano", "Plano de formação"],
+          ],
+          aba,
+          setAba
+        )}
+      </div>
+      {aba === "integracao" ? <Integracao rh={rh} onGuardarRh={onGuardarRh} documentos={documentos} notificar={notificar} /> : <PlanoFormacao dados={dados} onGuardar={onGuardar} notificar={notificar} />}
     </div>
   );
 }

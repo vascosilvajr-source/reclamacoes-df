@@ -1784,6 +1784,7 @@ const CARREGAR_PAGINA = {
   avaliacoes: () => import("./paginas/avaliacoes.jsx"),
   camps: () => import("./paginas/camps.jsx"),
   copia: () => import("./paginas/copia.jsx"),
+  rh: () => import("./paginas/rh.jsx"),
 };
 const paginasCarregadas = {};
 const carregarPagina = (g) => (paginasCarregadas[g] = paginasCarregadas[g] || CARREGAR_PAGINA[g]().catch((e) => {
@@ -1829,4 +1830,5 @@ export const OcorrenciasPage = aMedida("ocorrencias", "OcorrenciasPage", true);
 export const AvaliacoesPage = aMedida("avaliacoes", "AvaliacoesPage", true);
 export const CopiaSegurancaPage = aMedida("copia", "CopiaSegurancaPage", true);
 export const PainelCamps = aMedida("camps", "PainelCamps", false);
+export const RecursosHumanosPage = aMedida("rh", "RecursosHumanosPage", true);
 

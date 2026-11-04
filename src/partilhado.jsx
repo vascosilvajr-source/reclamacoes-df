@@ -8,6 +8,11 @@ import { X, Check, AlertTriangle, Inbox, Printer } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ScatterChart, Scatter, ZAxis, ReferenceLine, LabelList } from "recharts";
 import { CAUSAS_ATUAIS, COLORS, TEMA_ESCURO, Vazio, colorForLabel, epocaDe, iconBtnStyle, inputStyle, labelStyle, linkBtnStyle, nomeCausa, normChave, panelStyle, panelTitle, resumoContagens, secondaryBtnStyle } from "./nucleo.jsx";
 
+// ---------- Ficheiros do Controlo documental (pasta privada no Supabase) ----------
+export const BUCKET_DOCS = "documentos";
+// Um documento pode ter vários ficheiros (ex.: ficha de inscrição + dados médicos).
+export const ficheirosDoc = (d) => (d && Array.isArray(d.ficheiros) ? d.ficheiros : d && d.ficheiro && d.ficheiro.path ? [d.ficheiro] : []).filter((f) => f && f.path);
+
 // ---------- Filtro de épocas (uma, várias ou todas) ----------
 // Valor: lista de épocas escolhidas; lista vazia = todas as épocas.
 export const naSelecao = (sel, ep) => !sel || !sel.length || sel.includes(ep);
