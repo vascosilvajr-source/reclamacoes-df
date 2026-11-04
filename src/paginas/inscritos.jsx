@@ -2385,7 +2385,15 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                                         disabled={addT.sigla.length < 2}
                                         onClick={() => {
                                           const l = sigT.includes(addT.sigla) ? sigT : [...sigT, addT.sigla];
-                                          onUpdate(b.id, { siglasTreinadores: l, treinadores: Math.max(l.length, sigT.length ? 0 : nT) });
+                                          // A sigla segue para os outros horários da mesma equipa (mesma escola e mesmas turmas).
+                                          const chaveTurmas = (x) => [...turmasDoBloco(x)].sort().join("+");
+                                          const outros = espacos
+                                            .filter((x) => x.id !== b.id && x.escola === b.escola && chaveTurmas(x) === chaveTurmas(b) && !(x.siglasTreinadores || []).includes(addT.sigla))
+                                            .map((x) => {
+                                              const ls = [...(x.siglasTreinadores || []), addT.sigla];
+                                              return { id: x.id, campos: { siglasTreinadores: ls, treinadores: Math.max(ls.length, (x.siglasTreinadores || []).length ? 0 : x.treinadores || 1) } };
+                                            });
+                                          onUpdate([{ id: b.id, campos: { siglasTreinadores: l, treinadores: Math.max(l.length, sigT.length ? 0 : nT) } }, ...outros]);
                                           const cor = /^#[0-9a-f]{6}$/i.test(addT.cor || "") ? addT.cor : coresT[addT.sigla] || "#c5d9f1";
                                           if (cor !== coresT[addT.sigla]) onGuardarNormalizacao({ ...(normalizacao || {}), treinadores: { ...((normalizacao || {}).treinadores || {}), [addT.sigla]: { ...(((normalizacao || {}).treinadores || {})[addT.sigla] || {}), cor } } });
                                           setAddT(null);

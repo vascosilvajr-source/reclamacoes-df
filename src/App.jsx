@@ -3290,7 +3290,11 @@ function AppPrincipal({ onSair, email }) {
 
   const saveEspaco = (reg) => persistEspacos([...espacos, reg]);
   const removeEspaco = (id) => persistEspacos(espacos.filter((s2) => s2.id !== id));
-  const updateEspaco = (id, campos) => persistEspacos(espacos.map((s2) => (s2.id === id ? { ...s2, ...campos } : s2)));
+  // Aceita também uma lista [{ id, campos }] para mudar vários horários numa só gravação.
+  const updateEspaco = (id, campos) => {
+    const mud = Array.isArray(id) ? Object.fromEntries(id.map((m) => [m.id, m.campos])) : { [id]: campos };
+    persistEspacos(espacos.map((s2) => (mud[s2.id] ? { ...s2, ...mud[s2.id] } : s2)));
+  };
 
   const saveEvento = (reg) => persistEventos([...eventos, reg]);
   const removeEvento = (id) => persistEventos(eventos.filter((e) => e.id !== id));
