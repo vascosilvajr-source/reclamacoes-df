@@ -3325,7 +3325,7 @@ function AppPrincipal({ onSair }) {
     .filter((e) => (filterEpoca === "todas" ? true : e.epoca === filterEpoca))
     .filter((e) => (filterStatus === "todos" ? true : e.derivedStatus === filterStatus))
     .filter((e) => (search ? (e.complainant + e.description).toLowerCase().includes(search.toLowerCase()) : true))
-    .sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+    .sort((a, b) => String(b.receivedDate || "").localeCompare(String(a.receivedDate || "")) || (b.entryNumber || 0) - (a.entryNumber || 0));
 
   const stats = {
     porPegar: withStatus.filter((e) => e.derivedStatus === "por_pegar").length,
