@@ -1895,7 +1895,14 @@ function SecaoEspacos({ escolas, turmas, niveis, espacos, listaEspacos, capacida
                             </div>
                             <div style={{ color: g.estado === "acima" ? COLORS.danger : g.estado === "tolerado" ? COLORS.warn : COLORS.slate }}>
                               {g.limite ? `${g.total}/${g.limite}` : "sem lotação"}
-                              {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.siglasTreinadores || []).length ? b.siglasTreinadores.join(" ") : (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
+                              {[modoRecinto ? b.escola : null, !modoRecinto && b.recinto ? b.recinto : null, (b.siglasTreinadores || []).length ? null : (b.treinadores || 1) > 1 ? `${b.treinadores} trein.` : null].filter(Boolean).map((x) => ` · ${x}`).join("")}
+                              {(b.siglasTreinadores || []).length > 0 && (
+                                <span style={{ display: "inline-flex", gap: 3, marginLeft: 5, verticalAlign: "middle" }}>
+                                  {b.siglasTreinadores.map((sg, ix) => (
+                                    <SiglaTreinador key={`${sg}${ix}`} s={sg} cor={coresT[sg]} />
+                                  ))}
+                                </span>
+                              )}
                             </div>
                             {g.limite ? (
                               <div style={{ marginTop: 3 }}>

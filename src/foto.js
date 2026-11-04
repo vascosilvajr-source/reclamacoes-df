@@ -141,8 +141,9 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome, l
   const w = larguraFolha || pagina; // largura natural da folha; se for maior que a página, a imagem é reduzida
   const k = pagina / w;
   const h = folha.scrollHeight;
-  let escala = 2;
-  while (h * escala > 15000 && escala > 1) escala -= 0.25;
+  // Resolução alta para o texto não ficar esbatido; reduz só se a folha for tão comprida que o browser não aguenta.
+  let escala = 3;
+  while ((h * escala > 16000 || w * escala * h * escala > 150e6) && escala > 1) escala -= 0.25;
   const src = await toCanvas(folha, { backgroundColor: "#ffffff", pixelRatio: escala, width: w, height: h, cacheBust: true, style: { position: "static", left: "0", top: "0" } });
   const altP = vertical ? 1123 : 794;
   const faixa = 45; // 12 mm
@@ -198,7 +199,7 @@ async function gerarPdf(folha, { vertical, pagina, margem, titulo, hoje, nome, l
     g.fillText("FC Porto · Dragon Force · Gestão da Qualidade", margem, altP - faixa / 2);
     g.textAlign = "right";
     g.fillText(`${titulo} · ${hoje}`, pagina - margem, altP - faixa / 2);
-    paginas.push({ url: c.toDataURL("image/jpeg", 0.92), w: c.width, h: c.height });
+    paginas.push({ url: c.toDataURL("image/jpeg", 0.96), w: c.width, h: c.height });
     y += tomar;
     n++;
   }
