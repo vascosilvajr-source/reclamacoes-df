@@ -6,3 +6,9 @@ dist
 .harness/
 .env.*
 !.env.example
+# Script do Apps Script com TOKEN_APP real e documentos de exemplo: nunca para o repo
+Emails_Escolas.js
+Emails_Escolas.gs
+Docs exemplo/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
