@@ -106,5 +106,56 @@ export function porIntegrar(dados) {
   return d.colaboradores.filter((c) => !saiu(c) && d.passos.some((p) => !(c.integracao || {})[p.id]));
 }
 
+// Resultados dos quizzes (tabela formacao_pedidos) -> ficha de cada pessoa.
+// Cada tentativa entra uma só vez (chave token:tentativa). Passar num módulo de integração marca o passo dele.
+// Devolve { dados, tokens } com o que mudou, ou null se não há nada de novo.
+export function aplicarFormacoes(dados, pedidos) {
+  const d = rhCompleto(dados);
+  const porId = new Map(d.colaboradores.map((c) => [c.id, c]));
+  const novos = {};
+  const tokens = [];
+  (pedidos || []).forEach((p) => {
+    const c = porId.get(p.colaborador_id);
+    if (!c) return;
+    const mod = p.modulo || {};
+    [...(p.historico || []), ...(p.resultado ? [p.resultado] : [])].forEach((r) => {
+      const chave = `${p.token}:${r.tentativa || 1}`;
+      if ((c.formacoes || []).some((f) => f.chave === chave) || (novos[c.id] || []).some((f) => f.chave === chave)) return;
+      (novos[c.id] = novos[c.id] || []).push({ chave, moduloId: mod.id, modulo: mod.nome, tipo: mod.tipo, passo: mod.passo, data: r.data, nota: r.nota, passou: !!r.passou, tentativa: r.tentativa || 1 });
+      if (!tokens.includes(p.token)) tokens.push(p.token);
+    });
+  });
+  if (!tokens.length) return null;
+  const colaboradores = d.colaboradores.map((c) => {
+    const l = novos[c.id];
+    if (!l) return c;
+    const integracao = { ...(c.integracao || {}) };
+    l.filter((f) => f.passou && f.tipo === "integracao" && f.passo && !integracao[f.passo]).forEach((f) => (integracao[f.passo] = f.data));
+    return { ...c, formacoes: [...(c.formacoes || []), ...l], integracao };
+  });
+  return { dados: { ...d, colaboradores }, tokens };
+}
+
+// Formações de módulos "contínuos" cuja última aprovação já passou da validade (meses).
+export function formacoesEmFalta(dados) {
+  const d = rhCompleto(dados);
+  const hoje = new Date();
+  const out = [];
+  d.colaboradores
+    .filter((c) => !saiu(c))
+    .forEach((c) => {
+      (d.modulos || [])
+        .filter((m) => m.tipo === "continua" && Number(m.validadeMeses) > 0 && (!(m.funcoes || []).length || m.funcoes.some((f) => chave(f) === chave(c.funcao))))
+        .forEach((m) => {
+          const ult = (c.formacoes || []).filter((f) => f.moduloId === m.id && f.passou).map((f) => f.data).sort().pop();
+          if (!ult) return out.push({ colaborador: c, modulo: m, ultima: "" });
+          const lim = new Date(ult);
+          lim.setMonth(lim.getMonth() + Number(m.validadeMeses));
+          if (lim < hoje) out.push({ colaborador: c, modulo: m, ultima: ult });
+        });
+    });
+  return out;
+}
+
 // Pacote de documentos para a função da pessoa.
 export const pacoteDe = (dados, funcao) => (rhCompleto(dados).pacotes || []).find((p) => (p.funcoes || []).some((f) => chave(f) === chave(funcao))) || null;

@@ -6,6 +6,7 @@ import { Plus, Search, FileText, Printer, Download, ArrowUp, ArrowDown, X, Check
 import { supabase } from "../supabaseClient";
 import { porIntegrar, pacoteDe, rhCompleto, saiu } from "../rh";
 import { zipDe } from "../zip";
+import { QuizzFormacao } from "./formacaoQuizz.jsx";
 import { COLORS, StatCard, Tag, Vazio, iconBtnStyle, inputStyle, isoDe, labelStyle, linkBtnStyle, normChave, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle, segSGQ } from "../nucleo.jsx";
 import { BUCKET_DOCS, BotaoFoto, JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, ficheirosDoc, tdStyle, thStyle } from "../partilhado.jsx";
 
@@ -806,13 +807,14 @@ export function FormacaoPage({ dados, onGuardar, notificar, rh, onGuardarRh, doc
         {segSGQ(
           [
             ["integracao", `Integração${n ? ` · ${n}` : ""}`],
+            ["quizz", "Quizzes"],
             ["plano", "Plano de formação"],
           ],
           aba,
           setAba
         )}
       </div>
-      {aba === "integracao" ? <Integracao rh={rh} onGuardarRh={onGuardarRh} documentos={documentos} notificar={notificar} /> : <PlanoFormacao dados={dados} onGuardar={onGuardar} notificar={notificar} />}
+      {aba === "integracao" ? <Integracao rh={rh} onGuardarRh={onGuardarRh} documentos={documentos} notificar={notificar} /> : aba === "quizz" ? <QuizzFormacao rh={rh} onGuardarRh={onGuardarRh} documentos={documentos} notificar={notificar} /> : <PlanoFormacao dados={dados} onGuardar={onGuardar} notificar={notificar} />}
     </div>
   );
 }
