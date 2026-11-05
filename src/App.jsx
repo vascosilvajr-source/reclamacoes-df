@@ -56,6 +56,8 @@ const STORAGE_EXPERIENCIAS_KEY = "reclamacoes:experiencias";
 const STORAGE_DESVINC_KEY = "reclamacoes:desvinculacoes";
 const STORAGE_ESPACOS_KEY = "reclamacoes:espacos";
 const STORAGE_EVENTOS_KEY = "reclamacoes:eventos";
+// Treinos TOP: { [epoca]: { ids: [códigos], ficheiro, data } }
+const STORAGE_TOP_KEY = "reclamacoes:top";
 const STORAGE_SATISFACAO_KEY = "reclamacoes:satisfacao";
 const STORAGE_INQUERITOS_KEY = "reclamacoes:inqueritos-eventos";
 const STORAGE_NOTAS_REL_KEY = "reclamacoes:relatorios-notas";
@@ -2010,6 +2012,7 @@ function AppPrincipal({ onSair, email }) {
   const [desvinculacoes, setDesvinculacoes] = useState([]);
   const [espacos, setEspacos] = useState([]);
   const [eventos, setEventos] = useState([]);
+  const [top, setTop] = useState({});
   const [riscos, setRiscos] = useState({ epocas: {} });
   const [objetivos, setObjetivos] = useState({ epocas: {} });
   const [documentos, setDocumentos] = useState({ itens: [], colaboradores: [], locais: [] });
@@ -2248,6 +2251,7 @@ function AppPrincipal({ onSair, email }) {
   const persistDesvinc = fazPersist(setDesvinculacoes, STORAGE_DESVINC_KEY, "as desvinculações");
   const persistEspacos = fazPersist(setEspacos, STORAGE_ESPACOS_KEY, "os espaços");
   const persistEventos = fazPersist(setEventos, STORAGE_EVENTOS_KEY, "os eventos");
+  const persistTop = fazPersist(setTop, STORAGE_TOP_KEY, "os treinos TOP");
   const persistRiscos = fazPersist(setRiscos, STORAGE_RISCOS_KEY, "os riscos e oportunidades");
   const persistObjetivos = fazPersist(setObjetivos, STORAGE_OBJETIVOS_KEY, "o mapa de objetivos");
   const persistDocumentos = fazPersist(setDocumentos, STORAGE_DOCUMENTOS_KEY, "o controlo documental");
@@ -2393,7 +2397,7 @@ function AppPrincipal({ onSair, email }) {
     (async () => {
       try {
         // Um só pedido para tudo o que o arranque lê (antes eram ~30 pedidos em série).
-        await dbStorage.carregar([STORAGE_KEY, STORAGE_OPTIONS_KEY, STORAGE_AUDITS_KEY, STORAGE_SANCOES_KEY, STORAGE_INSCRITOS_KEY, STORAGE_TURMAS_KEY, STORAGE_EPOCA_ANT_KEY, STORAGE_DESISTENCIAS_KEY, STORAGE_EXPERIENCIAS_KEY, STORAGE_ALUNOS_KEY, STORAGE_DESVINC_KEY, STORAGE_ESPACOS_KEY, STORAGE_EVENTOS_KEY, STORAGE_RISCOS_KEY, STORAGE_OBJETIVOS_KEY, STORAGE_DOCUMENTOS_KEY, STORAGE_FORMACAO_KEY, STORAGE_RH_KEY, STORAGE_APAGADOS_KEY, STORAGE_OCORRENCIAS_KEY, STORAGE_AVALIACOES_KEY, STORAGE_RADAR_KEY, STORAGE_SATISFACAO_KEY, STORAGE_INQUERITOS_KEY, STORAGE_NOTAS_REL_KEY, STORAGE_PLANO_INQ_KEY, STORAGE_RESPOSTAS_KEY, STORAGE_TRIAGEM_KEY]);
+        await dbStorage.carregar([STORAGE_KEY, STORAGE_OPTIONS_KEY, STORAGE_AUDITS_KEY, STORAGE_SANCOES_KEY, STORAGE_INSCRITOS_KEY, STORAGE_TURMAS_KEY, STORAGE_EPOCA_ANT_KEY, STORAGE_DESISTENCIAS_KEY, STORAGE_EXPERIENCIAS_KEY, STORAGE_ALUNOS_KEY, STORAGE_DESVINC_KEY, STORAGE_ESPACOS_KEY, STORAGE_EVENTOS_KEY, STORAGE_TOP_KEY, STORAGE_RISCOS_KEY, STORAGE_OBJETIVOS_KEY, STORAGE_DOCUMENTOS_KEY, STORAGE_FORMACAO_KEY, STORAGE_RH_KEY, STORAGE_APAGADOS_KEY, STORAGE_OCORRENCIAS_KEY, STORAGE_AVALIACOES_KEY, STORAGE_RADAR_KEY, STORAGE_SATISFACAO_KEY, STORAGE_INQUERITOS_KEY, STORAGE_NOTAS_REL_KEY, STORAGE_PLANO_INQ_KEY, STORAGE_RESPOSTAS_KEY, STORAGE_TRIAGEM_KEY]);
       } catch (e) {
         // falhou o pedido único: cada get() abaixo tenta sozinho
       }
@@ -2446,6 +2450,7 @@ function AppPrincipal({ onSair, email }) {
         [STORAGE_DESVINC_KEY, setDesvinculacoes],
         [STORAGE_ESPACOS_KEY, setEspacos],
         [STORAGE_EVENTOS_KEY, setEventos],
+        [STORAGE_TOP_KEY, setTop],
         [STORAGE_RISCOS_KEY, setRiscos],
         [STORAGE_OBJETIVOS_KEY, setObjetivos],
         [STORAGE_DOCUMENTOS_KEY, setDocumentos],
@@ -4351,6 +4356,8 @@ function AppPrincipal({ onSair, email }) {
               persistOptions({ ...options, regrasTreinadores: r });
               notificar("Regras dos treinadores guardadas.");
             }}
+            top={top}
+            onGuardarTop={persistTop}
             onSaveEvento={saveEvento}
             onRemoveEvento={removeEvento}
             onUpdateEvento={updateEvento}

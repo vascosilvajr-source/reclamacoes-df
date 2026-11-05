@@ -2382,6 +2382,18 @@ function SecaoEspacos({ rh, escolas, turmas, niveis, espacos, listaEspacos, capa
                                     +
                                   </button>
                                 </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 11, color: COLORS.ink2 }}>
+                                  <label style={{ display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }} title="Treino de otimização de performance (grupo reduzido): conta como oferta TOP da escola">
+                                    <input type="checkbox" checked={!!b.top} onChange={(e) => onUpdate(b.id, { top: e.target.checked || undefined })} style={{ margin: 0 }} />
+                                    Treino TOP
+                                  </label>
+                                  {b.top && (
+                                    <label style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                      <input key={b.vagas ?? ""} type="number" min="0" defaultValue={b.vagas ?? ""} onBlur={(e) => Number(e.target.value || 0) !== (b.vagas || 0) && onUpdate(b.id, { vagas: Number(e.target.value) || 0 })} aria-label="Vagas do treino TOP" style={{ ...inputStyle, width: 52, padding: "1px 5px", fontSize: 11 }} />
+                                      vagas
+                                    </label>
+                                  )}
+                                </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
                                   {sigT.map((sg, ix) => (
                                     <span key={`${sg}${ix}`} style={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
@@ -3386,6 +3398,114 @@ function generoDe(valor) {
   return null;
 }
 
+// Treinos TOP (otimização de performance, grupos reduzidos): adesão por escola face aos alunos ativos
+// e ocupação face às vagas dos blocos marcados como "Treino TOP" nos Espaços.
+function SecaoTop({ top, registoAlunos, espacos, escolas, onGuardar }) {
+  const eps = [...new Set([...Object.keys(registoAlunos), ...Object.keys(top || {})])].sort().reverse();
+  const [ep, setEp] = useState(eps.find((e) => registoAlunos[e]) || eps[0] || epocaDe(isoDe(new Date())));
+  const [msg, setMsg] = useState("");
+  const [aLer, setALer] = useState(false);
+  const dados = (top || {})[ep];
+  const ids = new Set(((dados && dados.ids) || []).map(String));
+  const ativos = Object.values((registoAlunos[ep] && registoAlunos[ep].alunos) || {}).filter((a) => a.estado === "ativo");
+  const vagasDe = (escola) => (espacos || []).filter((b) => b.top && normChave(b.escola) === normChave(escola)).reduce((t, b) => t + (Number(b.vagas) || 0), 0);
+  const nomes = [...new Set([...escolas, ...ativos.map((a) => a.escola)])];
+  const linhas = nomes
+    .map((escola) => {
+      const al = ativos.filter((a) => a.escola === escola);
+      return { escola, alunos: al.length, top: al.filter((a) => ids.has(String(a.id))).length, vagas: vagasDe(escola) };
+    })
+    .filter((l) => l.alunos || l.top || l.vagas)
+    .sort((a, b) => b.top - a.top || a.escola.localeCompare(b.escola, "pt"));
+  const tot = linhas.reduce((t, l) => ({ alunos: t.alunos + l.alunos, top: t.top + l.top, vagas: t.vagas + l.vagas }), { alunos: 0, top: 0, vagas: 0 });
+  const semFicha = [...ids].filter((id) => !ativos.some((a) => String(a.id) === id)).length;
+  const pct = (a, b) => (b ? `${fmtNum((a / b) * 100, 1)}%` : "—");
+
+  const importar = async (f) => {
+    if (!f) return;
+    setALer(true);
+    setMsg("");
+    try {
+      const lidas = /\.xlsx?$/i.test(f.name) ? await lerExcelInq(f, { todas: true }) : [{ nome: f.name, linhas: lerCSVInq(await f.text()) }];
+      const r = lerInscritosEvento(lidas);
+      if (!r || r.modo !== "ids") throw new Error("não encontrei a coluna com o código do atleta");
+      onGuardar({ ...(top || {}), [ep]: { ids: r.ids, ficheiro: f.name, data: isoDe(new Date()) } });
+      setMsg(`Lido: ${r.explicacao}.`);
+    } catch (e) {
+      setMsg(`Não consegui ler o ficheiro: ${e?.message || e}.`);
+    } finally {
+      setALer(false);
+    }
+  };
+
+  const th = { ...thStyle, whiteSpace: "nowrap" };
+  const num = { ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginRight: "auto" }}>Treinos TOP</div>
+        <select value={ep} onChange={(e) => setEp(e.target.value)} aria-label="Época" style={{ ...inputStyle, width: "auto", padding: "6px 10px", fontSize: 13 }}>
+          {eps.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+        <label style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+          <FileText size={14} /> {aLer ? "A ler…" : dados ? "Substituir ficheiro dos inscritos TOP" : "Importar inscritos TOP"}
+          <input type="file" accept=".xlsx,.csv" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
+        </label>
+      </div>
+      {msg ? <div style={{ fontSize: 12.5, color: COLORS.ink2, marginBottom: 10 }}>{msg}</div> : dados ? <div style={{ fontSize: 12.5, color: COLORS.slate, marginBottom: 10 }}>{dados.ficheiro} · importado a {fmt(new Date(dados.data + "T00:00:00"))}</div> : null}
+      {!dados ? (
+        <Vazio icon={Target} titulo={`Sem inscritos TOP em ${ep}`} texto="Importa o Excel com o código do atleta dos inscritos nos treinos TOP. Para a oferta, marca os blocos como 'Treino TOP' nos Espaços e indica as vagas." />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <StatCard label="Inscritos TOP" value={ids.size} subtitle={semFicha ? `${semFicha} sem ficha ativa em ${ep}` : `alunos ativos em ${ep}`} />
+            <StatCard label="Adesão" value={pct(tot.top, tot.alunos)} color={COLORS.navy} subtitle={`${fmtNum(tot.top)} de ${fmtNum(tot.alunos)} alunos`} />
+            <StatCard label="Ocupação" value={pct(tot.top, tot.vagas)} subtitle={tot.vagas ? `${fmtNum(tot.vagas)} vagas TOP nos Espaços` : "sem blocos TOP com vagas nos Espaços"} />
+          </div>
+          <div style={{ ...panelStyle, overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Escola", "Alunos ativos", "Inscritos TOP", "Adesão", "Vagas TOP", "Ocupação"].map((h, i) => (
+                    <th key={h} style={{ ...th, textAlign: i ? "right" : "left" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {linhas.map((l) => (
+                  <tr key={l.escola}>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{l.escola}</td>
+                    <td style={num}>{fmtNum(l.alunos)}</td>
+                    <td style={num}>{fmtNum(l.top)}</td>
+                    <td style={{ ...num, fontWeight: 600 }}>{pct(l.top, l.alunos)}</td>
+                    <td style={num}>{l.vagas || "—"}</td>
+                    <td style={{ ...num, fontWeight: 600, color: l.vagas && l.top > l.vagas ? COLORS.warn : undefined }}>{pct(l.top, l.vagas)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={{ ...tdStyle, fontWeight: 700 }}>Total</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{fmtNum(tot.alunos)}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{fmtNum(tot.top)}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{pct(tot.top, tot.alunos)}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{tot.vagas || "—"}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{pct(tot.top, tot.vagas)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Na ficha de cada escola (Painel), os alunos inscritos nos treinos TOP têm a etiqueta TOP.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 const SECOES_GESTAO = [
   ["registo", "Painel"],
   ["analise", "Análise"],
@@ -3394,6 +3514,7 @@ const SECOES_GESTAO = [
   ["desvinc", "Desvinculações"],
   ["espacos", "Espaços"],
   ["eventos", "Eventos"],
+  ["top", "Treinos TOP"],
 ];
 
 export function InscritosPage({
@@ -3451,6 +3572,8 @@ export function InscritosPage({
   onSaveSatisfacao,
   onRemoveSatisfacao,
   onGerirLista,
+  top = {},
+  onGuardarTop,
 }) {
   const [view, setView] = useState("registo");
   const escolas = options.schools || [];
@@ -3590,7 +3713,10 @@ export function InscritosPage({
           onMudarTurma={onMudarTurma}
           onMudarGenero={onMudarGenero}
           onMudarMotivo={onMudarMotivo}
+          top={top}
         />
+      ) : view === "top" ? (
+        <SecaoTop top={top} registoAlunos={registoAlunos || {}} espacos={espacos} escolas={escolas} onGuardar={onGuardarTop} />
       ) : (
         <AnaliseInscritos registoAlunos={registoAlunos} options={options} escolas={escolas} inscritos={inscritos} epocaAnterior={epocaAnterior} experiencias={experiencias} turmasAlunos={turmasAlunos} gestaoDados={gestaoDados} />
       )}
@@ -4294,7 +4420,7 @@ function SeletorMotivo({ valor, motivos, onChange, negrito }) {
 }
 
 // Escola em detalhe: turmas (lotação) e alunos pelo código.
-function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma, onMudarGenero, motivos, onMudarMotivo }) {
+function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar, espacos, epoca, onMudarTurma, onMudarGenero, motivos, onMudarMotivo, topIds }) {
   const [aEditar, setAEditar] = useState(null);
   const [aba, setAba] = useState("turmas");
   const [procura, setProcura] = useState("");
@@ -4473,7 +4599,14 @@ function EscolaAlunos({ escola, reg, niveis, capacidades, onCapacidade, onFechar
               <tbody>
                 {lista.slice(0, 400).map((a) => (
                   <tr key={a.id}>
-                    <td style={{ ...td, fontWeight: 600 }}>{a.id}</td>
+                    <td style={{ ...td, fontWeight: 600 }}>
+                      {a.id}
+                      {topIds && topIds.has(String(a.id)) && (
+                        <span title="Inscrito nos treinos TOP" style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 5, fontSize: 10.5, fontWeight: 700, color: "#fff", background: COLORS.navy, verticalAlign: "1px" }}>
+                          TOP
+                        </span>
+                      )}
+                    </td>
                     <td style={td}>
                       {onMudarTurma && aEditar === a.id ? (
                         <select
@@ -5035,7 +5168,7 @@ async function gerarExcelAlunos(reg, epoca, escola, niveis) {
   return todos.length;
 }
 
-function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma, onMudarGenero, onMudarMotivo }) {
+function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, options, registoAlunos, onImportarInscritos, onAplicarAtuais, onCapacidade, onSaveEpocaAnterior, gestaoDados, espacos = [], onMudarTurma, onMudarGenero, onMudarMotivo, top = {} }) {
   const [gerir, setGerir] = useState(false);
   const [aGerarExcel, setAGerarExcel] = useState(false);
   const niveis = options.niveis || DEFAULT_NIVEIS;
@@ -5577,7 +5710,7 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
           }}
         />
       )}
-      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onMudarGenero={onMudarGenero} motivos={options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA} onMudarMotivo={onMudarMotivo} onFechar={() => setEscolaAberta(null)} />}
+      {escolaAberta && reg && <EscolaAlunos escola={escolaAberta} reg={reg} niveis={niveis} capacidades={capacidades} onCapacidade={onCapacidade} espacos={espacos} epoca={epoca} onMudarTurma={onMudarTurma} onMudarGenero={onMudarGenero} motivos={options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA} onMudarMotivo={onMudarMotivo} topIds={new Set((((top || {})[epoca] || {}).ids || []).map(String))} onFechar={() => setEscolaAberta(null)} />}
       {gerir && <GerirDadosAlunos registoAlunos={registoAlunos} options={options} g={gestaoDados} epocaInicial={epoca} abaInicial={typeof gerir === "string" ? gerir : "apagar"} onFechar={() => setGerir(false)} />}
     </div>
   );
