@@ -2551,9 +2551,10 @@ function AppPrincipal({ onSair, email }) {
     setViewingAudit(next.find((a) => a.id === auditId));
   };
 
-  const addNote = (entryId, text) => {
+  // tipo: "nota" | "respostaEE" (a resposta do EE traz as mudanças que reabrem a reclamação).
+  const addNote = (entryId, text, tipo = "nota", date = new Date().toISOString(), mudancas = null) => {
     const next = entries.map((e) =>
-      e.id === entryId ? { ...e, notes: [...(e.notes || []), { id: `n_${Date.now()}`, text, date: new Date().toISOString() }] } : e
+      e.id === entryId ? { ...e, ...(mudancas || {}), notes: [...(e.notes || []), { id: `n_${Date.now()}`, tipo, text, date }] } : e
     );
     persist(next);
     setViewingDetail(next.find((e) => e.id === entryId));
@@ -3401,8 +3402,21 @@ function AppPrincipal({ onSair, email }) {
         // "Tempo médio de resposta" — o "Tempo médio de resolução" usa sempre
         // a data de conclusão, essa nunca fica em falta.
         const startedISO = startedDate === undefined ? e.startedDate || null : startedDate ? new Date(startedDate + "T12:00:00").toISOString() : null;
+        // Linha temporal: concluir acrescenta a resposta; editar a conclusão corrige a última resposta.
+        let notes = e.notes || [];
+        const texto = (responseText || "").trim();
+        if (texto) {
+          const iUlt = notes.map((n) => n.tipo).lastIndexOf("resposta");
+          const corrigir = e.status === "concluido" && iUlt >= 0;
+          // Registo antigo reaberto: a 1.ª resposta só estava no responseText; passa para a linha antes da nova.
+          if (iUlt < 0 && e.status !== "concluido" && e.responseText && e.responseText.trim() !== texto) notes = [...notes, { id: `n_${Date.now()}_1`, tipo: "resposta", text: e.responseText, date: e.resolvedDate || e.startedDate || new Date(e.receivedDate + "T12:00:00").toISOString() }];
+          notes = corrigir
+            ? notes.map((n, i) => (i === iUlt ? { ...n, text: texto, date: resolvedISO } : n))
+            : [...notes, { id: `n_${Date.now()}`, tipo: "resposta", text: texto, date: resolvedISO }];
+        }
         return {
           ...e,
+          notes,
           status: "concluido",
           resolvedDate: resolvedISO,
           startedDate: startedISO,

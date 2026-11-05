@@ -745,32 +745,41 @@ export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, on
   const [assuntoSugerido, setAssuntoSugerido] = useState("");
   const [causaRaiz, setCausaRaiz] = useState(entry.causaRaiz || "");
   const [note, setNote] = useState("");
+  const hojeStr = new Date().toISOString().slice(0, 10);
+  const [noteDate, setNoteDate] = useState(hojeStr);
   const [concluding, setConcluding] = useState(false);
-  const [responseText, setResponseText] = useState(entry.responseText || "");
+  // Depois de uma resposta do EE, a próxima resposta começa em branco (é uma 2.ª resposta, não a edição da 1.ª).
+  const respostaInicial = entry.status !== "concluido" && (entry.notes || []).some((n) => n.tipo === "respostaEE") ? "" : entry.responseText || "";
+  const [responseText, setResponseText] = useState(respostaInicial);
   const [eficacia, setEficacia] = useState(entry.eficacia || "");
   const [resolvedOn, setResolvedOn] = useState(
     entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
   );
   const [startedOn, setStartedOn] = useState(entry.startedDate ? new Date(entry.startedDate).toISOString().slice(0, 10) : "");
-  const notes = [...(entry.notes || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const linha = linhaTemporal(entry);
 
   // Se a reclamação mudar (ou for atualizada após guardar), repõe os campos do
   // formulário a partir do que está realmente gravado.
   useEffect(() => {
-    setResponseText(entry.responseText || "");
+    setResponseText(respostaInicial);
     setEficacia(entry.eficacia || "");
     setResolvedOn(
       entry.resolvedDate ? new Date(entry.resolvedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10)
     );
     setStartedOn(entry.startedDate ? new Date(entry.startedDate).toISOString().slice(0, 10) : "");
     setCausaRaiz(entry.causaRaiz || "");
-  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate, entry.startedDate, entry.causaRaiz]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.id, entry.responseText, entry.eficacia, entry.resolvedDate, entry.startedDate, entry.causaRaiz, entry.status]);
 
-  const submit = () => {
+  // tipo "nota" ou "respostaEE". A resposta do EE reabre a reclamação nesse dia, com novo prazo de 10 dias úteis.
+  const submit = (tipo) => {
     const v = note.trim();
     if (!v) return;
-    onAddNote(entry.id, v);
+    const data = noteDate && noteDate !== hojeStr ? new Date(noteDate + "T12:00:00").toISOString() : new Date().toISOString();
+    const mudancas = tipo === "respostaEE" ? { status: "em_andamento", resolvedDate: null, deadline: addBusinessDays(new Date(noteDate || hojeStr), BUSINESS_DAYS_DEADLINE).toISOString() } : null;
+    onAddNote(entry.id, v, tipo, data, mudancas);
     setNote("");
+    setNoteDate(hojeStr);
   };
 
   const confirmDone = () => {
@@ -846,32 +855,45 @@ export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, on
           </a>
         )}
 
-        {entry.description && (
-          <div style={{ fontSize: 13.5, marginBottom: 12, padding: "10px 12px", background: COLORS.paper, borderRadius: 4, border: `1px solid ${COLORS.rule}` }}>
-            {entry.description}
-          </div>
-        )}
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+          Linha temporal
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
+          {linha.map((n, i) => {
+            const meta = TIPOS_LINHA[n.tipo] || TIPOS_LINHA.nota;
+            const ultimaResposta = n.tipo === "resposta" && !linha.slice(i + 1).some((x) => x.tipo === "resposta");
+            return (
+              <div key={n.id || `${n.tipo}_${i}`} style={{ borderLeft: `3px solid ${meta.cor()}`, paddingLeft: 12 }}>
+                <div style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", color: COLORS.slate, marginBottom: 3 }}>
+                  <strong style={{ color: meta.cor(), textTransform: "uppercase", letterSpacing: "0.04em" }}>{meta.rotulo}</strong>
+                  {" · "}
+                  {n.soDia ? fmt(new Date(n.date)) : new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(n.date))}
+                  {ultimaResposta && entry.causaRaiz ? ` · causa: ${nomeCausa(entry.causaRaiz)}` : ""}
+                </div>
+                <div style={{ fontSize: 13.5, whiteSpace: "pre-wrap", color: n.tipo === "contexto" ? COLORS.slate : COLORS.ink }}>{n.text}</div>
+              </div>
+            );
+          })}
+        </div>
 
-        {entry.context && (
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-              Contexto adicional
-            </div>
-            <div style={{ fontSize: 13, color: COLORS.slate, whiteSpace: "pre-wrap" }}>{entry.context}</div>
+        <div className="semFoto" style={{ marginBottom: 20 }}>
+          <textarea
+            rows={2}
+            placeholder="Nota do que fizeste, ou a resposta que o encarregado de educação enviou…"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <input type="date" value={noteDate} max={hojeStr} onChange={(e) => setNoteDate(e.target.value)} aria-label="Data" style={{ ...inputStyle, width: "auto", padding: "6px 8px" }} />
+            <button onClick={() => submit("nota")} style={{ ...primaryBtnStyle, flex: "none", padding: "7px 14px" }}>
+              Adicionar nota
+            </button>
+            <button onClick={() => submit("respostaEE")} title="Regista a resposta do encarregado de educação e reabre a reclamação nesse dia (novo prazo de 10 dias úteis)" style={{ ...secondaryBtnStyle, flex: "none", padding: "7px 14px", fontSize: 12.5 }}>
+              Resposta do EE (reabre)
+            </button>
           </div>
-        )}
-
-        {entry.status === "concluido" && entry.responseText && (
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ok, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-              Resposta dada à reclamação
-              {entry.causaRaiz ? ` · causa: ${nomeCausa(entry.causaRaiz)}` : ""}
-            </div>
-            <div style={{ fontSize: 13.5, padding: "10px 12px", background: COLORS.okBg, borderRadius: 4, border: `1px solid ${COLORS.ok}`, whiteSpace: "pre-wrap" }}>
-              {entry.responseText}
-            </div>
-          </div>
-        )}
+        </div>
 
         {entry.derivedStatus === "concluido" && <AvaliacaoEscola entry={entry} contactos={contactosEscola} notificar={notificar} />}
 
@@ -997,43 +1019,31 @@ export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, on
             </button>
           </div>
         )}
-
-        <div style={{ fontSize: 11.5, fontWeight: 600, color: COLORS.slate, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
-          O que já foi feito / o que falta fazer
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <textarea
-            rows={2}
-            placeholder="Ex: Contactado o reclamante por telefone; falta confirmar com a escola..."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", flex: 1 }}
-          />
-          <button onClick={submit} style={{ ...primaryBtnStyle, flex: "none", padding: "0 16px" }}>
-            Adicionar
-          </button>
-        </div>
-
-        {notes.length === 0 ? (
-          <div style={{ fontSize: 13, color: COLORS.slate }}>Ainda sem notas.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {notes.map((n) => (
-              <div key={n.id} style={{ borderLeft: `2.5px solid ${COLORS.navySoft}`, paddingLeft: 12 }}>
-                <div style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", color: COLORS.slate, marginBottom: 3 }}>
-                  {new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(
-                    new Date(n.date)
-                  )}
-                </div>
-                <div style={{ fontSize: 13.5 }}>{n.text}</div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
+}
+
+// Cores por função (COLORS muda com o tema, por isso lê-se na hora).
+const TIPOS_LINHA = {
+  reclamacao: { rotulo: "Reclamação", cor: () => COLORS.navy },
+  contexto: { rotulo: "Contexto adicional", cor: () => COLORS.slate },
+  nota: { rotulo: "Nota", cor: () => COLORS.navySoft },
+  resposta: { rotulo: "Resposta dada", cor: () => COLORS.ok },
+  respostaEE: { rotulo: "Resposta do EE · reaberta", cor: () => COLORS.warn },
+};
+
+// Tudo o que aconteceu na reclamação, por ordem: reclamação, contexto, notas, respostas e respostas do EE.
+// Registos antigos (sem notas do tipo "resposta") mostram o responseText na data de conclusão.
+export function linhaTemporal(entry) {
+  const rec = entry.receivedDate ? new Date(entry.receivedDate + "T00:00:00").toISOString() : new Date(0).toISOString();
+  const notas = (entry.notes || []).map((n) => ({ ...n, tipo: n.tipo || "nota" }));
+  const itens = [];
+  if (entry.description) itens.push({ tipo: "reclamacao", date: rec, text: entry.description, soDia: true, ordem: 0 });
+  if (entry.context) itens.push({ tipo: "contexto", date: rec, text: entry.context, soDia: true, ordem: 1 });
+  if (entry.responseText && !notas.some((n) => n.tipo === "resposta")) itens.push({ tipo: "resposta", date: entry.resolvedDate || rec, text: entry.responseText, soDia: true, ordem: 2 });
+  notas.forEach((n) => itens.push({ ...n, ordem: 2 }));
+  return itens.sort((a, b) => new Date(a.date) - new Date(b.date) || a.ordem - b.ordem);
 }
 
 
