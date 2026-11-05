@@ -2,6 +2,7 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../supabaseClient";
+import { PainelDocumentacao } from "../baseConhecimento.jsx";
 import { Plus, X, Search, Mail, Sparkles } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { CANAL_META, COLORS, SEVERITY_META, STATUS_META, Stamp, StatCard, Tag, Vazio, addDays, colorForLabel, epocaAud, epocaDe, fmt, iconBtnStyle, inputStyle, isBusinessDay, labelStyle, linkBtnStyle, nomeCausa, normChave, normalizeText, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle, tokenize } from "../nucleo.jsx";
@@ -874,6 +875,20 @@ export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, on
         )}
 
         {entry.derivedStatus === "concluido" && <AvaliacaoEscola entry={entry} contactos={contactosEscola} notificar={notificar} />}
+
+        {entry.derivedStatus !== "concluido" && (
+          <PainelDocumentacao
+            consulta={textoReclamacao(entry)}
+            uso="reclamacoes"
+            rotuloUsar="Acrescentar à resposta"
+            onUsar={(texto) => {
+              setResponseText((r) => (r ? `${r}
+
+${texto}` : texto));
+              setConcluding(true);
+            }}
+          />
+        )}
 
         {entry.derivedStatus !== "concluido" && (
           <SugestoesResposta
