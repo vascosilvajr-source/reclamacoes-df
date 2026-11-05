@@ -2392,6 +2392,12 @@ function AppPrincipal({ onSair, email }) {
   useEffect(() => {
     (async () => {
       try {
+        // Um só pedido para tudo o que o arranque lê (antes eram ~30 pedidos em série).
+        await dbStorage.carregar([STORAGE_KEY, STORAGE_OPTIONS_KEY, STORAGE_AUDITS_KEY, STORAGE_SANCOES_KEY, STORAGE_INSCRITOS_KEY, STORAGE_TURMAS_KEY, STORAGE_EPOCA_ANT_KEY, STORAGE_DESISTENCIAS_KEY, STORAGE_EXPERIENCIAS_KEY, STORAGE_ALUNOS_KEY, STORAGE_DESVINC_KEY, STORAGE_ESPACOS_KEY, STORAGE_EVENTOS_KEY, STORAGE_RISCOS_KEY, STORAGE_OBJETIVOS_KEY, STORAGE_DOCUMENTOS_KEY, STORAGE_FORMACAO_KEY, STORAGE_RH_KEY, STORAGE_APAGADOS_KEY, STORAGE_OCORRENCIAS_KEY, STORAGE_AVALIACOES_KEY, STORAGE_RADAR_KEY, STORAGE_SATISFACAO_KEY, STORAGE_INQUERITOS_KEY, STORAGE_NOTAS_REL_KEY, STORAGE_PLANO_INQ_KEY, STORAGE_RESPOSTAS_KEY, STORAGE_TRIAGEM_KEY]);
+      } catch (e) {
+        // falhou o pedido único: cada get() abaixo tenta sozinho
+      }
+      try {
         const res = await armazem.get(STORAGE_KEY);
         if (res && res.value) setEntries(JSON.parse(res.value));
       } catch (e) {
@@ -3351,7 +3357,7 @@ function AppPrincipal({ onSair, email }) {
 
   const nextNumber = entries.length ? Math.max(...entries.map((e) => e.entryNumber)) + 1 : 1;
 
-  const withStatus = entries.map((e) => ({ ...e, derivedStatus: deriveStatus(e) }));
+  const withStatus = useMemo(() => entries.map((e) => ({ ...e, derivedStatus: deriveStatus(e) })), [entries]);
 
   const filtered = withStatus
     .filter((e) => (filterCanal === "todos" ? true : e.canal === filterCanal))
@@ -3657,7 +3663,8 @@ function AppPrincipal({ onSair, email }) {
       itensEp || [],
       ign || []
     );
-  const avisosRiscos = (() => {
+  // A deteção percorre auditorias, reclamações, alunos e eventos: só se refaz quando esses dados mudam.
+  const avisosRiscos = useMemo(() => {
     const eps = Object.keys(riscos.epocas || {}).sort();
     const epHoje = epocaDe(isoDe(new Date()));
     const ep = eps.includes(epHoje) || !eps.length ? epHoje : eps[eps.length - 1];
@@ -3667,23 +3674,24 @@ function AppPrincipal({ onSair, email }) {
     } catch (e) {
       return null;
     }
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riscos, auditsVista, withStatus, sanctions, desistencias, eventos, registoAlunos, ocorrencias, options.capacidades, options.niveis]);
 
   // Sugestões do radar que ainda ninguém tratou (nem na lista, nem ignoradas).
-  const radarNovas = (() => {
+  const radarNovas = useMemo(() => {
     const naLista = new Set(Object.values(riscos.epocas || {}).flatMap((e) => (e.itens || []).map((i) => i.radar).filter(Boolean)));
     const ign = new Set(riscos.radarIgnorados || []);
     return ((radar && radar.itens) || []).filter((r) => !naLista.has(r.id) && !ign.has(r.id));
-  })();
+  }, [riscos, radar]);
 
-  const contagemHoje = (() => {
+  const contagemHoje = useMemo(() => {
     try {
       const ctx = { avisosRiscos, radarNovas, ocorrencias, reclamacoes: withStatus, plano: planoInq, regrasEnvio: { ...DEFAULT_REGRAS_ENVIO, ...(options.regrasEnvioInq || {}) }, audits: auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritos: inscritosVista, epocaAnterior, escolas: options.schools || [], sanctions, hoje: isoDe(new Date()), abrirReclamacao: () => {}, irPara: () => {} };
       return FONTES_HOJE.flatMap((f) => f(ctx) || []).filter((i) => i.quando !== "semana").length;
     } catch (e) {
       return 0;
     }
-  })();
+  }, [avisosRiscos, radarNovas, ocorrencias, withStatus, planoInq, options.regrasEnvioInq, options.schools, auditsVista, experiencias, desvinculacoes, turmasAlunos, inscritosVista, epocaAnterior, sanctions]);
 
   // Contactos e ações dos e-mails às escolas (página própria e experiências).
   const opEmails = {

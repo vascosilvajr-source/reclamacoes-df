@@ -59,7 +59,7 @@ Claude-Session: https://claude.ai/code/session_01Tj5HwVs4WGxkiC96R9RioF
 | `src/foto.js` | `imprimirBalanco()`: PDF via impressão (A4, `vertical` opcional) |
 | `src/imagens.js` | `LOGO_BRANCO`, `FOTO_ESTADIO` |
 | `src/sgq.js` | Lógica de qualidade: estados, metas, derivações |
-| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `remover_notebooklm.sql` (apaga a função `nlm_resumo`, já sem uso), `endurecer.sql` (links expirados sem dados; pré-visualização só com sessão), `juntar_utilizador.sql` (juntar uma pessoa à equipa) |
+| `supabase/` | SQL das migrações: `seguranca.sql` (acesso só da equipa; correr primeiro), `operacionais.sql` (RPCs dos e-mails), `remover_notebooklm.sql` (apaga a função `nlm_resumo`, já sem uso), `endurecer.sql` (links expirados sem dados; pré-visualização só com sessão), `endurecer2.sql` (token interno sem falha aberta, um link por reclamação, versão do `app_storage` para a app não gravar por cima de alterações de outros; correr depois do `operacionais.sql`), `juntar_utilizador.sql` (juntar uma pessoa à equipa) |
 | `wrangler.jsonc` | Config do deploy Cloudflare (serve `dist/`, modo SPA) |
 
 - **Encontrar código:** `grep -rn "function Nome" src`. Uma página nova ou componente grande vai para `src/paginas/<area>.jsx` e entra em `CARREGAR_PAGINA` + `aMedida` no `nucleo.jsx`. O que é usado por várias páginas vai para `partilhado.jsx` (ou `nucleo.jsx` se o App/Hoje também usa). `nucleo.jsx` nunca importa de `App.jsx` nem das páginas.

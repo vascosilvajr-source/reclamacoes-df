@@ -79,16 +79,7 @@ create or replace function privado.epoca_atual() returns text language sql stabl
 $$;
 
 -- 2a. Página de uma reclamação para o coordenador (link sem login): descrição e contexto, nunca o nome de quem reclamou.
-create or replace function privado.link_reclamacao(p_escola text, p_x jsonb) returns text language plpgsql as $$
-declare v_tok text := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
-begin
-  insert into pedidos_operacionais (token, escola, emails, expira, itens, enviado_em)
-  values (v_tok, p_escola, '[]'::jsonb, now() + interval '30 days',
-    jsonb_build_object('tipo', 'reclamacao', 'numero', p_x->>'entryNumber', 'tema', coalesce(p_x->>'tema', ''), 'categoria', coalesce(p_x->>'categoria', ''),
-      'recebida', coalesce(p_x->>'receivedDate', ''), 'estado', case when p_x->>'status' = 'concluido' then 'concluída' else 'em aberto' end,
-      'descricao', left(coalesce(p_x->>'description', ''), 4000), 'contexto', left(coalesce(p_x->>'context', ''), 4000)), now());
-  return v_tok;
-end $$;
+--     A versão atual (reaproveita o link ainda válido) está em endurecer2.sql, que corre depois deste ficheiro.
 
 -- 2c. Resumo das reclamações de origem técnica de uma escola na época: quantas, quantas em aberto
 --     e os temas mais mencionados. Técnica = categoria "Técnico" ou um dos temas técnicos escolhidos na app.
@@ -262,7 +253,7 @@ declare
   v_prev text; v_regp jsonb; v_gem jsonb; v_geral jsonb;
   v_regs jsonb; v_rc jsonb; v_marc jsonb; v_recAv jsonb; v_lot jsonb; v_at jsonb; v_alvo jsonb; v_papeis jsonb; v_manual boolean; v_dest jsonb; v_dg boolean; v_da boolean; v_dd boolean; v_geral_ok boolean; v_preview boolean := false; v_para jsonb; v_prevj jsonb := '{}'::jsonb;
 begin
-  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+  if p_token is null or p_token is distinct from (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
   select value into v_opc from app_storage where key = 'reclamacoes:opcoes';
@@ -451,8 +442,7 @@ returns jsonb language plpgsql security definer set search_path to 'public' as $
 declare v jsonb;
 begin
   if length(coalesce(p_token, '')) < 32 then return null; end if;
-  -- Primeira abertura do link: deixa de precisar de lembrete.
-  update pedidos_operacionais set aberto_em = now() where token = p_token and aberto_em is null;
+  -- "Aberto" só com interação humana: marca-o op_aberto (ver abertura.sql).
   -- Link expirado: só diz que expirou (não devolve turmas, alunos nem reclamações).
   select jsonb_build_object('escola', p.escola, 'expira', p.expira, 'expirado', true)
     into v from pedidos_operacionais p where p.token = p_token and p.expira < now();
@@ -654,7 +644,7 @@ create or replace function public.op_eficacia_pendentes(p_token text)
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
 declare v_res jsonb; v_opc jsonb; v_n int;
 begin
-  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+  if p_token is null or p_token is distinct from (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
   select value into v_opc from app_storage where key = 'reclamacoes:opcoes';
@@ -710,7 +700,7 @@ create or replace function public.op_fila_proximos(p_token text, p_max int defau
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
 declare v_res jsonb;
 begin
-  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+  if p_token is null or p_token is distinct from (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
   perform privado.enfileirar_lembretes();
@@ -736,7 +726,7 @@ grant execute on function public.op_fila_proximos(text, int) to anon, authentica
 create or replace function public.op_fila_confirmar(p_token text, p_id bigint, p_ok boolean, p_erro text default null, p_adiar boolean default false)
 returns jsonb language plpgsql security definer set search_path to 'public','privado' as $$
 begin
-  if p_token is null or p_token <> (select valor from privado.segredos where nome = 'radar_token') then
+  if p_token is null or p_token is distinct from (select valor from privado.segredos where nome = 'radar_token') then
     raise exception 'token inválido';
   end if;
   if p_ok then
@@ -771,3 +761,19 @@ begin
 end $$;
 revoke all on function public.op_enviar_oportunidade(jsonb, jsonb) from public, anon;
 grant execute on function public.op_enviar_oportunidade(jsonb, jsonb) to authenticated;
+
+-- 6. Repõe o search_path fixo nas funções privadas (o create or replace acima limpa-o).
+-- Fixa o search_path das funções do esquema privado (aviso "Function Search Path Mutable" do Supabase).
+-- Impede que uma função seja enganada por objetos com o mesmo nome noutro esquema.
+-- Idempotente: pode correr-se várias vezes. Não altera dados nem a lógica das funções.
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as assinatura
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'privado' and p.prokind = 'f'
+  loop
+    execute format('alter function %s set search_path = public, privado, pg_temp', f.assinatura);
+  end loop;
+end $$;
