@@ -4891,6 +4891,8 @@ function AppPrincipal({ onSair, email }) {
           schoolOptions={options.schools}
           onGerirLista={setListaAberta}
           audits={audits}
+          // Só o nome (parte antes do @): o e-mail completo não aparece nos dados nem nos PDFs.
+          autor={String(email || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(" ")}
         />
       )}
 

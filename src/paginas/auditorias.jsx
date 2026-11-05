@@ -236,6 +236,7 @@ export function AuditDetail({
   schoolOptions,
   onGerirLista,
   audits,
+  autor = "",
 }) {
   const [editarVisita, setEditarVisita] = useState(false);
   const [preencher, setPreencher] = useState(false);
@@ -263,6 +264,7 @@ export function AuditDetail({
     onAddFinding(audit.id, {
       id: `f_${Date.now()}`,
       ...nova,
+      ...(autor ? { por: autor } : {}),
       ...(sug.certeza === "alta" && sug.c ? { iso: sug.c, isoOrigem: "auto" } : {}),
       resolvida: false,
       eficacia: "",
@@ -564,7 +566,14 @@ export function AuditDetail({
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: 13.5 }}>{f.description}</div>
+                      <div style={{ fontSize: 13.5 }}>
+                        {f.description}
+                        {f.por && (
+                          <span title="Quem registou esta constatação" style={{ marginLeft: 8, padding: "1px 7px", borderRadius: 999, fontSize: 10.5, fontWeight: 600, color: COLORS.ink2, background: COLORS.paperSunken, border: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
+                            {f.por}
+                          </span>
+                        )}
+                      </div>
                       {repetida && (
                         <div style={{ fontSize: 11.5, color: COLORS.warn, marginTop: 3 }}>
                           Já em {dataAud(repetida.audit)}: «{repetida.f.description}»{repetida.f.resolvida ? " · tinha sido dada como resolvida" : " · ainda por resolver"}
