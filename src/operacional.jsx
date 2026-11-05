@@ -221,6 +221,20 @@ export default function Operacional({ token }) {
     })();
   }, [token]);
 
+  // "Abriu" só conta com interação humana (clique, toque, teclado, scroll): os filtros de segurança
+  // do e-mail abrem os links sozinhos e não mexem na página.
+  useEffect(() => {
+    if (estado !== "pronto") return undefined;
+    const eventos = ["pointerdown", "keydown", "touchstart", "wheel", "scroll"];
+    const feito = (e) => {
+      if (e && e.isTrusted === false) return;
+      eventos.forEach((n) => window.removeEventListener(n, feito, true));
+      supabase.rpc("op_aberto", { p_token: token }).then(() => {}, () => {});
+    };
+    eventos.forEach((n) => window.addEventListener(n, feito, true));
+    return () => eventos.forEach((n) => window.removeEventListener(n, feito, true));
+  }, [estado, token]);
+
   const itens = (pedido && pedido.itens) || {};
   const ehEficacia = itens.tipo === "eficacia";
   const experiencias = itens.experiencias || [];
