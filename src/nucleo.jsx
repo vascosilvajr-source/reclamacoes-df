@@ -1096,6 +1096,11 @@ export const MOTIVOS_EXPERIENCIA_PADRAO = ["Técnico (treino ou treinador)", "Ho
 // ---------- Espaços: mapa de ocupação com lotação automática ----------
 // Turmas de um bloco do mapa (os blocos antigos tinham uma só turma).
 export const turmasDoBloco = (b) => (Array.isArray(b.turmas) && b.turmas.length ? b.turmas : b.turma ? [b.turma] : []);
+// Nome de turma sem época nem pontuação, para comparar nomes dos Espaços com os dos inscritos.
+export const compactoTurma = (t) =>
+  normChave(String(t || "").replace(/\b\d{2}\s*\/\s*\d{2}\b/g, ""))
+    .replace(/\bepoca\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
 
 // Alunos inscritos numa data (entraram até lá e não tinham saído).
 export function alunosNaData(reg, data) {

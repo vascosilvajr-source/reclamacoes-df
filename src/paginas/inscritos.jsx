@@ -6,9 +6,10 @@ import { imprimirBalanco } from "../foto";
 import { semHorario } from "../rh";
 import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAcompanhamento } from "../inscritosAtuais";
 import { LOGO_BRANCO } from "../imagens";
+import { AnaliseAlunosEvento } from "./eventosHistorico.jsx";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, Area, ComposedChart, LabelList } from "recharts";
-import { COLORS, PainelCamps, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
+import { COLORS, PainelCamps, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, compactoTurma, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
 import { BarrasRel, BotaoFoto, ComparacaoEpocas, DicaGrafico, FiltroEpocas, Filtros, JanelaSGQ, MESES_EPOCA, MES_CURTO, QuadrantMatrix, SemDados, TickEixoX, corSatisfacao, dataDeCelula, descarregarXlsx, epocasDisponiveis, fmtNum, lerCSVInq, lerExcelInq, mesDeData, naSelecao, nomeEscolaProposto, selecaoInicial, tdStyle, textoSelecao, thStyle } from "../partilhado.jsx";
 
 const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -2498,13 +2499,25 @@ function lerInscritosEvento(folhas) {
       const flag = cab.findIndex((h) => /^inscrit/.test(h));
       const esc = escAl.map((a) => cab.indexOf(a)).find((j) => j >= 0);
       const escal = cab.findIndex((h) => h === "escalao" || h === "escalão" || h === "nivel");
+      const nasc = cab.findIndex((h) => /nascimento/.test(h));
       if (id < 0 && esc === undefined) continue;
       const dados = fo.linhas.slice(i + 1).filter((l) => l.some((c) => String(c ?? "").trim()));
-      cands.push({ nome: fo.nome, id, flag, esc: esc === undefined ? -1 : esc, escal, dados });
+      cands.push({ nome: fo.nome, id, flag, esc: esc === undefined ? -1 : esc, escal, nasc, dados });
       break;
     }
   });
   const val = (l, j) => (j >= 0 ? String(l[j] ?? "").trim() : "");
+  // Só o ano de nascimento (para o limite de idade dos externos, que não têm ficha na app).
+  const comAnos = (c, r) => {
+    if (c.nasc < 0) return r;
+    const anos = {};
+    c.dados.forEach((l) => {
+      const id = val(l, c.id).replace(/\.0+$/, "");
+      const a = anoNascimento(val(l, c.nasc));
+      if (id && a) anos[id] = a;
+    });
+    return { ...r, anos };
+  };
   const soInscritos = (c) => /inscrit|particip/i.test(c.nome);
   const contarPorEscola = (c) => {
     const porEscola = {};
@@ -2524,19 +2537,19 @@ function lerInscritosEvento(folhas) {
   if (lista) {
     if (lista.id >= 0) {
       const ids = [...new Set(lista.dados.map((l) => val(l, lista.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
-      if (ids.length) return { modo: "ids", ids, folha: lista.nome, explicacao: `folha "${lista.nome}": ${ids.length} códigos do atleta` };
+      if (ids.length) return comAnos(lista, { modo: "ids", ids, folha: lista.nome, explicacao: `folha "${lista.nome}": ${ids.length} códigos do atleta` });
     }
     if (lista.esc >= 0) return contarPorEscola(lista);
   }
   const comFlag = cands.find((c) => c.id >= 0 && c.flag >= 0);
   if (comFlag) {
     const ids = [...new Set(comFlag.dados.filter((l) => SIM_EVENTO.test(normChave(val(l, comFlag.flag)))).map((l) => val(l, comFlag.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
-    if (ids.length) return { modo: "ids", ids, folha: comFlag.nome, explicacao: `folha "${comFlag.nome}": ${ids.length} alunos marcados como inscritos` };
+    if (ids.length) return comAnos(comFlag, { modo: "ids", ids, folha: comFlag.nome, explicacao: `folha "${comFlag.nome}": ${ids.length} alunos marcados como inscritos` });
   }
   const comId = cands.filter((c) => c.id >= 0).sort((a, b) => soInscritos(b) - soInscritos(a))[0];
   if (comId) {
     const ids = [...new Set(comId.dados.map((l) => val(l, comId.id).replace(/\.0+$/, "")).filter((x) => /\d/.test(x)))];
-    if (ids.length) return { modo: "ids", ids, folha: comId.nome, explicacao: `folha "${comId.nome}": ${ids.length} códigos do atleta` };
+    if (ids.length) return comAnos(comId, { modo: "ids", ids, folha: comId.nome, explicacao: `folha "${comId.nome}": ${ids.length} códigos do atleta` });
   }
   const comEsc = cands.filter((c) => c.esc >= 0).sort((a, b) => soInscritos(b) - soInscritos(a) || a.dados.length - b.dados.length)[0];
   if (!comEsc) return null;
@@ -2650,7 +2663,20 @@ function EditarPublicoEvento({ ev, listaEscolas, registoAlunos, niveis, onUpdate
   );
 }
 
-function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, onMapaEscola, onSave, onUpdate, onRemove }) {
+function SecaoEventos({ escolas, eventos, registoAlunos, niveis, espacos, mapaEscolas, onMapaEscola, onSave, onUpdate, onRemove }) {
+  // Filtro de análise (não fica gravado): escolas tiradas e turmas/equipas escolhidas recalculam todas as taxas.
+  const [foraAn, setForaAn] = useState([]);
+  const [escalAn, setEscalAn] = useState([]);
+  const filtroAtivo = foraAn.length > 0 || escalAn.length > 0;
+  const evAn = (ev) => {
+    if (!filtroAtivo) return ev;
+    const esc = ev.escaloes && ev.escaloes.length ? (escalAn.length ? ev.escaloes.filter((k) => escalAn.includes(k)) : ev.escaloes) : escalAn;
+    return { ...ev, excluidas: [...new Set([...(ev.excluidas || []), ...foraAn])], escaloes: escalAn.length && !esc.length ? ["__nenhum__"] : esc };
+  };
+  const passaAn = (id, ep) => {
+    const a = registoAlunos[ep] && registoAlunos[ep].alunos && registoAlunos[ep].alunos[id];
+    return !a || (!foraAn.includes(a.escola) && (!escalAn.length || escalAn.includes(escalaoDaTurma(a.turma, niveis))));
+  };
   const hoje = isoDe(new Date());
   const [nome, setNome] = useState("");
   const [data, setData] = useState(hoje);
@@ -2683,7 +2709,9 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
   const daEpoca = novos.filter((e) => naSelecao(epSel, epocaDe(e.data)));
   const evSel = fEv !== "todos" && daEpoca.some((e) => e.id === fEv) ? fEv : "todos";
   const visiveis = evSel === "todos" ? daEpoca : daEpoca.filter((e) => e.id === evSel);
-  const contaDe = new Map(visiveis.map((ev) => [ev.id, contasEvento(ev, registoAlunos, niveis)]));
+  const contaDe = new Map(visiveis.map((ev) => [ev.id, contasEvento(evAn(ev), registoAlunos, niveis)]));
+  const escolasAn = [...new Set(epSel.flatMap((ep) => Object.values(registoAlunos[ep]?.alunos || {}).map((a) => a.escola)))].sort((a, b) => a.localeCompare(b, "pt"));
+  const escaloesAn = [...new Set(epSel.flatMap((ep) => Object.values(registoAlunos[ep]?.alunos || {}).map((a) => escalaoDaTurma(a.turma, niveis))))].sort((a, b) => ORDEM_ESCALAO(a, niveis) - ORDEM_ESCALAO(b, niveis));
   const comAdesao = visiveis.filter((ev) => contaDe.get(ev.id).adesao !== null);
   const somaIns = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.inscritosTodos, 0);
   const somaEleg = comAdesao.reduce((t, ev) => t + contaDe.get(ev.id).tot.elegiveis, 0);
@@ -2745,7 +2773,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
       const r = lerInscritosEvento(lidas);
       if (!r) throw new Error("não encontrei o código do atleta nem a escola dos inscritos");
       let participantes = { ids: [], manual: {} };
-      if (r.modo === "ids") participantes = { ids: r.ids, manual: {}, decisoes: (ev.participantes && ev.participantes.decisoes) || {} };
+      if (r.modo === "ids") participantes = { ids: r.ids, manual: {}, decisoes: (ev.participantes && ev.participantes.decisoes) || {}, ...(r.anos ? { anos: r.anos } : {}) };
       else {
         // Nome da escola no Excel ("Porto", "CN Gaia") → escola da app.
         // Procura primeiro nas escolas com alunos na época do evento.
@@ -2910,6 +2938,31 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
 
           {formulario}
 
+          <details open={filtroAtivo || undefined} style={{ ...panelStyle, marginBottom: 12, padding: "10px 14px" }}>
+            <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              Filtrar a análise {filtroAtivo ? `· ${foraAn.length ? `sem ${foraAn.length} ${foraAn.length === 1 ? "escola" : "escolas"}` : "todas as escolas"} · ${escalAn.length ? escalAn.join(", ") : "todas as turmas e equipas"}` : "(escolas, turmas e equipas)"}
+            </summary>
+            <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, marginRight: 4 }}>Turmas / equipas</span>
+                {chip(!escalAn.length, () => setEscalAn([]), "Todas", "__todasT")}
+                {chip(escalAn.length > 0 && escalAn.every((k) => !/^sub-|^competi/i.test(k)), () => setEscalAn(escaloesAn.filter((k) => !/^sub-|^competi/i.test(k))), "Só turmas", "__soT")}
+                {chip(escalAn.length > 0 && escalAn.every((k) => /^sub-|^competi/i.test(k)), () => setEscalAn(escaloesAn.filter((k) => /^sub-|^competi/i.test(k))), "Só equipas de competição", "__soE")}
+                {escaloesAn.map((k) => chip(escalAn.includes(k), () => alterna(setEscalAn, k), k, `e_${k}`))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, marginRight: 4 }}>Escolas (toca para tirar)</span>
+                {chip(!foraAn.length, () => setForaAn([]), "Todas", "__todasE")}
+                {escolasAn.map((e) => (
+                  <button key={`f_${e}`} type="button" onClick={() => alterna(setForaAn, e)} style={{ border: `1px solid ${COLORS.rule}`, background: foraAn.includes(e) ? COLORS.paperSunken : COLORS.paperRaised, color: foraAn.includes(e) ? COLORS.slate : COLORS.ink, textDecoration: foraAn.includes(e) ? "line-through" : "none", borderRadius: 7, padding: "4px 9px", fontSize: 12.5, cursor: "pointer" }}>
+                    {e.replace(/^Dragon Force\s+/, "")}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11.5, color: COLORS.slate }}>Só muda a análise (adesão, comparação, histórico e turmas). Os eventos gravados ficam iguais.</div>
+            </div>
+          </details>
+
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <StatCard label="Eventos" value={visiveis.length} subtitle={`${realizados} realizados · ${visiveis.length - realizados} por realizar`} />
             <StatCard label="Adesão média" value={fmtPct(adesaoGlobal)} color={COLORS.navy} anel={adesaoGlobal === null ? null : Math.round(adesaoGlobal)} subtitle={somaEleg ? `${fmtNum(somaIns)} de ${fmtNum(somaEleg)} elegíveis` : "sem elegíveis calculados"} />
@@ -2932,7 +2985,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
               ]}
               calcular={(ep, lim) => {
                 const evs = novos.filter((e) => epocaDe(e.data) === ep && (!lim || e.data <= lim));
-                const cs = evs.map((e) => contasEvento(e, registoAlunos, niveis));
+                const cs = evs.map((e) => contasEvento(evAn(e), registoAlunos, niveis));
                 const com = cs.filter((c) => c.adesao !== null);
                 const el = com.reduce((t, c) => t + c.tot.elegiveis, 0);
                 const sats = evs.filter((e) => e.satisfacao !== null && e.satisfacao !== undefined && e.satisfacao !== "");
@@ -3250,6 +3303,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, mapaEscolas, on
                 {c.foraEscolas > 0 && <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 8 }}>{c.foraEscolas} inscritos no evento são de escolas fora do público definido (não contam na adesão).</div>}
                 {(c.casos.length > 0 || c.ignorados > 0) && <RevisaoEvento ev={ev} c={c} escolas={[...new Set(Object.values(registoAlunos[c.ep]?.alunos || {}).map((a) => a.escola))].sort()} onUpdate={onUpdate} />}
                 <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 6 }}>Os números da coluna "Inscritos no evento" vêm do Excel; podes corrigi-los à mão.</div>
+                <AnaliseAlunosEvento ev={ev} eventos={eventos} registoAlunos={registoAlunos} niveis={niveis} espacos={espacos} passa={passaAn} onUpdate={onUpdate} />
               </div>
             )}
           </div>
@@ -3518,7 +3572,7 @@ export function InscritosPage({
           onGuardarNormalizacao={onGuardarNormalizacao}
         />
       ) : view === "eventos" ? (
-        <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} mapaEscolas={options.mapaEscolasAlunos || {}} onMapaEscola={onMapaEscolaEvento} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
+        <SecaoEventos escolas={escolas} eventos={eventos} registoAlunos={registoAlunos || {}} niveis={niveis} espacos={espacos} mapaEscolas={options.mapaEscolasAlunos || {}} onMapaEscola={onMapaEscolaEvento} onSave={onSaveEvento} onUpdate={onUpdateEvento} onRemove={onRemoveEvento} />
       ) : view === "registo" ? (
         <InscritosRegisto
           escolas={escolas}
@@ -5532,10 +5586,6 @@ function InscritosRegisto({ escolas, inscritos, turmasAlunos, epocaAnterior, opt
 // Semelhança entre dois nomes de turma (0 a 1). Ignora maiúsculas, acentos, espaços,
 // hífenes e a época no nome ("26/27 SUB-10 A" ≈ "Sub-10A"); números diferentes
 // (Sub-14 vs Sub-15) contam como turmas diferentes.
-const compactoTurma = (t) =>
-  normChave(String(t || "").replace(/\b\d{2}\s*\/\s*\d{2}\b/g, ""))
-    .replace(/\bepoca\b/g, "")
-    .replace(/[^a-z0-9]/g, "");
 function distanciaTexto(a, b) {
   const d = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
