@@ -2,7 +2,6 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import { useState, useMemo } from "react";
 import { Plus, X, Trash2, Pencil, ShieldAlert, Scale, Users } from "lucide-react";
-import { PainelDocumentacao } from "../baseConhecimento.jsx";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { COLORS, MOTIVO_META, StatCard, Tag, Vazio, colorForLabel, epocaDe, fmt, iconBtnStyle, inputStyle, labelStyle, linkBtnStyle, nomeOcorrencia, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle } from "../nucleo.jsx";
 import { ComparacaoEpocas, DF_STAGE_META, DicaGrafico, PERSON_TYPE_META, TickNome, naEpoca } from "../partilhado.jsx";
@@ -431,15 +430,6 @@ export function SanctionDetail({ sanction, onClose, onUpdate, onAddNote, onRemov
             {sanction.description}
           </div>
         )}
-
-        <PainelDocumentacao
-          consulta={[sanction.sanctionType, sanction.motivo, sanction.description].filter(Boolean).join(" ")}
-          uso="sancoes"
-          titulo="Enquadramento na documentação"
-          rotuloUsar="Anexar às notas"
-          onUsar={(t) => setNote((n) => (n ? `${n}
-${t}` : t))}
-        />
 
         {sanction.personType !== "elemento_df" ? (
           <div style={{ marginBottom: 20 }}>

@@ -1,8 +1,7 @@
 // Quizz de formação: módulos (teoria + perguntas com o "porquê" e o artigo), links por pessoa e resultados.
 // O módulo é copiado para o servidor no momento de atribuir (formacao_pedidos); a pessoa abre ?fm=<código>.
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, X, ArrowUp, ArrowDown, Copy, Check, BookOpen } from "lucide-react";
-import { citacao, gruposPara, procurar, temTrechos, useConhecimento } from "../conhecimento";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, X, ArrowUp, ArrowDown, Copy, Check } from "lucide-react";
 import { supabase } from "../supabaseClient";
 import { aplicarFormacoes, formacoesEmFalta, rhCompleto, saiu } from "../rh";
 import { COLORS, Tag, Vazio, iconBtnStyle, inputStyle, labelStyle, linkBtnStyle, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle } from "../nucleo.jsx";
@@ -28,120 +27,6 @@ const MODULO_NOVO = () => ({
   slides: [{ titulo: "", texto: "" }],
   perguntas: [{ id: novoId("p"), enunciado: "", opcoes: ["", ""], certa: 0, porque: "", ref: { docId: "", artigo: "" } }],
 });
-
-// Sugestões a partir da documentação (pasta do Obsidian): o pedido vai para o teu Claude (copiar/colar) e a resposta volta como rascunho.
-const pedidoParaClaude = (trechos, nSlides, nPerguntas) =>
-  `Vais ajudar a criar um módulo de formação para o pessoal da Dragon Force (FC Porto). Usa APENAS o texto das fontes abaixo, sem inventar nada. Escreve em português de Portugal.
-
-Cria ${nSlides} slides de teoria curtos e ${nPerguntas} perguntas de escolha múltipla (3 a 4 opções, só uma certa). Cada pergunta leva "porque" (explica a resposta certa) e "ref" com a fonte e o artigo ou secção de onde vem.
-
-Responde só com JSON válido, neste formato:
-{"slides":[{"titulo":"...","texto":"..."}],"perguntas":[{"enunciado":"...","opcoes":["...","...","..."],"certa":0,"porque":"...","ref":{"doc":"nome da fonte","artigo":"artigo ou secção"}}]}
-("certa" é a posição da opção certa, a começar em 0.)
-
-FONTES:
-${trechos.map((t, i) => `[${i + 1}] ${citacao(t)}\n${t.texto}`).join("\n\n")}`;
-
-function lerSugestao(texto) {
-  const m = String(texto || "").match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("não encontrei JSON na resposta");
-  const j = JSON.parse(m[0]);
-  const perguntas = (Array.isArray(j.perguntas) ? j.perguntas : [])
-    .filter((p) => p && String(p.enunciado || "").trim() && Array.isArray(p.opcoes) && p.opcoes.filter((o) => String(o).trim()).length >= 2)
-    .map((p) => ({
-      id: novoId("p"),
-      enunciado: String(p.enunciado).trim(),
-      opcoes: p.opcoes.map((o) => String(o).trim()),
-      certa: Number.isInteger(p.certa) && p.certa >= 0 && p.certa < p.opcoes.length ? p.certa : 0,
-      porque: String(p.porque || "").trim(),
-      ref: { docId: "", doc: String((p.ref && p.ref.doc) || "").trim(), artigo: String((p.ref && p.ref.artigo) || "").trim() },
-    }));
-  const slides = (Array.isArray(j.slides) ? j.slides : []).filter((s) => s && (String(s.titulo || "").trim() || String(s.texto || "").trim())).map((s) => ({ titulo: String(s.titulo || "").trim(), texto: String(s.texto || "").trim() }));
-  if (!perguntas.length && !slides.length) throw new Error("sem slides nem perguntas válidos");
-  return { perguntas, slides };
-}
-
-function SugerirDocumentacao({ onImportar }) {
-  const { indice } = useConhecimento();
-  const [aberto, setAberto] = useState(false);
-  const [tema, setTema] = useState("");
-  const [sel, setSel] = useState({});
-  const [nSlides, setNSlides] = useState(3);
-  const [nPerg, setNPerg] = useState(5);
-  const [colado, setColado] = useState("");
-  const [msg, setMsg] = useState("");
-  const [copiado, setCopiado] = useState(false);
-  const pronto = temTrechos(indice);
-  const res = useMemo(() => (pronto && tema.trim() ? procurar(indice, tema, { grupos: gruposPara(indice, "quizzes"), n: 8 }) : []), [indice, pronto, tema]);
-  const chave = (t) => `${t.nota}|${t.seccao}`;
-  const escolhidos = res.filter((t) => sel[chave(t)]);
-  const copiar = async () => {
-    try {
-      await navigator.clipboard.writeText(pedidoParaClaude(escolhidos, nSlides, nPerg));
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2500);
-    } catch (e) {
-      window.prompt("Copia o pedido:", pedidoParaClaude(escolhidos, nSlides, nPerg));
-    }
-  };
-  const importar = () => {
-    try {
-      const r = lerSugestao(colado);
-      onImportar(r);
-      setMsg(`Acrescentei ${r.slides.length} slides e ${r.perguntas.length} perguntas. Revê-os abaixo antes de guardar.`);
-      setColado("");
-    } catch (e) {
-      setMsg(`Não consegui importar: ${e?.message || e}`);
-    }
-  };
-  return (
-    <div style={{ border: `1px dashed ${COLORS.navySoft}`, borderRadius: 10, padding: 12, background: COLORS.navyWash }}>
-      <button type="button" onClick={() => setAberto((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <BookOpen size={14} /> Sugerir a partir da documentação {aberto ? "▾" : "▸"}
-      </button>
-      {aberto && (
-        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-          {!pronto ? (
-            <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>Liga primeiro a pasta do Obsidian em Controlo documental → Base de conhecimento.</div>
-          ) : (
-            <>
-              <input value={tema} onChange={(e) => setTema(e.target.value)} placeholder="Tema a pesquisar (ex.: uniforme, sinalização, primeiros socorros)" style={inputStyle} />
-              {res.map((t) => (
-                <label key={chave(t)} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, background: COLORS.paperRaised, border: `1px solid ${COLORS.rule}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer" }}>
-                  <input type="checkbox" checked={!!sel[chave(t)]} onChange={() => setSel((x) => ({ ...x, [chave(t)]: !x[chave(t)] }))} />
-                  <span>
-                    <b>{citacao(t)}</b> <span style={{ color: COLORS.slate }}>· {t.grupo}</span>
-                    <div style={{ color: COLORS.ink2, marginTop: 2 }}>{t.excerto}</div>
-                  </span>
-                </label>
-              ))}
-              {tema.trim() && res.length === 0 && <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>Nada encontrado nos grupos de quizzes.</div>}
-              {escolhidos.length > 0 && (
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
-                  <span>Slides</span>
-                  <input type="number" min="0" max="10" value={nSlides} onChange={(e) => setNSlides(Number(e.target.value) || 0)} style={{ ...inputStyle, width: 64, padding: "4px 6px" }} />
-                  <span>Perguntas</span>
-                  <input type="number" min="1" max="20" value={nPerg} onChange={(e) => setNPerg(Number(e.target.value) || 1)} style={{ ...inputStyle, width: 64, padding: "4px 6px" }} />
-                  <button type="button" onClick={copiar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "6px 12px", fontSize: 12.5 }}>
-                    {copiado ? "Copiado" : `Copiar pedido para o Claude (${escolhidos.length} fontes)`}
-                  </button>
-                </div>
-              )}
-              <div style={{ fontSize: 12, color: COLORS.slate }}>Cola o pedido no teu Claude, copia a resposta (JSON) e cola-a aqui:</div>
-              <textarea value={colado} onChange={(e) => setColado(e.target.value)} rows={4} placeholder='{"slides":[...],"perguntas":[...]}' style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace", fontSize: 12 }} />
-              <div>
-                <button type="button" disabled={!colado.trim()} onClick={importar} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "6px 14px", fontSize: 12.5, opacity: colado.trim() ? 1 : 0.5 }}>
-                  Importar sugestão
-                </button>
-              </div>
-            </>
-          )}
-          {msg && <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>{msg}</div>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function EditorModulo({ inicial, d, docs, onGuardar, onApagar, onFechar }) {
   const [m, setM] = useState(() => JSON.parse(JSON.stringify(inicial)));
@@ -243,14 +128,6 @@ function EditorModulo({ inicial, d, docs, onGuardar, onApagar, onFechar }) {
           </div>
         </div>
 
-        <SugerirDocumentacao
-          onImportar={(r) => {
-            const vazio = (s) => !String(s.titulo).trim() && !String(s.texto).trim();
-            const vaziaP = (p) => !String(p.enunciado).trim();
-            setM((x) => ({ ...x, slides: [...x.slides.filter((s) => !vazio(s)), ...r.slides], perguntas: [...x.perguntas.filter((p) => !vaziaP(p)), ...r.perguntas] }));
-          }}
-        />
-
         <div style={{ ...panelTitle, marginTop: 8 }}>Teoria (slides)</div>
         {m.slides.map((s, i) => (
           <div key={i} style={{ border: `1px solid ${COLORS.rule}`, borderRadius: 10, padding: 10, display: "grid", gap: 6 }}>
@@ -333,12 +210,6 @@ function EditorModulo({ inicial, d, docs, onGuardar, onApagar, onFechar }) {
                 <input value={(p.ref && p.ref.artigo) || ""} onChange={(e) => mudaPerg(i, { ref: { ...(p.ref || {}), artigo: e.target.value } })} placeholder="Ex.: Art. 5.º, ponto 2" style={inputStyle} />
               </div>
             </div>
-            {!(p.ref && p.ref.docId) && (
-              <div>
-                <label style={{ ...labelStyle, marginTop: 0 }}>Fonte (se não for do Controlo documental)</label>
-                <input value={(p.ref && p.ref.doc) || ""} onChange={(e) => mudaPerg(i, { ref: { ...(p.ref || {}), doc: e.target.value } })} placeholder="Ex.: nota do Obsidian" style={inputStyle} />
-              </div>
-            )}
           </div>
         ))}
         <div>
@@ -410,7 +281,7 @@ export function QuizzFormacao({ rh, onGuardarRh, documentos, notificar }) {
     slides: m.slides,
     perguntas: m.perguntas.map((p) => {
       const doc = docs.find((x) => x.id === (p.ref && p.ref.docId));
-      return { id: p.id, enunciado: p.enunciado, opcoes: p.opcoes, certa: p.certa, porque: p.porque, ref: { doc: doc ? rotDoc(doc) : (p.ref && p.ref.doc) || "", artigo: (p.ref && p.ref.artigo) || "" } };
+      return { id: p.id, enunciado: p.enunciado, opcoes: p.opcoes, certa: p.certa, porque: p.porque, ref: { doc: doc ? rotDoc(doc) : "", artigo: (p.ref && p.ref.artigo) || "" } };
     }),
   });
   const atribuir = async (m, pessoas) => {

@@ -3,8 +3,7 @@
 import { useState, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import { lerDocumentosDoExcel, gerarExcelDocumentos, TIPOS_DOC, normalizarCodigo, codigoComVersao, proximoCodigo, codigosDuplicados, naListaInt } from "../sgq";
-import { Plus, X, AlertTriangle, Search, FileText, Printer, Paperclip, ExternalLink, Link2, BookOpen } from "lucide-react";
-import { JanelaConhecimento } from "../baseConhecimento.jsx";
+import { Plus, X, AlertTriangle, Search, FileText, Printer, Paperclip, ExternalLink, Link2 } from "lucide-react";
 import { COLORS, StatCard, Vazio, fmt, iconBtnStyle, inputStyle, isoDe, labelStyle, linkBtnStyle, normChave, panelStyle, primaryBtnStyle, secondaryBtnStyle, segSGQ } from "../nucleo.jsx";
 import { BUCKET_DOCS, JanelaSGQ, abrirLivroExcel, chipSGQ, descarregarXlsx, ficheirosDoc, nomeComVersao, tdStyle, thStyle } from "../partilhado.jsx";
 
@@ -348,7 +347,6 @@ export function DocumentosPage({ dados, onGuardar, notificar }) {
   const [aLer, setALer] = useState(false);
   const [aGerar, setAGerar] = useState(false);
   const [menuAnexos, setMenuAnexos] = useState(null);
-  const [verConhecimento, setVerConhecimento] = useState(false);
 
   const duplicados = codigosDuplicados(itens);
   const idsDup = new Set(duplicados.flatMap((x) => x.itens.map((i) => i.id)));
@@ -450,9 +448,6 @@ export function DocumentosPage({ dados, onGuardar, notificar }) {
         <FileText size={14} /> {aLer ? "A ler…" : "Importar Excel"}
         <input type="file" accept=".xlsx" style={{ display: "none" }} onChange={(e) => importar(e.target.files && e.target.files[0])} />
       </label>
-      <button className="press" onClick={() => setVerConhecimento(true)} title="Ligar a pasta do Obsidian para pesquisar a documentação" style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <BookOpen size={14} /> Base de conhecimento
-      </button>
       {itens.length > 0 && (
         <button className="press" disabled={aGerar} onClick={descarregar} style={{ ...secondaryBtnStyle, width: "auto", flex: "none", padding: "7px 12px", fontSize: 13, display: "inline-flex", alignItems: "center", gap: 6 }}>
           <Printer size={14} /> {aGerar ? "A gerar…" : "Descarregar Excel"}
@@ -499,7 +494,6 @@ export function DocumentosPage({ dados, onGuardar, notificar }) {
           </div>
         </JanelaSGQ>
       )}
-      {verConhecimento && <JanelaConhecimento onFechar={() => setVerConhecimento(false)} notificar={notificar} />}
       {editar && <EditorDocumento inicial={editar} todos={itens} colaboradores={colaboradores} locais={locais} sugestoes={sugestoes} onGuardar={guardarItem} onApagar={apagar} onFechar={() => setEditar(null)} notificar={notificar} />}
 
       {itens.length === 0 ? (
