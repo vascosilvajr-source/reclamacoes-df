@@ -3764,7 +3764,6 @@ function AppPrincipal({ onSair, email }) {
         { key: "inscritos", label: "Inscritos", icon: Users, contador: null },
         { key: "inqueritos", label: "Inquéritos", icon: MessageSquareText, contador: inqueritos.length || null },
         { key: "ocorrencias", label: "Ocorrências", icon: AlertTriangle, contador: ocorrencias.filter((o) => (o.estado || "aberta") === "aberta").length || null },
-        { key: "avaliacoes", label: "Avaliações do staff", icon: Star, contador: null },
         { key: "rh", label: "Recursos humanos", icon: UserCog, contador: (rh.colaboradores || []).filter((c) => !c.saida).length || null },
         { key: "emails", label: "E-mails às escolas", icon: Mail, contador: null },
       ],
@@ -4206,7 +4205,7 @@ function AppPrincipal({ onSair, email }) {
                   <button className="press" aria-label={`Descer ${label}`} onClick={() => moverItem(key, 1)} style={{ border: `1px solid ${COLORS.rule}`, background: "transparent", color: COLORS.ink2, borderRadius: 6, cursor: "pointer", width: 24, height: 24 }}>↓</button>
                 </div>
               ) : (
-                botaoNav({ k: key, ativo: page === key, onClick: () => setPage(key), Icon, label, contador })
+                botaoNav({ k: key, ativo: page === key || (key === "rh" && page === "avaliacoes"), onClick: () => setPage(key), Icon, label, contador })
               )
             )}
           </div>
@@ -4447,14 +4446,25 @@ function AppPrincipal({ onSair, email }) {
           <DocumentosPage dados={documentos} onGuardar={persistDocumentos} notificar={notificar} />
         ) : page === "formacao" ? (
           <FormacaoPage dados={formacao} onGuardar={persistFormacao} notificar={notificar} rh={rh} onGuardarRh={persistRh} documentos={documentos} />
-        ) : page === "rh" ? (
-          <RecursosHumanosPage dados={rh} escolas={(options.schools || []).filter((e) => !(options.estadoEscolas || {})[e]?.encerrada)} avaliacoes={avaliacoes} espacos={espacos} onGuardar={persistRh} notificar={notificar} />
+        ) : page === "rh" || page === "avaliacoes" ? (
+          <>
+            <div className="naoImprimir" style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {[["rh", "Colaboradores"], ["avaliacoes", "Avaliações do staff"]].map(([k, l]) => (
+                <button key={k} onClick={() => setPage(k)} className="press" style={{ padding: "7px 14px", borderRadius: 99, border: `1px solid ${COLORS.rule}`, cursor: "pointer", fontSize: 13, fontWeight: page === k ? 600 : 450, background: page === k ? COLORS.navyWash : "transparent", color: page === k ? COLORS.navySoft : COLORS.ink2 }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {page === "rh" ? (
+              <RecursosHumanosPage dados={rh} escolas={(options.schools || []).filter((e) => !(options.estadoEscolas || {})[e]?.encerrada)} avaliacoes={avaliacoes} espacos={espacos} onGuardar={persistRh} notificar={notificar} />
+            ) : (
+              <AvaliacoesPage dados={avaliacoes} escolas={options.schools || []} onGuardar={persistAvaliacoes} notificar={notificar} />
+            )}
+          </>
         ) : (page === "copia" || page === "apagados") && !eAdmin ? null : page === "copia" ? (
           <CopiaSegurancaPage ultima={ultimaCopia} onFeita={setUltimaCopia} notificar={notificar} />
         ) : page === "apagados" ? (
           <ApagadosPage lista={apagados} onRepor={reporApagados} onApagarDeVez={(id) => guardarApagados(apagadosRef.current.filter((a) => a.id !== id))} />
-        ) : page === "avaliacoes" ? (
-          <AvaliacoesPage dados={avaliacoes} escolas={options.schools || []} onGuardar={persistAvaliacoes} notificar={notificar} />
         ) : page === "ocorrencias" ? (
           <OcorrenciasPage
             ocorrencias={ocorrencias}

@@ -12,8 +12,8 @@ const CSS = `
   .cdf .bola { position: absolute; left: 50%; top: 0; width: 46px; height: 46px; margin-left: -23px; border-radius: 50%; background: url(${BOLA_DF}) center / contain no-repeat; animation: cdfBola var(--t) infinite; z-index: 2; will-change: transform, opacity; }
   .cdf .sombra { position: absolute; left: 50%; bottom: 3px; width: 44px; height: 7px; margin-left: -22px; border-radius: 50%; background: rgba(0,0,0,.5); animation: cdfSombra var(--t) infinite; }
   .cdf .simb { position: absolute; left: 50%; bottom: 14px; width: 120px; margin-left: -60px; animation: cdfSimb var(--t) infinite; will-change: clip-path, opacity; }
-  .cdf .simb img { width: 100%; height: auto; display: block; filter: drop-shadow(0 0 22px rgba(240,138,75,.45)); }
-  .cdf .halo { position: absolute; left: 50%; top: 134px; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; background: radial-gradient(circle, rgba(240,138,75,.5), rgba(240,138,75,0) 70%); opacity: 0; animation: cdfHalo var(--t) ease-out infinite; }
+  .cdf .simb img { width: 100%; height: auto; display: block; }
+  .cdf .halo { position: absolute; left: 50%; top: 134px; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; background: radial-gradient(circle, rgba(240,138,75,.5), rgba(240,138,75,0) 70%); opacity: 0; animation: cdfHalo var(--t) ease-out infinite; will-change: transform, opacity; }
   .cdf .prog { margin-top: 20px; width: 210px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
   .cdf .prog i { display: block; height: 100%; width: 40%; border-radius: 4px; background: linear-gradient(90deg, #2196C9, #F08A4B); animation: cdfCorre 1.5s ease-in-out infinite; }
   .cdf .tx { margin-top: 18px; min-height: 16px; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #8FA3BF; transition: opacity .22s; }
