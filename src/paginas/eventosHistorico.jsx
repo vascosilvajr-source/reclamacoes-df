@@ -19,6 +19,11 @@ const numSub = (k) => {
   const m = String(k || "").match(/sub[\s-]*(\d+)/i);
   return m ? Number(m[1]) : null;
 };
+// Escalão máximo = o Sub mais velho entre os elegíveis do evento (sem escolher à parte).
+export const escalaoMaxDe = (ev) => {
+  const n = (ev.escaloes || []).map(numSub).filter((x) => x !== null);
+  return n.length ? `Sub-${Math.max(...n)}` : ev.escalaoMax || null; // eventos antigos mantêm o valor escolhido
+};
 // Escalão Sub-N de um ano de nascimento numa época ("2025/26" → nascidos em 2013 são Sub-13).
 export const subDeAno = (ano, ep) => Number(String(ep).slice(0, 4)) + 1 - Number(ano);
 // Nome do evento sem o ano, para juntar as edições ("Torneio das Lendas 2025" = "Torneio das Lendas").
@@ -60,7 +65,7 @@ export function historicoEventos(edicoes, registoAlunos, passa = () => true) {
       const ep = epocaDe(ev.data);
       const x = (porEp[ep] = porEp[ep] || { ep, ids: new Set(), max: null, evs: [] });
       idsDoEvento(ev).forEach((id) => passa(id, ep) && x.ids.add(id));
-      if (ev.escalaoMax) x.max = numSub(ev.escalaoMax);
+      if (escalaoMaxDe(ev)) x.max = numSub(escalaoMaxDe(ev));
       x.evs.push(ev);
     });
   const eps = Object.values(porEp).sort((a, b) => a.ep.localeCompare(b.ep));
@@ -186,11 +191,13 @@ function Codigos({ titulo, lista }) {
   );
 }
 
-const SUBS = Array.from({ length: 15 }, (_, i) => `Sub-${i + 5}`);
 
 // Painel dentro de um evento aberto: tipo, escalão máximo, histórico entre épocas, externos e turmas/treinadores.
 export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAULT_NIVEIS, espacos, passa, onUpdate }) {
   const [verTurmas, setVerTurmas] = useState(false);
+  const [selPara, setSelPara] = useState(null); // época clicada no histórico (por omissão, a última)
+  const [filtroTreinador, setFiltroTreinador] = useState(null);
+  const [ord, setOrd] = useState({ k: null, dir: 1 });
   const tipo = tipoDoEvento(ev);
   const edicoes = eventos.filter((o) => o.v === 2 && o.tipo !== "semanas" && chaveEvento(o.nome) === chaveEvento(ev.nome));
   const hist = edicoes.length > 1 ? historicoEventos(edicoes, registoAlunos, passa) : [];
@@ -199,6 +206,11 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
   const temIds = conv.ids.length > 0;
   const th = { ...thStyle, whiteSpace: "nowrap" };
   const num = { ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+  const hSel = hist.find((h) => h.para === selPara) || hist[hist.length - 1];
+  const colTurma = { Escola: (l) => l.escola, "Turma / equipa": (l) => l.turma, Treinador: (l) => l.siglas.join(", "), Elegíveis: (l) => l.elegiveis, Inscritos: (l) => l.inscritos, Adesão: (l) => (l.elegiveis ? l.inscritos / l.elegiveis : -1) };
+  const turmasVis = (filtroTreinador ? tt.turmas.filter((l) => l.siglas.includes(filtroTreinador)) : tt.turmas)
+    .slice()
+    .sort((a, b) => (ord.k ? ord.dir * (colTurma[ord.k](a) > colTurma[ord.k](b) ? 1 : colTurma[ord.k](a) < colTurma[ord.k](b) ? -1 : 0) : 0));
 
   return (
     <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.ruleSoft}`, paddingTop: 12, display: "grid", gap: 14 }}>
@@ -213,17 +225,7 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
             ))}
           </select>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }} title="Quem passa este escalão na época seguinte já não pode participar (conta como 'saiu por idade')">
-          Escalão máximo
-          <select value={ev.escalaoMax || ""} onChange={(e) => onUpdate({ ...ev, escalaoMax: e.target.value || null })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12.5 }}>
-            <option value="">sem limite</option>
-            {SUBS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
+        <span title="O mais velho dos escalões elegíveis. Quem passa este escalão na época seguinte conta como 'saiu por idade'">Escalão máximo: <strong>{escalaoMaxDe(ev) || "sem limite"}</strong></span>
       </div>
 
       {!temIds && <div style={{ fontSize: 12.5, color: COLORS.slate }}>O histórico, os externos e as turmas precisam do Excel com o código do atleta.</div>}
@@ -232,7 +234,7 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Histórico de {ev.nome.replace(/\s*\b(19|20)\d{2}.*$/, "")} entre épocas</div>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={hist.map((h) => ({ name: `${h.de} → ${h.para}`, Repetiram: h.repetiram.length, Novos: h.novos.length, "Saíram por idade": h.porIdade.length, "Deixaram a DF": h.deixaramDF.length, "Não voltaram": h.outros.length }))} margin={{ left: -18, right: 8, top: 8 }}>
+            <BarChart data={hist.map((h) => ({ name: `${h.de} → ${h.para}`, Repetiram: h.repetiram.length, Novos: h.novos.length, "Saíram por idade": h.porIdade.length, "Deixaram a DF": h.deixaramDF.length, "Não voltaram": h.outros.length }))} margin={{ left: -18, right: 8, top: 8 }} onClick={(s) => { const p = s && s.activeLabel && hist.find((h) => `${h.de} → ${h.para}` === s.activeLabel); if (p) setSelPara(p.para); }} style={{ cursor: "pointer" }}>
               <CartesianGrid stroke={COLORS.ruleSoft} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={{ stroke: COLORS.rule }} tickLine={false} />
               <YAxis tick={{ fontSize: 10.5, fill: COLORS.slate }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -258,7 +260,7 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
               </thead>
               <tbody>
                 {hist.map((h) => (
-                  <tr key={h.para}>
+                  <tr key={h.para} onClick={() => setSelPara(h.para)} style={{ cursor: "pointer", background: hSel && hSel.para === h.para ? COLORS.navyWash : undefined }}>
                     <td style={tdStyle}>
                       {h.de} → {h.para}
                     </td>
@@ -276,9 +278,10 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
             </table>
           </div>
           <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 4 }}>
-            * Retorno = repetiram ÷ (participantes da época anterior − saídos por idade). {ev.escalaoMax ? `Saem por idade os que na época seguinte passam de ${ev.escalaoMax} (pelo ano de nascimento).` : "Escolhe o escalão máximo para separar os que saíram por idade."}
+            * Retorno = repetiram ÷ (participantes da época anterior − saídos por idade). {escalaoMaxDe(ev) ? `Saem por idade os que na época seguinte passam de ${escalaoMaxDe(ev)} (pelo ano de nascimento).` : "Escolhe as equipas Sub-N elegíveis para separar os que saíram por idade."}
           </div>
-          {hist.slice(-1).map((h) => (
+          <div style={{ fontSize: 11.5, color: COLORS.slate, marginTop: 2 }}>Clica numa linha ou numa barra para ver os códigos dessa época.</div>
+          {[hSel].map((h) => (
             <div key={h.para}>
               <Codigos titulo={`Repetiram em ${h.para}`} lista={h.repetiram} />
               <Codigos titulo={`Saíram por idade em ${h.para}`} lista={h.porIdade} />
@@ -313,7 +316,7 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Inscritos por treinador e por turma</div>
           <div style={{ display: "grid", gap: 6, maxWidth: 520 }}>
             {tt.treinadores.slice(0, 12).map((t, i) => (
-              <div key={t.sigla} style={{ display: "grid", gridTemplateColumns: "70px minmax(0,1fr) 110px", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+              <div key={t.sigla} title="Clica para ver só as turmas deste treinador" onClick={() => { setFiltroTreinador(filtroTreinador === t.sigla ? null : t.sigla); setVerTurmas(true); }} style={{ display: "grid", gridTemplateColumns: "70px minmax(0,1fr) 110px", alignItems: "center", gap: 10, fontSize: 12.5, cursor: "pointer", opacity: filtroTreinador && filtroTreinador !== t.sigla ? 0.45 : 1 }}>
                 <strong>{t.sigla}</strong>
                 <div style={{ height: 7, background: COLORS.paperSunken, borderRadius: 4, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${(t.inscritos / (tt.treinadores[0].inscritos || 1)) * 100}%`, background: i === 0 ? COLORS.navy : COLORS.navySoft, borderRadius: 4 }} />
@@ -325,22 +328,28 @@ export function AnaliseAlunosEvento({ ev, eventos, registoAlunos, niveis = DEFAU
             ))}
           </div>
           <button type="button" onClick={() => setVerTurmas((v) => !v)} style={{ ...linkBtnStyle, fontSize: 12.5 }}>
-            {verTurmas ? "Esconder" : "Ver"} as {tt.turmas.length} turmas e equipas
+            {verTurmas ? "Esconder" : "Ver"} as {turmasVis.length} turmas e equipas{filtroTreinador ? ` de ${filtroTreinador}` : ""}
           </button>
+          {filtroTreinador && (
+            <button type="button" onClick={() => setFiltroTreinador(null)} style={{ ...linkBtnStyle, fontSize: 12.5, marginLeft: 10 }}>
+              Limpar filtro
+            </button>
+          )}
           {verTurmas && (
             <div style={{ overflowX: "auto", marginTop: 6 }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     {["Escola", "Turma / equipa", "Treinador", "Elegíveis", "Inscritos", "Adesão"].map((h, i) => (
-                      <th key={h} style={{ ...th, textAlign: i > 2 ? "right" : "left" }}>
+                      <th key={h} title="Clica para ordenar" onClick={() => setOrd({ k: h, dir: ord.k === h ? -ord.dir : 1 })} style={{ ...th, textAlign: i > 2 ? "right" : "left", cursor: "pointer" }}>
                         {h}
+                        {ord.k === h ? (ord.dir > 0 ? " ▲" : " ▼") : ""}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {tt.turmas.map((l) => (
+                  {turmasVis.map((l) => (
                     <tr key={`${l.escola}|${l.turma}`}>
                       <td style={tdStyle}>{l.escola.replace(/^Dragon Force\s+/, "")}</td>
                       <td style={tdStyle}>{l.turma}</td>

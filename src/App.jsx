@@ -2052,6 +2052,11 @@ function AppPrincipal({ onSair, email }) {
   // numa das páginas e passava despercebido nas outras.
   const [paletaAberta, setPaletaAberta] = useState(false);
   const [menuMovel, setMenuMovel] = useState(false); // menu lateral no telemóvel
+  const [editarMenu, setEditarMenu] = useState(false);
+  // Ordem do menu guardada neste dispositivo: { "Grupo": ["chave", …] } (itens fora dela ficam no fim do seu grupo).
+  const [ordemMenu, setOrdemMenu] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem("df-ordem-menu") || "null") || {}; } catch { return {}; }
+  });
   // Última cópia de segurança: avisa se passou mais de uma semana.
   const [ultimaCopia, setUltimaCopia] = useState(null);
   const copiaAtrasada = !ultimaCopia || Date.now() - new Date(ultimaCopia.em).getTime() > 7 * 86400000;
@@ -3779,6 +3784,36 @@ function AppPrincipal({ onSair, email }) {
     },
   ];
 
+  // Aplica a ordem guardada: cada item vai para o grupo onde foi posto; os novos ficam no grupo de origem.
+  const todosItens = secoes.flatMap((s) => s.itens.map((it) => ({ ...it, origem: s.grupo })));
+  const grupoDe = (it) => Object.keys(ordemMenu).find((g) => secoes.some((s) => s.grupo === g) && ordemMenu[g].includes(it.key)) || it.origem;
+  const secoesOrd = secoes.map((s) => {
+    const lista = ordemMenu[s.grupo] || [];
+    const itens = todosItens.filter((it) => grupoDe(it) === s.grupo);
+    const pos = (it) => (lista.includes(it.key) ? lista.indexOf(it.key) : 1e6);
+    return { ...s, itens: itens.sort((a, b) => pos(a) - pos(b)) };
+  });
+  const moverItem = (key, dir) => {
+    const novo = secoesOrd.map((s) => s.itens.map((i) => i.key));
+    const g = novo.findIndex((l) => l.includes(key));
+    const i = novo[g].indexOf(key);
+    novo[g].splice(i, 1);
+    if (dir < 0) {
+      if (i > 0) novo[g].splice(i - 1, 0, key);
+      else if (g > 0) novo[g - 1].push(key);
+      else novo[g].unshift(key);
+    } else if (i < novo[g].length) novo[g].splice(i + 1, 0, key);
+    else if (g < novo.length - 1) novo[g + 1].unshift(key);
+    else novo[g].push(key);
+    const o = Object.fromEntries(secoes.map((s, n) => [s.grupo, novo[n]]));
+    setOrdemMenu(o);
+    try { window.localStorage.setItem("df-ordem-menu", JSON.stringify(o)); } catch {}
+  };
+  const repoeMenu = () => {
+    setOrdemMenu({});
+    try { window.localStorage.removeItem("df-ordem-menu"); } catch {}
+  };
+
   // Cartão que aparece ao passar o rato num item do menu: o que é e, quando há, um número útil.
   const dicasNav = {
     hoje: ["O que precisa de atenção hoje"],
@@ -4159,14 +4194,27 @@ function AppPrincipal({ onSair, email }) {
           </div>
         </div>
 
-        {secoes.map((sec) => (
+        {secoesOrd.map((sec) => (
           <div key={sec.grupo}>
             <div className="navGrupo">{sec.grupo}</div>
-            {sec.itens.map(({ key, label, icon: Icon, contador }) => botaoNav({ k: key, ativo: page === key, onClick: () => setPage(key), Icon, label, contador }))}
+            {sec.itens.map(({ key, label, icon: Icon, contador }) =>
+              editarMenu ? (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, margin: "1px 8px", padding: "5px 10px", fontSize: 13.5, color: COLORS.ink2 }}>
+                  <Icon size={16} />
+                  <span style={{ flex: 1 }}>{label}</span>
+                  <button className="press" aria-label={`Subir ${label}`} onClick={() => moverItem(key, -1)} style={{ border: `1px solid ${COLORS.rule}`, background: "transparent", color: COLORS.ink2, borderRadius: 6, cursor: "pointer", width: 24, height: 24 }}>↑</button>
+                  <button className="press" aria-label={`Descer ${label}`} onClick={() => moverItem(key, 1)} style={{ border: `1px solid ${COLORS.rule}`, background: "transparent", color: COLORS.ink2, borderRadius: 6, cursor: "pointer", width: 24, height: 24 }}>↓</button>
+                </div>
+              ) : (
+                botaoNav({ k: key, ativo: page === key, onClick: () => setPage(key), Icon, label, contador })
+              )
+            )}
           </div>
         ))}
 
         <div className="navGrupo">Configuração</div>
+        {botaoNav({ k: "ordenar", ativo: editarMenu, onClick: () => setEditarMenu(!editarMenu), Icon: Pencil, label: editarMenu ? "Concluir ordem do menu" : "Ordenar menu" })}
+        {editarMenu && botaoNav({ k: "repor", ativo: false, onClick: repoeMenu, Icon: RotateCcw, label: "Repor ordem original" })}
         {botaoNav({ k: "listas", ativo: false, onClick: () => setListaAberta("__indice"), Icon: ShieldAlert, label: "Todas as listas" })}
         {eAdmin && (
           <>
