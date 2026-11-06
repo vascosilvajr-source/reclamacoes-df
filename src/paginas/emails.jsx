@@ -424,9 +424,44 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
   );
 }
 
+const ROT_RESULTADO = { sucesso: "Converteu", pendente: "Ainda a decorrer", insucesso: "Não converteu" };
+
 // Painel "Por validar": o que os operacionais preencheram, antes de entrar na app.
-function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar }) {
+function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar, edits, setEdits, motivos }) {
+  const [aEditar, setAEditar] = useState(null);
   if (!itens.length) return null;
+  const campo = { ...inputStyle, width: "auto", padding: "3px 6px", fontSize: 12 };
+  // Cada item tem os campos que se podem corrigir; o que se mexe fica em edits[key] e só vale ao aceitar.
+  const formEdicao = (i) => {
+    const e = edits[i.key] || {};
+    const poe = (p) => setEdits((s) => ({ ...s, [i.key]: { ...(s[i.key] || {}), ...p } }));
+    if (i.tipo === "turma") return <input value={e.ids !== undefined ? e.ids : i.ids.join(", ")} onChange={(ev) => poe({ ids: ev.target.value })} placeholder="códigos separados por vírgula" aria-label="Códigos" style={{ ...campo, width: 260 }} />;
+    if (i.tipo === "alteracao") return <input value={e.turma !== undefined ? e.turma : i.turma} onChange={(ev) => poe({ turma: ev.target.value })} aria-label="Nova turma" style={campo} />;
+    const v = { ...i.valor, ...e };
+    return (
+      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={v.r || ""} onChange={(ev) => poe({ r: ev.target.value })} aria-label="Resultado" style={campo}>
+          {Object.entries(ROT_RESULTADO).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select
+          value={v.motivo || ""}
+          aria-label="Motivo"
+          onChange={(ev) => {
+            if (ev.target.value !== "__novo__") return poe({ motivo: ev.target.value });
+            const m = (window.prompt("Novo motivo:") || "").trim();
+            if (m) poe({ motivo: m });
+          }}
+          style={campo}
+        >
+          <option value="">Sem motivo</option>
+          {[...new Set([...(motivos || []), ...(v.motivo ? [v.motivo] : [])])].map((m) => <option key={m} value={m}>{m}</option>)}
+          <option value="__novo__">+ Novo motivo…</option>
+        </select>
+        <input value={v.turmaFicou || ""} onChange={(ev) => poe({ turmaFicou: ev.target.value })} placeholder="Turma onde ficou" aria-label="Turma onde ficou" style={{ ...campo, width: 130 }} />
+        <input value={v.nota || ""} onChange={(ev) => poe({ nota: ev.target.value })} placeholder="Nota" aria-label="Nota" style={{ ...campo, width: 180 }} />
+      </span>
+    );
+  };
   const marcado = (i) => (sel[i.key] === undefined ? i.padrao : sel[i.key]);
   const nMarcados = itens.filter(marcado).length;
   const escolas = [...new Set(itens.map((i) => i.escola))].sort((a, b) => a.localeCompare(b, "pt"));
@@ -451,17 +486,27 @@ function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar }) {
           {itens
             .filter((i) => i.escola === e)
             .map((i) => (
-              <label key={i.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, cursor: "pointer" }}>
-                <input type="checkbox" checked={marcado(i)} onChange={(ev) => setSel((s) => ({ ...s, [i.key]: ev.target.checked }))} style={{ marginTop: 3 }} />
-                <span style={{ minWidth: 0 }}>
+              <div key={i.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5 }}>
+                <input type="checkbox" aria-label={i.titulo} checked={marcado(i)} onChange={(ev) => setSel((s) => ({ ...s, [i.key]: ev.target.checked }))} style={{ marginTop: 3, cursor: "pointer" }} />
+                <span style={{ minWidth: 0, flex: 1 }}>
                   <strong>{i.titulo}</strong> <span style={{ color: COLORS.ink2 }}>{i.detalhe}</span>
+                  {edits[i.key] && <span style={{ marginLeft: 6, fontWeight: 600, color: COLORS.navySoft }}>(editado)</span>}
+                  <button type="button" onClick={() => setAEditar(aEditar === i.key ? null : i.key)} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: 8, fontSize: 12 }}>
+                    {aEditar === i.key ? "Fechar" : "Editar"}
+                  </button>
+                  {edits[i.key] && (
+                    <button type="button" onClick={() => setEdits((s) => { const n = { ...s }; delete n[i.key]; return n; })} style={{ ...linkBtnStyle, marginTop: 0, marginLeft: 6, fontSize: 12, color: COLORS.slate }}>
+                      Repor o que enviaram
+                    </button>
+                  )}
+                  {aEditar === i.key && <div style={{ marginTop: 4 }}>{formEdicao(i)}</div>}
                   {i.avisos.map((a, k) => (
                     <div key={k} style={{ color: COLORS.warn, fontWeight: 600 }}>
                       Atenção: {a}
                     </div>
                   ))}
                 </span>
-              </label>
+              </div>
             ))}
         </div>
       ))}
@@ -573,6 +618,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
     porValidar.push({ key: `alt:${x.id}`, tipo: "alteracao", linha: x.id, id: x.aluno, turma: x.para, escola: x.escola, epoca: x.epoca, quando: x.criado, titulo: `Mudança de turma ${x.aluno}`, detalhe: `${x.de || "—"} → ${x.para}`, avisos, padrao: !!a });
   });
   const [sel, setSel] = useState({});
+  const [edits, setEdits] = useState({});
   const decidir = async (aceitar) => {
     const marcados = porValidar.filter((i) => (sel[i.key] === undefined ? i.padrao : sel[i.key]));
     if (!marcados.length) return;
@@ -581,7 +627,15 @@ export function PainelEmailsEscolas({ op, escolas }) {
       let msg = `${marcados.length} ${marcados.length === 1 ? "item rejeitado" : "itens rejeitados"}.`;
       let nivel = "ok";
       if (aceitar) {
-        const r = op.onAplicarRespostas(marcados.map((i) => ({ tipo: i.tipo, epoca: i.epoca, escola: i.escola, id: i.id, valor: i.valor, turma: i.turma, ids: i.ids })));
+        // Os valores corrigidos à mão (edits) substituem os enviados; o registo de validação guarda o original (i.c).
+        const r = op.onAplicarRespostas(
+          marcados.map((i) => {
+            const e = edits[i.key] || {};
+            const ids = e.ids !== undefined ? e.ids.split(/[,\s;]+/).map((x) => x.trim()).filter(Boolean) : i.ids;
+            const { ids: _i, turma: _t, ...camposValor } = e;
+            return { tipo: i.tipo, epoca: i.epoca, escola: i.escola, id: i.id, valor: i.valor ? { ...i.valor, ...camposValor } : i.valor, turma: e.turma !== undefined ? e.turma.trim() : i.turma, ids };
+          })
+        );
         msg = `Validado: ${r.exp + r.nova} experiências, ${r.mudados} mudanças de turma.${r.naoEncontrados.length ? ` Códigos que não existem: ${r.naoEncontrados.slice(0, 8).join(", ")}.` : ""}`;
         if (r.naoEncontrados.length) nivel = "aviso";
       }
@@ -592,6 +646,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
       const alt = marcados.filter((i) => i.tipo === "alteracao").map((i) => i.linha);
       if (alt.length) await supabase.from("alteracoes_turma").update({ estado, decidido_em: new Date().toISOString() }).in("id", alt);
       setSel({});
+      setEdits({});
       op.notificar(msg, nivel, 8000);
       await carregar();
     } finally {
@@ -684,7 +739,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
           </div>
         );
       })()}
-      <PorValidar itens={porValidar} sel={sel} setSel={setSel} aAplicar={aAplicar === "validar"} onAceitar={() => decidir(true)} onRejeitar={() => decidir(false)} />
+      <PorValidar itens={porValidar} sel={sel} setSel={setSel} edits={edits} setEdits={setEdits} motivos={op.motivos} aAplicar={aAplicar === "validar"} onAceitar={() => decidir(true)} onRejeitar={() => decidir(false)} />
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Códigos dos alunos para confirmar</div>

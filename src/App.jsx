@@ -1960,7 +1960,8 @@ const DEFAULT_CATEGORIAS_OCORRENCIA = [
 // (É uma divisão da interface; quem apaga fica registado em Apagados, com o e-mail.)
 const EMAIL_ADMIN = "df.auditoriainterna1@fcporto.pt";
 
-function AppPrincipal({ onSair, email }) {
+function AppPrincipal({ onSair, email, nome }) {
+  const [nomeConta, setNomeConta] = useState(nome || "");
   const eAdmin = String(email || "").trim().toLowerCase() === EMAIL_ADMIN;
   // Depois de a app abrir, as outras páginas descarregam em segundo plano: mudar de página fica instantâneo.
   useEffect(() => {
@@ -2561,8 +2562,18 @@ function AppPrincipal({ onSair, email }) {
     setViewingAudit(next.find((a) => a.id === auditId));
   };
 
-  // Só o nome (parte antes do @): o e-mail completo não aparece nos dados nem nos PDFs.
-  const autorAtual = String(email || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(" ");
+  // Nome da conta (guardado na própria conta, em Supabase Auth). Sem nome definido, usa a parte do e-mail antes do @:
+  // o e-mail completo não aparece nos dados nem nos PDFs.
+  const autorAtual = (nomeConta || "").trim() || String(email || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(" ");
+  const definirNome = async () => {
+    const n = window.prompt("O teu nome, como deve aparecer nas notas e constatações:", autorAtual);
+    if (n === null) return;
+    const limpo = n.trim().slice(0, 60);
+    const { error } = await supabase.auth.updateUser({ data: { nome: limpo } });
+    if (error) return notificar("Não consegui guardar o nome.", "aviso");
+    setNomeConta(limpo);
+    notificar(limpo ? `Nome definido: ${limpo}. Vale para as notas novas.` : "Nome removido: volta a usar o e-mail.", "ok");
+  };
   // tipo: "nota" | "respostaEE" (a resposta do EE traz as mudanças que reabrem a reclamação).
   const addNote = (entryId, text, tipo = "nota", date = new Date().toISOString(), mudancas = null) => {
     const next = entries.map((e) =>
@@ -4349,6 +4360,9 @@ function AppPrincipal({ onSair, email }) {
             <button className="press" onClick={() => setTema(tema === "dark" ? "light" : "dark")} title={tema === "dark" ? "Passar a tema claro" : "Passar a tema escuro"} aria-label="Mudar tema" style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", borderRadius: 8, padding: 7, color: COLORS.ink2, cursor: "pointer" }}>
               {tema === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
+            <button className="press" onClick={definirNome} title={`O teu nome nas notas: ${autorAtual || "por definir"} (clica para mudar)`} aria-label="Definir o meu nome" style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", borderRadius: 8, padding: 7, color: COLORS.ink2, cursor: "pointer", fontSize: 12.5 }}>
+              <UserCog size={17} /> <span className="soPc">{autorAtual || "Definir nome"}</span>
+            </button>
             {onSair && (
               <button className="press" onClick={onSair} title="Sair" aria-label="Sair" style={{ display: "flex", alignItems: "center", background: "transparent", border: "none", borderRadius: 8, padding: 7, color: COLORS.ink2, cursor: "pointer" }}>
                 <LogOut size={17} />
@@ -4971,7 +4985,7 @@ function AppPrincipal({ onSair, email }) {
           onGerirLista={setListaAberta}
           audits={audits}
           // Só o nome (parte antes do @): o e-mail completo não aparece nos dados nem nos PDFs.
-          autor={String(email || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(" ")}
+          autor={autorAtual}
         />
       )}
 
@@ -5440,7 +5454,7 @@ export default function App() {
   const mostrarEntrada = !sessao || cortina;
   return (
     <>
-      {sessao && <AppPrincipal onSair={sair} email={sessao.user && sessao.user.email} />}
+      {sessao && <AppPrincipal onSair={sair} email={sessao.user && sessao.user.email} nome={sessao.user && sessao.user.user_metadata && sessao.user.user_metadata.nome} />}
       {mostrarEntrada && (
         <div className={sessao && aDesvanecer ? "entradaSaida" : undefined}>
           <EcraEntrada aVerificar={sessao === undefined || cortina === "verificar"} aviso={avisoEntrada} onEntrar={(email, password) => { setAvisoEntrada(""); gravarLS("df-ultima-atividade", String(Date.now())); return supabase.auth.signInWithPassword({ email, password }); }} />
