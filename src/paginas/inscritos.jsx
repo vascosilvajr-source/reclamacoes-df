@@ -6,7 +6,7 @@ import { imprimirBalanco } from "../foto";
 import { semHorario } from "../rh";
 import { lerMapaInscritosAtuais, epocaDoMapa, compararInscritosAtuais, corteDoAcompanhamento } from "../inscritosAtuais";
 import { LOGO_BRANCO } from "../imagens";
-import { AnaliseAlunosEvento } from "./eventosHistorico.jsx";
+import { AnaliseAlunosEvento, idsDoEvento } from "./eventosHistorico.jsx";
 import { Plus, X, Check, AlertTriangle, Trash2, Pencil, Sparkles, Users, FileText, Printer, Target } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, ReferenceLine, Area, ComposedChart, LabelList } from "recharts";
 import { COLORS, PainelCamps, DEFAULT_ESPACOS, DEFAULT_MOTIVOS_DESISTENCIA, DEFAULT_NIVEIS, LIMITES_CRESC_PADRAO, MOTIVOS_EXPERIENCIA_PADRAO, SEMANAS_RITMO, StatCard, Tag, Vazio, alunosNaData, balancoSemanal, capacidadeSugerida, classificarCrescimento, compactoTurma, contasEvento, epAntDe, epocaDe, escalaoDaTurma, fimDeEpoca, fmt, iconBtnStyle, indicadoresDaEpoca, inputStyle, isoDe, ordemTurma, labelStyle, linkBtnStyle, niveisTurmas, normChave, panelStyle, panelTitle, pctDe, previsoesEscolas, primaryBtnStyle, secondaryBtnStyle, segSGQ, semana1Padrao, semanaDaEpoca, semanaLabel, turmasDoBloco, valorCurva } from "../nucleo.jsx";
@@ -138,7 +138,7 @@ function epocasDosRegistos(lista) {
 }
 
 // ---------- Desistências ----------
-function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onGerirLista, procurarAluno }) {
+function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onSave, onRemove, onGerirLista, procurarAluno, onMudarMotivo }) {
   const [codigo, setCodigo] = useState("");
   const [escola, setEscola] = useState(escolas[0] || "");
   const [turma, setTurma] = useState("");
@@ -350,7 +350,9 @@ function SecaoDesistencias({ escolas, turmas, niveis, motivos, desistencias, onS
                       <td style={tdStyle}>{d.escola}</td>
                       <td style={tdStyle}>{d.turma}</td>
                       <td style={tdStyle}>{escalaoDaTurma(d.turma, niveis)}</td>
-                      <td style={{ ...tdStyle, fontSize: 12.5 }}>{d.motivo}</td>
+                      <td style={{ ...tdStyle, fontSize: 12.5 }}>
+                        {onMudarMotivo ? <SeletorMotivo valor={d.motivo} motivos={motivos} onChange={(m) => onMudarMotivo(d, m)} /> : d.motivo}
+                      </td>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{d.n}</td>
                       <td style={tdStyle}>
                         <button title="Remover" onClick={() => onRemove(d.id)} style={{ ...iconBtnStyle, padding: 0 }}>
@@ -747,8 +749,13 @@ function SecaoExperiencias({ escolas, turmas, niveis, experiencias, onSave, onUp
                       </td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>
                         {x.resultado === "insucesso" && op ? (
-                          <select value={x.motivo || ""} onChange={(e) => op.onMotivo(x.id, e.target.value)} style={{ ...inputStyle, width: "auto", maxWidth: 190, padding: "3px 6px", fontSize: 12, color: ehMotivoTecnico(x.motivo) ? COLORS.danger : COLORS.ink }}>
+                          <select value={x.motivo || ""} onChange={(e) => {
+                            if (e.target.value !== "__novo__") return op.onMotivo(x.id, e.target.value);
+                            const m = (window.prompt("Novo motivo de não conversão:") || "").trim();
+                            if (m) op.onMotivo(x.id, m);
+                          }} style={{ ...inputStyle, width: "auto", maxWidth: 190, padding: "3px 6px", fontSize: 12, color: ehMotivoTecnico(x.motivo) ? COLORS.danger : COLORS.ink }}>
                             <option value="">Sem motivo</option>
+                            <option value="__novo__">+ Novo motivo…</option>
                             {[...new Set([...(op.motivos || []), ...(x.motivo ? [x.motivo] : [])])].map((m) => (
                               <option key={m} value={m}>
                                 {m}
@@ -2632,6 +2639,90 @@ function RevisaoEvento({ ev, c, escolas, onUpdate }) {
   );
 }
 
+// Linha de uma escola no evento. Ao clicar no nome abre os códigos dos inscritos dessa escola e permite
+// juntar à mão (turma elegível → clicar nos códigos). Só códigos e turmas, nunca nomes.
+function LinhaEscolaEvento({ l, ev, manual, reg, niveis, onUpdate, tdS }) {
+  const [aberta, setAberta] = useState(false);
+  const [turma, setTurma] = useState("");
+  const dec = (ev.participantes && ev.participantes.decisoes) || {};
+  const manuais = (ev.participantes && ev.participantes.idsManuais) || [];
+  const grava = (p) => onUpdate({ ...ev, participantes: { ...(ev.participantes || {}), ...p } });
+  const inscritos = idsDoEvento(ev);
+  const escaloes = ev.escaloes && ev.escaloes.length ? new Set(ev.escaloes) : null;
+  let alunos = alunosNaData(reg, ev.data).filter((a) => a.escola === l.escola);
+  if (!alunos.length) alunos = Object.values((reg && reg.alunos) || {}).filter((a) => a.escola === l.escola && (a.estado === "ativo" || !a.saida || a.saida > ev.data));
+  const eleg = alunos.filter((a) => !escaloes || escaloes.has(escalaoDaTurma(a.turma, niveis)));
+  const turmas = [...new Set(eleg.map((a) => a.turma || "—"))].sort((a, b) => String(a).localeCompare(String(b), "pt", { numeric: true }));
+  const entre = eleg.filter((a) => inscritos.has(String(a.id)));
+  const porAdd = eleg.filter((a) => (a.turma || "—") === turma && !inscritos.has(String(a.id)));
+  const adiciona = (id) => {
+    const d = { ...dec };
+    delete d[id];
+    grava({ ids: [...new Set([...((ev.participantes && ev.participantes.ids) || []).map(String), id])], idsManuais: [...new Set([...manuais, id])], decisoes: d });
+  };
+  const tira = (id) =>
+    manuais.includes(id)
+      ? grava({ ids: ((ev.participantes && ev.participantes.ids) || []).map(String).filter((x) => x !== id), idsManuais: manuais.filter((x) => x !== id) })
+      : grava({ decisoes: { ...dec, [id]: { acao: "ignorar" } } });
+  const chip = (id, on, titulo, cor) => (
+    <button key={id} type="button" title={titulo} onClick={on} style={{ border: `1px solid ${COLORS.rule}`, background: cor || COLORS.paperRaised, color: COLORS.ink, borderRadius: 6, padding: "2px 7px", fontSize: 12, cursor: "pointer", fontVariantNumeric: "tabular-nums" }}>
+      {id}
+    </button>
+  );
+  return (
+    <>
+      <tr>
+        <td style={{ ...tdS, fontWeight: 600 }}>
+          <button title="Esta escola não participa: tirar do evento" onClick={() => onUpdate({ ...ev, excluidas: [...new Set([...(ev.excluidas || []), l.escola])] })} style={{ ...iconBtnStyle, padding: 0, marginRight: 6, verticalAlign: "-2px" }} aria-label={`Tirar ${l.escola} do evento`}>
+            <X size={12} />
+          </button>
+          <button type="button" onClick={() => setAberta((v) => !v)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: "inherit", fontWeight: 600 }} title="Ver os códigos dos inscritos e juntar à mão">
+            {aberta ? "▾" : "▸"} {l.escola}
+          </button>
+          {l.fora > 0 && <span style={{ fontSize: 11, color: COLORS.slate, fontWeight: 400 }}> · +{l.fora} de outras turmas/equipas (não contam)</span>}
+        </td>
+        <td style={{ ...tdS, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtNum(l.elegiveis)}</td>
+        <td style={{ ...tdS, textAlign: "right" }}>
+          <input
+            type="number"
+            min="0"
+            value={manual[l.escola] ?? l.inscritos}
+            onChange={(e) => grava({ manual: { ...manual, [l.escola]: e.target.value } })}
+            style={{ ...inputStyle, width: 80, padding: "4px 7px", textAlign: "right" }}
+            aria-label={`Inscritos de ${l.escola}`}
+          />
+        </td>
+        <td style={{ ...tdS, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{l.elegiveis ? `${fmtNum((l.inscritos / l.elegiveis) * 100, 1)}%` : "—"}</td>
+      </tr>
+      {aberta && (
+        <tr>
+          <td colSpan={4} style={{ ...tdS, background: COLORS.paperSunken }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Inscritos no evento ({entre.length}) · clica num código para tirar</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>{entre.length ? entre.map((a) => chip(String(a.id), () => tira(String(a.id)), `${a.turma || "—"}${manuais.includes(String(a.id)) ? " · juntado à mão" : ""}`, manuais.includes(String(a.id)) ? COLORS.okBg : null)) : <span style={{ fontSize: 12, color: COLORS.slate }}>Nenhum código nesta escola.</span>}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Juntar</span>
+              <select value={turma} onChange={(e) => setTurma(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "4px 7px", fontSize: 12.5 }} aria-label={`Turma de ${l.escola}`}>
+                <option value="">Escolher turma/equipa elegível…</option>
+                {turmas.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              {turma && porAdd.length > 1 && (
+                <button type="button" onClick={() => grava({ ids: [...new Set([...((ev.participantes && ev.participantes.ids) || []).map(String), ...porAdd.map((a) => String(a.id))])], idsManuais: [...new Set([...manuais, ...porAdd.map((a) => String(a.id))])] })} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12 }}>
+                  Juntar toda a turma
+                </button>
+              )}
+            </div>
+            {turma && <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{porAdd.length ? porAdd.map((a) => chip(String(a.id), () => adiciona(String(a.id)), "Juntar ao evento")) : <span style={{ fontSize: 12, color: COLORS.slate }}>Todos os alunos desta turma já estão inscritos.</span>}</div>}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 // Editar o público do evento depois de criado: escolas e turmas/equipas elegíveis.
 function EditarPublicoEvento({ ev, listaEscolas, registoAlunos, niveis, onUpdate }) {
   const [aberto, setAberto] = useState(false);
@@ -2785,7 +2876,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, espacos, mapaEs
       const r = lerInscritosEvento(lidas);
       if (!r) throw new Error("não encontrei o código do atleta nem a escola dos inscritos");
       let participantes = { ids: [], manual: {} };
-      if (r.modo === "ids") participantes = { ids: r.ids, manual: {}, decisoes: (ev.participantes && ev.participantes.decisoes) || {}, ...(r.anos ? { anos: r.anos } : {}) };
+      if (r.modo === "ids") participantes = { ids: [...new Set([...r.ids, ...((ev.participantes && ev.participantes.idsManuais) || [])])], idsManuais: (ev.participantes && ev.participantes.idsManuais) || [], manual: {}, decisoes: (ev.participantes && ev.participantes.decisoes) || {}, ...(r.anos ? { anos: r.anos } : {}) };
       else {
         // Nome da escola no Excel ("Porto", "CN Gaia") → escola da app.
         // Procura primeiro nas escolas com alunos na época do evento.
@@ -3258,27 +3349,7 @@ function SecaoEventos({ escolas, eventos, registoAlunos, niveis, espacos, mapaEs
                     </thead>
                     <tbody>
                       {c.linhas.map((l) => (
-                        <tr key={l.escola}>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>
-                            <button title="Esta escola não participa: tirar do evento" onClick={() => onUpdate({ ...ev, excluidas: [...new Set([...(ev.excluidas || []), l.escola])] })} style={{ ...iconBtnStyle, padding: 0, marginRight: 6, verticalAlign: "-2px" }} aria-label={`Tirar ${l.escola} do evento`}>
-                              <X size={12} />
-                            </button>
-                            {l.escola}
-                            {l.fora > 0 && <span style={{ fontSize: 11, color: COLORS.slate, fontWeight: 400 }}> · +{l.fora} de outras turmas/equipas (não contam)</span>}
-                          </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtNum(l.elegiveis)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right" }}>
-                            <input
-                              type="number"
-                              min="0"
-                              value={manual[l.escola] ?? l.inscritos}
-                              onChange={(e) => onUpdate({ ...ev, participantes: { ...(ev.participantes || {}), manual: { ...manual, [l.escola]: e.target.value } } })}
-                              style={{ ...inputStyle, width: 80, padding: "4px 7px", textAlign: "right" }}
-                              aria-label={`Inscritos de ${l.escola}`}
-                            />
-                          </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{l.elegiveis ? `${fmtNum((l.inscritos / l.elegiveis) * 100, 1)}%` : "—"}</td>
-                        </tr>
+                        <LinhaEscolaEvento key={l.escola} l={l} ev={ev} manual={manual} reg={registoAlunos[c.ep]} niveis={niveis} onUpdate={onUpdate} tdS={tdStyle} />
                       ))}
                       <tr>
                         <td style={{ ...tdStyle, fontWeight: 700 }}>Total</td>
@@ -3551,6 +3622,7 @@ export function InscritosPage({
   onRemoveOption,
   onSaveDesistencia,
   onRemoveDesistencia,
+  onMudarMotivoDes,
   onSaveExperiencia,
   onUpdateExperiencia,
   onRemoveExperiencia,
@@ -3665,6 +3737,7 @@ export function InscritosPage({
           onSave={onSaveDesistencia}
           onRemove={onRemoveDesistencia}
           onGerirLista={onGerirLista}
+          onMudarMotivo={onMudarMotivoDes}
         />
       ) : view === "desvinc" ? (
         <SecaoDesvinculacoes

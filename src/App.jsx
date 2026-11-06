@@ -2561,10 +2561,12 @@ function AppPrincipal({ onSair, email }) {
     setViewingAudit(next.find((a) => a.id === auditId));
   };
 
+  // Só o nome (parte antes do @): o e-mail completo não aparece nos dados nem nos PDFs.
+  const autorAtual = String(email || "").split("@")[0].split(/[._-]+/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(" ");
   // tipo: "nota" | "respostaEE" (a resposta do EE traz as mudanças que reabrem a reclamação).
   const addNote = (entryId, text, tipo = "nota", date = new Date().toISOString(), mudancas = null) => {
     const next = entries.map((e) =>
-      e.id === entryId ? { ...e, ...(mudancas || {}), notes: [...(e.notes || []), { id: `n_${Date.now()}`, tipo, text, date }] } : e
+      e.id === entryId ? { ...e, ...(mudancas || {}), notes: [...(e.notes || []), { id: `n_${Date.now()}`, tipo, text, date, ...(autorAtual ? { por: autorAtual } : {}) }] } : e
     );
     persist(next);
     setViewingDetail(next.find((e) => e.id === entryId));
@@ -2590,7 +2592,7 @@ function AppPrincipal({ onSair, email }) {
 
   const addSanctionNote = (id, text) => {
     const next = sanctions.map((s) =>
-      s.id === id ? { ...s, notes: [...(s.notes || []), { id: `n_${Date.now()}`, text, date: new Date().toISOString() }] } : s
+      s.id === id ? { ...s, notes: [...(s.notes || []), { id: `n_${Date.now()}`, text, date: new Date().toISOString(), ...(autorAtual ? { por: autorAtual } : {}) }] } : s
     );
     persistSanctions(next);
     setViewingSanction(next.find((s) => s.id === id));
@@ -3185,7 +3187,13 @@ function AppPrincipal({ onSair, email }) {
     }
     persistExperiencias(exps);
   };
-  const motivoExperiencia = (id, motivo) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, motivo: motivo || undefined, manual: true } : e)));
+  const motivoExperiencia = (id, motivo) => {
+    // Um motivo novo entra na lista (a mesma dos operacionais).
+    const atuais = options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO;
+    if (motivo && !atuais.includes(motivo)) persistOptions({ ...options, motivosExperiencia: [...atuais, motivo] });
+    motivoExperienciaGravar(id, motivo);
+  };
+  const motivoExperienciaGravar = (id, motivo) => persistExperiencias(experiencias.map((e) => (e.id === id ? { ...e, motivo: motivo || undefined, manual: true } : e)));
   // Códigos que os operacionais indicaram para as turmas sem alunos: o aluno passa para essa turma (e escola).
   const aplicarIdsOperacional = (pedido) => {
     const ep = (pedido.itens && pedido.itens.epoca) || epocaDe(isoDe(new Date()));
@@ -3311,6 +3319,18 @@ function AppPrincipal({ onSair, email }) {
     if (!atuais.includes(m)) persistOptions({ ...options, motivosDesistencia: [...atuais, m] });
     gravarEstadoAlunos(derivarEpoca(estadoAlunos(), ep, { ...reg, alunos: { ...reg.alunos, [id]: { ...a, motivo: m, motivoManual: true } } }));
     notificar(`Motivo do aluno ${id} alterado.`);
+  };
+
+  // Motivo mudado na tabela de desistências: se o aluno está no registo vai para ele (a importação respeita-o);
+  // senão é uma desistência registada à mão e muda no próprio registo.
+  const mudarMotivoDesistencia = (d, motivo) => {
+    const m = (motivo || "").trim();
+    if (!m || d.motivo === m) return;
+    if (registoAlunos[d.epoca] && registoAlunos[d.epoca].alunos[d.alunoId]) return mudarMotivoAluno(d.epoca, d.alunoId, m);
+    const atuais = options.motivosDesistencia || DEFAULT_MOTIVOS_DESISTENCIA;
+    if (!atuais.includes(m)) persistOptions({ ...options, motivosDesistencia: [...atuais, m] });
+    persistDesistencias(desistencias.map((x) => (x.id === d.id ? { ...x, motivo: m } : x)));
+    notificar("Motivo da desistência alterado.");
   };
 
   const saveDesvinc = (reg) => persistDesvinc([...desvinculacoes, reg]);
@@ -4376,6 +4396,7 @@ function AppPrincipal({ onSair, email }) {
             satisfacao={satisfacao}
             onSaveDesistencia={saveDesistencia}
             onRemoveDesistencia={removeDesistencia}
+            onMudarMotivoDes={mudarMotivoDesistencia}
             onSaveExperiencia={saveExperiencia}
             onUpdateExperiencia={updateExperiencia}
             onRemoveExperiencia={removeExperiencia}
