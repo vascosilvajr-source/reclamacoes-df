@@ -427,7 +427,7 @@ function EnviarEscola({ op, escolas, pedidoEm, envio, quando }) {
 const ROT_RESULTADO = { sucesso: "Converteu", pendente: "Ainda a decorrer", insucesso: "Não converteu" };
 
 // Painel "Por validar": o que os operacionais preencheram, antes de entrar na app.
-function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar, edits, setEdits, motivos }) {
+function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar, edits, setEdits, motivos, onNovoMotivo }) {
   const [aEditar, setAEditar] = useState(null);
   if (!itens.length) return null;
   const campo = { ...inputStyle, width: "auto", padding: "3px 6px", fontSize: 12 };
@@ -449,7 +449,7 @@ function PorValidar({ itens, sel, setSel, aAplicar, onAceitar, onRejeitar, edits
           onChange={(ev) => {
             if (ev.target.value !== "__novo__") return poe({ motivo: ev.target.value });
             const m = (window.prompt("Novo motivo:") || "").trim();
-            if (m) poe({ motivo: m });
+            if (m) { onNovoMotivo && onNovoMotivo(m); poe({ motivo: m }); }
           }}
           style={campo}
         >
@@ -739,7 +739,7 @@ export function PainelEmailsEscolas({ op, escolas }) {
           </div>
         );
       })()}
-      <PorValidar itens={porValidar} sel={sel} setSel={setSel} edits={edits} setEdits={setEdits} motivos={op.motivos} aAplicar={aAplicar === "validar"} onAceitar={() => decidir(true)} onRejeitar={() => decidir(false)} />
+      <PorValidar itens={porValidar} sel={sel} setSel={setSel} edits={edits} setEdits={setEdits} motivos={op.motivos} onNovoMotivo={op.onNovoMotivo} aAplicar={aAplicar === "validar"} onAceitar={() => decidir(true)} onRejeitar={() => decidir(false)} />
       {porConfirmar.length > 0 && (
         <div style={{ border: `1px solid ${COLORS.warn}`, background: COLORS.warnBg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Códigos dos alunos para confirmar</div>

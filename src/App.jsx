@@ -2126,32 +2126,33 @@ function AppPrincipal({ onSair, email, nome }) {
     obs.observe(document.body, { childList: true, subtree: true });
     return () => obs.disconnect();
   }, []);
-  // Aviso de nova versão: compara a versão desta página com /versao.json (de 5 em 5 minutos e ao voltar ao separador).
-  const avisouVersao = useRef(false);
+  // Aviso de nova versão: compara a versão desta página com /versao.json. Verifica pouco depois de abrir, de 3 em 3
+  // minutos, ao voltar ao separador e quando a rede regressa. "Mais tarde" esconde o aviso até à verificação seguinte.
+  const [versaoNova, setVersaoNova] = useState(false);
   useEffect(() => {
     if (typeof __VERSAO__ === "undefined" || __VERSAO__ === "dev") return;
     const ver = async () => {
-      if (avisouVersao.current) return;
       try {
         const r = await fetch(`/versao.json?t=${Date.now()}`, { cache: "no-store" });
         if (!r.ok) return;
         const j = await r.json();
-        if (j && j.v && j.v !== __VERSAO__) {
-          avisouVersao.current = true;
-          notificar("Há uma nova versão da app. Atualiza quando acabares o que estás a fazer.", "aviso", 0, { rotulo: "Atualizar", fn: () => window.location.reload() });
-        }
+        if (j && j.v && j.v !== __VERSAO__) setVersaoNova(true);
       } catch (e) {
         // sem rede: tenta na próxima
       }
     };
-    const t = setInterval(ver, 5 * 60 * 1000);
+    const inicio = setTimeout(ver, 15000);
+    const t = setInterval(ver, 3 * 60 * 1000);
     const foco = () => document.visibilityState === "visible" && ver();
     document.addEventListener("visibilitychange", foco);
+    window.addEventListener("online", ver);
     return () => {
+      clearTimeout(inicio);
       clearInterval(t);
       document.removeEventListener("visibilitychange", foco);
+      window.removeEventListener("online", ver);
     };
-  }, [notificar]);
+  }, []);
   const fecharNotificacao = (id) => setNotificacoes((l) => l.filter((n) => n.id !== id));
 
   const [tema, setTemaState] = useState(() => {
@@ -2571,14 +2572,33 @@ function AppPrincipal({ onSair, email, nome }) {
     const limpo = n.trim().slice(0, 60);
     const { error } = await supabase.auth.updateUser({ data: { nome: limpo } });
     if (error) return notificar("Não consegui guardar o nome.", "aviso");
+    const antigo = autorAtual;
     setNomeConta(limpo);
     notificar(limpo ? `Nome definido: ${limpo}. Vale para as notas novas.` : "Nome removido: volta a usar o e-mail.", "ok");
+    // Etiquetas já existentes com o nome anterior (o que aparecia antes) passam para o nome novo.
+    if (!limpo || limpo === antigo) return;
+    const troca = (l) => (l || []).map((x) => (x.por === antigo ? { ...x, por: limpo } : x));
+    const temE = entries.some((e) => (e.notes || []).some((x) => x.por === antigo));
+    const temS = sanctions.some((e) => (e.notes || []).some((x) => x.por === antigo));
+    const temA = audits.some((a) => (a.findings || []).some((x) => x.por === antigo));
+    if (!(temE || temS || temA)) return;
+    if (!window.confirm(`Trocar também as etiquetas "${antigo}" que já existem (notas e constatações) por "${limpo}"?`)) return;
+    if (temE) persist(entries.map((e) => ({ ...e, notes: troca(e.notes) })));
+    if (temS) persistSanctions(sanctions.map((e) => ({ ...e, notes: troca(e.notes) })));
+    if (temA) persistAudits(audits.map((a) => ({ ...a, findings: troca(a.findings) })));
+    notificar("Etiquetas atualizadas.", "ok");
   };
   // tipo: "nota" | "respostaEE" (a resposta do EE traz as mudanças que reabrem a reclamação).
   const addNote = (entryId, text, tipo = "nota", date = new Date().toISOString(), mudancas = null) => {
     const next = entries.map((e) =>
       e.id === entryId ? { ...e, ...(mudancas || {}), notes: [...(e.notes || []), { id: `n_${Date.now()}`, tipo, text, date, ...(autorAtual ? { por: autorAtual } : {}) }] } : e
     );
+    persist(next);
+    setViewingDetail(next.find((e) => e.id === entryId));
+  };
+
+  const removeNote = (entryId, noteId) => {
+    const next = entries.map((e) => (e.id === entryId ? { ...e, notes: (e.notes || []).filter((n) => n.id !== noteId) } : e));
     persist(next);
     setViewingDetail(next.find((e) => e.id === entryId));
   };
@@ -3778,6 +3798,10 @@ function AppPrincipal({ onSair, email, nome }) {
     registoAlunos,
     experiencias,
     onMotivo: motivoExperiencia,
+    onNovoMotivo: (m) => {
+      const atuais = options.motivosExperiencia || MOTIVOS_EXPERIENCIA_PADRAO;
+      if (m && !atuais.includes(m)) persistOptions({ ...options, motivosExperiencia: [...atuais, m] });
+    },
     onTurmaFicou: turmaFicouExperiencia,
   };
 
@@ -4182,6 +4206,34 @@ function AppPrincipal({ onSair, email, nome }) {
           .splashOverlay.sair { animation: none; opacity: 0; }
         }
       `}</style>
+
+      {versaoNova && !loading && (
+        <div role="status" aria-live="polite" className="naoImprimir avisoVersao">
+          <style>{`
+            .avisoVersao { position: fixed; right: 18px; bottom: 18px; z-index: 90; display: flex; align-items: center; gap: 14px; max-width: min(420px, calc(100vw - 36px)); padding: 14px 16px; border-radius: 14px; background: ${COLORS.paperRaised}; border: 1px solid ${COLORS.rule}; box-shadow: 0 14px 40px rgba(8,14,24,.28); animation: avisoVersaoEntra 420ms cubic-bezier(.22,1,.36,1) both; }
+            .avisoVersao::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: #F08A4B; }
+            .avisoVersao .ico { flex: none; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: ${COLORS.navyWash}; color: ${COLORS.navySoft}; }
+            .avisoVersao .ico svg { animation: avisoVersaoGira 3.2s ease-in-out infinite; }
+            @keyframes avisoVersaoEntra { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: none; } }
+            @keyframes avisoVersaoGira { 0%, 70%, 100% { transform: rotate(0); } 85% { transform: rotate(-200deg); } }
+            @media (prefers-reduced-motion: reduce) { .avisoVersao, .avisoVersao .ico svg { animation: none; } }
+            @media (max-width: 700px) { .avisoVersao { left: 12px; right: 12px; bottom: 12px; max-width: none; } }
+          `}</style>
+          <span className="ico"><RotateCcw size={18} /></span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.ink }}>Há uma versão nova da app</div>
+            <div style={{ fontSize: 12, color: COLORS.slate, marginTop: 2, lineHeight: 1.4 }}>Atualiza quando acabares o que estás a fazer. O que já gravaste não se perde.</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
+              <button className="press" onClick={() => window.location.reload()} style={{ ...primaryBtnStyle, width: "auto", flex: "none", padding: "5px 14px", fontSize: 12.5 }}>
+                Atualizar agora
+              </button>
+              <button className="press" onClick={() => setVersaoNova(false)} style={{ ...linkBtnStyle, marginTop: 0, fontSize: 12.5, color: COLORS.slate }}>
+                Mais tarde
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ---- splash enquanto os dados carregam do Supabase ---- */}
       {loading && (
@@ -4825,6 +4877,7 @@ function AppPrincipal({ onSair, email, nome }) {
           entry={withStatus.find((e) => e.id === viewingDetail.id) || viewingDetail}
           onClose={() => setViewingDetail(null)}
           onAddNote={addNote}
+          onRemoveNote={removeNote}
           biblioteca={respostasTipo.filter((r) => !r.arquivada)}
           historico={withStatus}
           onGerirLista={setListaAberta}

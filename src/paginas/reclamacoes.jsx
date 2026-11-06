@@ -2,7 +2,7 @@
 // Gerado a partir do App.jsx: o partilhado vem de ../nucleo.jsx.
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../supabaseClient";
-import { Plus, X, Search, Mail, Sparkles } from "lucide-react";
+import { Plus, X, Search, Mail, Sparkles, Trash2 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
 import { CANAL_META, COLORS, SEVERITY_META, STATUS_META, Stamp, StatCard, Tag, Vazio, addDays, colorForLabel, epocaAud, epocaDe, fmt, iconBtnStyle, inputStyle, isBusinessDay, labelStyle, linkBtnStyle, nomeCausa, normChave, normalizeText, panelStyle, panelTitle, primaryBtnStyle, secondaryBtnStyle, tokenize } from "../nucleo.jsx";
 import { ComparacaoEpocas, DicaGrafico, FiltroEpocas, Observacoes, PainelCausas, SeletorCausa, TickNome, epocasDisponiveis, itensCausa, naEpoca, naSelecao, observacoesReclamacoes } from "../partilhado.jsx";
@@ -740,7 +740,7 @@ function AvaliacaoEscola({ entry, contactos, notificar }) {
 }
 
 // ---------- Complaint detail / notes timeline ----------
-export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista, contactosEscola = {}, notificar, recorrencia = null, onIrRiscos }) {
+export function ComplaintDetail({ entry, onClose, onAddNote, onRemoveNote, onStart, onDone, onReopen, biblioteca = [], historico = [], onGerirLista, contactosEscola = {}, notificar, recorrencia = null, onIrRiscos }) {
   const [respostaTipoId, setRespostaTipoId] = useState(entry.respostaTipoId || null);
   const [assuntoSugerido, setAssuntoSugerido] = useState("");
   const [causaRaiz, setCausaRaiz] = useState(entry.causaRaiz || "");
@@ -869,6 +869,11 @@ export function ComplaintDetail({ entry, onClose, onAddNote, onStart, onDone, on
                   {" · "}
                   {n.soDia ? fmt(new Date(n.date)) : new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(n.date))}
                   {ultimaResposta && entry.causaRaiz ? ` · causa: ${nomeCausa(entry.causaRaiz)}` : ""}
+                  {onRemoveNote && n.id && (
+                    <button type="button" className="semFoto" title="Apagar esta nota" aria-label="Apagar nota" onClick={() => window.confirm("Apagar esta nota da linha temporal?") && onRemoveNote(entry.id, n.id)} style={{ marginLeft: 8, background: "none", border: "none", cursor: "pointer", color: COLORS.slate, padding: 0, verticalAlign: "middle" }}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                   {n.por && (
                     <span title="Quem registou" style={{ marginLeft: 8, padding: "1px 7px", borderRadius: 999, fontSize: 10.5, fontWeight: 600, color: COLORS.ink2, background: COLORS.paperSunken, border: `1px solid ${COLORS.rule}`, whiteSpace: "nowrap" }}>
                       {n.por}
